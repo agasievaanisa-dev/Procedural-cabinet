@@ -39,6 +39,8 @@ async function loadInventory(){
 function renderInventory(){
   if(!isManager())return;
   const active=inventory.filter(m=>m.active!==false);
+  const archived=inventory.length-active.length;
+  $('archiveNotice').innerHTML=archived?`<div class="notice">В архиве: ${archived}. <button class="btn secondary" onclick="inventoryFilter.value='archive';renderInventory()">Показать архив</button></div>`:'';
   const stat=(label,n)=>`<div class="stat"><span class="small">${label}</span><b>${n}</b></div>`;
   inventorySummary.innerHTML=stat('Пополнить рабочий шкаф',active.filter(m=>stockFacts(m).refill).length)+stat('Нужно заказать',active.filter(m=>stockFacts(m).order).length)+stat('Срок до 60 дней / истёк',active.filter(m=>{const d=stockFacts(m).days;return d!==null&&d<=60}).length);
   const q=inventorySearch.value.trim().toLocaleLowerCase('ru'),filter=inventoryFilter.value;
@@ -73,6 +75,7 @@ function openMedForm(id='',focus=''){
   archiveButton.textContent=m?.active===false?'Восстановить из архива':'Архивировать';
   archiveButton.disabled=!!m&&m.active!==false&&stockFacts(m).total!==0;
   message('stockOperationMessage','');receivePackages.value='';receivePrice.value=m?.purchase_price??0;
+  openingQty.value='';openingLocation.value='reserve';openingPrice.value=m?.purchase_price??0;openingExpiry.value='';openingExpiry.min=localDateValue();openingComment.value='';
   receiveExpiry.value='';receiveExpiry.min=localDateValue();receiveComment.value='';transferQty.value='';transferMode.value='packs';transferComment.value='';
   batchList.innerHTML='';movementList.innerHTML='';show('medForm');updateStockPreview();
   if(m)loadStockDetails(id,medView);
@@ -115,8 +118,8 @@ async function saveMedication(){
       if(meta.error)throw new Error('Карточка сохранена. Не удалось прикрепить фото: '+meta.error.message);
     }
     const loaded=await loadInventory();setWarehouseBusy(false);
-    if(loaded)openMedForm(result.id);
-    medPhotoMessage.textContent=loaded?'Карточка сохранена.':'Карточка сохранена, но остатки не обновились. Нажмите «Обновить остатки».';
+    if(loaded){inventorySearch.value='';inventoryFilter.value='active';renderInventory();openMedForm(result.id);}
+    medPhotoMessage.textContent=loaded?'Карточка сохранена. Теперь внесите имеющийся остаток ниже или вернитесь к списку препаратов.':'Карточка сохранена, но остатки не обновились. Нажмите «Обновить остатки».';
   }catch(e){medPhotoMessage.textContent=e.message}
   finally{setWarehouseBusy(false);restoreFieldLocks()}
 }
@@ -126,7 +129,7 @@ async function stockMutation(action,payload,success){
   try{
     await warehouseRpc(action,payload,true);
     // Clear committed input before reloading, so a failed reload cannot repeat it.
-    if(action==='receive')receivePackages.value='';if(action==='transfer')transferQty.value='';
+    if(action==='opening')openingQty.value='';if(action==='receive')receivePackages.value='';if(action==='transfer')transferQty.value='';
     const loaded=await loadInventory();setWarehouseBusy(false);
     if(loaded)openMedForm(payload.id);
     message('stockOperationMessage',success+(loaded?'':' Остатки не обновились. Обновите список склада.'),true);
@@ -151,7 +154,7 @@ async function transferToWork(){
 async function archiveMedication(){
   const m=inventory.find(x=>x.id===medId.value);if(!m||warehouseBusy)return;
   const action=m.active===false?'restore':'archive';
-  if(!confirm(action==='archive'?`Переместить «${m.name}» в архив? История сохранится.`:`Восстановить «${m.name}»?`))return;
+  if(action==='archive'&&prompt(`Карточка исчезнет из активного списка. Чтобы отправить её в архив, введите название полностью: ${m.name}`)!==m.name)return;
   await stockMutation(action,{id:m.id},action==='archive'?'Карточка в архиве.':'Карточка восстановлена.');
 }
 async function loadStockDetails(id,view){
@@ -164,5 +167,13 @@ async function loadStockDetails(id,view){
     return `<div class="item ${warn?(days<0?'batch-expired':'batch-soon'):''}"><strong>${x.expiry_date?'Годен до '+esc(x.expiry_date):'Срок не указан'}${warn&&days<0?' · Срок истёк':''}</strong><div class="small">Приход ${esc(x.received_date)} · осталось ${qty(x.quantity_remaining)} из ${qty(x.quantity_received)} ${esc(unit(m))} · закупка ${rub(x.purchase_price_per_unit)}/${esc(unit(m))}</div></div>`;
   }).join('')||'<div class="notice">Партий пока нет. Оформите первый приход.</div>';
   const names={purchase:'Приход',reserve_to_work:'Из запаса в работу',transfer_to_work:'Из запаса в работу',work_to_reserve:'Возврат в запас',procedure_use:'Процедура',sale:'Продажа',write_off:'Списание',correction:'Корректировка'};
-  movementList.innerHTML=h.status==='rejected'?`<div class="notice">${esc(h.reason.message)}</div>`:h.value.map(x=>`<div class="item"><div class="row between"><strong>${esc(names[x.movement_type]||x.movement_type)}</strong><b>${qty(x.quantity)} ${esc(unit(m))}</b></div><div class="small">${esc(new Date(x.created_at).toLocaleString('ru-RU'))}</div>${x.comment?`<div>${esc(x.comment)}</div>`:''}</div>`).join('')||'<div class="notice">Движений пока нет.</div>';
+  movementList.innerHTML=h.status==='rejected'?`<div class="notice">${esc(h.reason.message)}</div>`:h.value.map(x=>`<div class="item"><div class="row between"><strong>${esc(names[x.movement_type]||x.movement_type)}</strong><b>${qty(x.quantity)} ${esc(unit(m))}</b></div><div class="small">${esc(new Date(x.created_at).toLocaleString('ru-RU'))} · ${x.to_location==='work'?'В рабочий шкаф':x.to_location==='reserve'?'В запас':''}</div>${x.comment?`<div>${esc(x.comment)}</div>`:''}</div>`).join('')||'<div class="notice">Движений пока нет.</div>';
+}
+
+async function saveOpeningStock(){
+  try{
+    const quantity=positiveWhole(openingQty.value,'Количество'),price=nonnegative(openingPrice.value,'Цена');
+    if(!openingExpiry.value||openingExpiry.value<localDateValue())throw new Error('Укажите действующий срок годности');
+    await stockMutation('opening',{id:medId.value,quantity,price,location:openingLocation.value,expiry:openingExpiry.value,comment:openingComment.value.trim()},'Имеющийся остаток добавлен. Не вносите эту же партию повторно.');
+  }catch(e){message('stockOperationMessage',e.message)}
 }
