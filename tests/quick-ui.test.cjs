@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,{innerHTML:'',value:'',querySelectorAll(){throw Error('Search must never mutate chosen rows')}});return elements.get(id)};
+const c={console,Set,Map,Date,JSON,Number,Math,String,Error,Promise,window:{scrollTo(){}},$:el,meds:[],patients:[],esc:s=>String(s??'').replaceAll('<','&lt;').replaceAll('"','&quot;'),num:v=>Number(v||0),qty:v=>String(v),unit:m=>m.consumption_unit||'ед.',medPhotoHtml:()=>'<span>Фото</span>',medPhotoUrls:new Map()};
+for(const n of ['enterApp','signOut','show','addPatient','recalc','saveTreatment','openPatient','renderInventory','openMedForm','stockCells','signMedicationPhotos','filterMedicationRows','renderMedVisualCatalog','addMedRow','chooseMedication','startShift','openProcedure','openSale','openReport','closeShift','renderPatients','staffOptions'])c[n]=()=>{};
+vm.createContext(c);vm.runInContext(fs.readFileSync(__dirname+'/../quick-v4.js','utf8'),c);
+c.meds=[{id:'a',name:'Самыр',search_name:'Samyr',dosage:'400 мг',category:'Гепатопротекторы',work_qty:13},{id:'b',name:'Раствор',dosage:'200 мл',work_qty:2}];
+assert.ok(c.matchesMedication(c.meds[0],'сам'));assert.ok(c.matchesMedication(c.meds[0],'SAMYR 400'));assert.ok(c.matchesMedication(c.meds[0],'гепато'));assert.ok(!c.matchesMedication(c.meds[0],'500'));
+vm.runInContext("quickContext={favorites:['b'],recent:[{id:'a',count:10}],shifts:[]}",c);
+assert.equal(c.sortedCatalog4(c.meds)[0].id,'b');
+c.filterMedicationRows('procMeds','Samyr');assert.match(el('procPhotoCatalog').innerHTML,/Самыр/);assert.ok(!el('procPhotoCatalog').innerHTML.includes('<strong>Раствор'));
+c.meds[0].name='<script>';c.renderMedVisualCatalog('procMeds');assert.ok(!el('procPhotoCatalog').innerHTML.includes('<script>'));
+const html=fs.readFileSync(__dirname+'/../index.html','utf8');const home=html.match(/<section id="workspace"[\s\S]*?<\/section>/)[0];assert.equal((home.match(/<button /g)||[]).length,5);
+assert.ok(html.includes('quick-v4.js'));assert.ok(html.includes('quick-v4.css'));
+console.log('PASS: Russian/English/category/dose search, chosen rows untouched, favorites ranking, escaped catalog, five primary actions');
