@@ -58,6 +58,46 @@ async function noOverflow(page){
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
 }
 
+test('warehouse interval report has CSV, preserves Moscow dates and recovers when filters change during a request',async({page})=>{
+ const errors=await boot(page);
+ await page.evaluate(()=>{
+  const original=db.rpc;
+  window.__warehouseCalls=[];
+  db.rpc=async(name,args)=>{
+   if(name!=='crm_warehouse_report_v5')return original(name,args);
+   __warehouseCalls.push(args);
+   const data={...args.p_payload,generated_at:'2026-10-07T09:00:00Z',movements_count:1,medications_count:1,
+    catalog:[{id:'12345678-1234-1234-1234-123456789abc',name:'Самыр',active:true}],
+    medications:[{id:'12345678-1234-1234-1234-123456789abc',name:'Самыр',unit:'амп.',active:true,reserve_current:12,work_current:3,total_current:15,reserve_delta:5,work_delta:1,movement_count:1}],
+    movements:[{at:'2026-10-07T09:00:00Z',name:'<script>Самыр</script>',unit:'амп.',type:'purchase',quantity:7,to_location:'reserve',actor_name:'Аниса',comment:'Поставка'}]};
+   if(window.__warehousePending)return new Promise(resolve=>{window.__warehouseFinish=()=>resolve({data})});
+   return {data};
+  };
+  show('admin');
+ });
+ await page.click('#adminWarehouseReportLinkV5');
+ await expect(page.locator('#warehouseReportV5Body')).toContainText('Текущие остатки');
+ await expect(page.locator('#warehouseReportV5Body')).toContainText('<script>Самыр</script>');
+ expect(await page.locator('#warehouseReportV5Body script').count()).toBe(0);
+ await noOverflow(page);
+ const downloadPromise=page.waitForEvent('download');
+ await page.click('#warehouseReportV5Csv');
+ const download=await downloadPromise;expect(download.suggestedFilename()).toMatch(/^warehouse-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv$/);
+ await page.fill('#warehouseReportV5From','2026-10-01');await page.fill('#warehouseReportV5To','2026-10-07');
+ await page.evaluate(()=>{window.__warehousePending=true});
+ await page.click('#warehouseReportV5Load');await page.waitForFunction(()=>!!window.__warehouseFinish);
+ await page.fill('#warehouseReportV5To','2026-10-08');
+ await expect(page.locator('#warehouseReportV5Load')).toBeEnabled();
+ await page.evaluate(()=>{window.__warehousePending=false;window.__warehouseFinish()});
+ await expect(page.locator('#warehouseReportV5Body')).toBeEmpty();
+ await page.click('#warehouseReportV5Load');await expect(page.locator('#warehouseReportV5Body')).toContainText('2026-10-08');
+ expect(await page.evaluate(()=>__warehouseCalls.at(-1).p_payload)).toEqual({from:'2026-10-01',to:'2026-10-08'});
+ const calls=await page.evaluate(()=>__warehouseCalls.length);
+ await page.evaluate(()=>{currentStaff.role='nurse';show('warehouseReportV5')});
+ await expect(page.locator('#warehouseReportV5')).not.toBeVisible();
+ expect(await page.evaluate(()=>__warehouseCalls.length)).toBe(calls);expect(errors).toEqual([]);
+});
+
 test('390px owner workspace, confirmed mixed payment, exact tender/change and one atomic save',async({page})=>{
  const errors=await boot(page);
  await expect(page.locator('#workspace .home-actions>button')).toHaveCount(9);
