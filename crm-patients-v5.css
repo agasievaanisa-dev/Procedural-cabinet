@@ -1,0 +1,19 @@
+.patient-list-item-v5 { width: 100%; text-align: left; }
+.patient-list-item-v5 .pill { margin-left: 8px; }
+.patient-controls-v5 { margin-bottom: 12px; flex-wrap: wrap; }
+.patient-archive-filter-v5 { margin-top: 12px; }
+.patient-archive-filter-v5 label { display: flex; align-items: center; gap: 10px; }
+.patient-archive-filter-v5 input { width: 24px; min-height: 24px; margin: 0; }
+.patient-sex-v5 { margin: 10px 0; }
+.voice-button-v5 { margin-top: 10px; }
+.voice-dialog-v5 { width: min(580px, calc(100% - 24px)); max-height: calc(100dvh - 24px); overflow: auto; border: 0; border-radius: 20px; padding: 20px; background: #fff; color: #172e37; box-shadow: 0 20px 80px #162c3955; }
+.voice-dialog-v5::backdrop { background: #142b3b99; }
+.voice-dialog-v5:not([open]) { display: none; }
+.voice-dialog-v5 h2 { margin: 0; }
+.voice-dialog-v5 .btn { min-height: 46px; }
+.voice-dialog-v5 textarea { resize: vertical; }
+.voice-dialog-v5 details { margin-top: 16px; }
+.voice-dialog-v5 li { margin: 8px 0; }
+.voice-preview-v5 { padding: 4px 0 12px; }
+.voice-preview-v5 h3 { margin: 12px 0; }
+@media (max-width: 520px) { .voice-dialog-v5 { padding: 16px; } .patient-controls-v5 .btn { flex: 1; } }

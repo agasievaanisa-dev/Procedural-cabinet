@@ -1,0 +1,12 @@
+.warehouse-report-link-v5{margin-top:14px;width:100%}
+.warehouse-report-v5 h2{margin:24px 0 12px}.warehouse-report-v5 h3{margin:0;overflow-wrap:anywhere}
+.warehouse-report-filters-v5,.warehouse-report-stocks-v5{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.warehouse-report-v5 .warehouse-report-quantities-v5{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.warehouse-report-quantities-v5 span{display:block;font-size:12px;color:var(--muted)}
+.warehouse-report-quantities-v5 strong{display:block;font-size:22px;margin-top:6px;overflow-wrap:anywhere}
+.warehouse-report-v5 .card{min-width:0}.warehouse-report-v5 p,.warehouse-report-movements-v5 strong{overflow-wrap:anywhere}
+.warehouse-report-v5 select{width:100%;margin-bottom:14px}.warehouse-report-v5 input{min-width:0;width:100%}
+.warehouse-report-error-v5{color:#b42318;margin:12px 0}.warehouse-report-movements-v5 .card{margin-bottom:12px}
+.warehouse-report-summary-v5 h2{margin-top:0}.warehouse-report-v5 .row{flex-wrap:wrap}
+@media(max-width:560px){.warehouse-report-stocks-v5{grid-template-columns:1fr}.warehouse-report-v5 h1{font-size:26px}.warehouse-report-quantities-v5 strong{font-size:20px}}
+@media print{.screen.warehouse-report-v5.active{display:block!important}.warehouse-report-v5 .no-print{display:none!important}.warehouse-report-v5 .card{break-inside:avoid;border:1px solid #ccc;box-shadow:none}.warehouse-report-stocks-v5{grid-template-columns:repeat(2,minmax(0,1fr))}}

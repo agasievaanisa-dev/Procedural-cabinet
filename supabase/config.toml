@@ -1,0 +1,5 @@
+[functions.crm-admin]
+verify_jwt = false
+
+[functions.crm-backup]
+verify_jwt = false

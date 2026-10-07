@@ -1,0 +1,31 @@
+begin;
+select set_config('test.manager',(select auth_user_id::text from public.staff where active and role in ('owner','admin') and auth_user_id is not null limit 1),true);
+select set_config('request.jwt.claim.sub',current_setting('test.manager'),true);
+select set_config('request.jwt.claims',jsonb_build_object('sub',current_setting('test.manager'),'role','authenticated')::text,true);
+set local role authenticated;
+do $$ declare med uuid; batch uuid; r jsonb; req uuid; failed boolean;
+begin
+ r:=public.warehouse_v5('save',jsonb_build_object('name','Тест v5 — препарат','unit','амп.','units_per_package',10,'purchase_price',0,'sale_price',25,'min_total_stock',1,'work_threshold',1,'lead_time_days',3,'manufacturer','Тестовый производитель','release_form','ампула','comment','Вымышленная карточка'),gen_random_uuid());
+ med:=(r->>'id')::uuid;
+ r:=public.warehouse_v5('receive',jsonb_build_object('id',med,'packages',2,'price',100,'expiry',current_date+200,'batch_number','TEST-V5','supplier','Тестовый поставщик','received_date',current_date),gen_random_uuid());
+ batch:=(r->>'batch_id')::uuid;
+ if batch is null then raise exception 'Batch metadata not linked';end if;
+ req:=gen_random_uuid();
+ r:=public.warehouse_v5('inventory',jsonb_build_object('id',med,'batch_id',batch,'location','reserve','actual_quantity',17,'reason','Контрольный пересчёт'),req);
+ if (r->>'difference')::numeric<>-3 then raise exception 'Inventory negative correction wrong';end if;
+ if public.warehouse_v5('inventory',jsonb_build_object('id',med,'batch_id',batch,'location','reserve','actual_quantity',17,'reason','Контрольный пересчёт'),req)<>r then raise exception 'Inventory retry not idempotent';end if;
+ r:=public.warehouse_v5('inventory',jsonb_build_object('id',med,'batch_id',batch,'location','reserve','actual_quantity',23,'reason','Найдено при пересчёте'),gen_random_uuid());
+ if (r->>'difference')::numeric<>6 then raise exception 'Inventory positive correction wrong';end if;
+ failed:=false;begin perform public.warehouse_v5('inventory',jsonb_build_object('id',med,'batch_id',batch,'location','reserve','actual_quantity',0),gen_random_uuid());exception when raise_exception then failed:=true;end;
+ if not failed then raise exception 'Reason required';end if;
+ perform set_config('test.med',med::text,true);perform set_config('test.batch',batch::text,true);
+end $$;
+reset role;
+do $$begin
+ if(select manufacturer from public.medications where id=current_setting('test.med')::uuid)<>'Тестовый производитель' then raise exception 'Manufacturer missing';end if;
+ if(select batch_number from public.medication_batches where id=current_setting('test.batch')::uuid)<>'TEST-V5' then raise exception 'Batch number missing';end if;
+ if(select quantity from public.stock where medication_id=current_setting('test.med')::uuid and location='reserve')<>23 then raise exception 'Stock not conserved';end if;
+ perform private.assert_stock_v3(current_setting('test.med')::uuid);
+ if(select count(*) from private.crm_audit_log where entity_id=current_setting('test.med') or after_data->>'medication_id'=current_setting('test.med'))=0 then raise exception 'Inventory audit missing';end if;
+end $$;
+rollback;

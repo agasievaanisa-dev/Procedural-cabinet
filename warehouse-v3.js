@@ -14,7 +14,7 @@ async function warehouseRpc(action,payload={},write=false){
   if(!isManager())throw new Error('Нет доступа к складу');
   const key=JSON.stringify([action,payload]);
   if(write&&!stockRequests.has(key))stockRequests.set(key,crypto.randomUUID());
-  const {data,error}=await db.rpc('warehouse_v2',{p_action:action,p_payload:payload,p_request_id:write?stockRequests.get(key):null});
+  const {data,error}=await db.rpc('warehouse_v5',{p_action:action,p_payload:payload,p_request_id:write?stockRequests.get(key):null});
   if(error){
     // An explicit PostgreSQL error means rollback. Keep IDs on transport errors,
     // where the request may have committed before the response was lost.
@@ -48,7 +48,7 @@ function renderInventory(){
     if(filter==='archive'?m.active!==false:m.active===false)return false;
     const f=stockFacts(m);
     if(filter==='refill'&&!f.refill||filter==='order'&&!f.order||filter==='expiry'&&!(f.days!==null&&f.days<=60))return false;
-    return !q||[m.name,m.generic_name,m.category,m.search_name,m.dosage,m.manufacturer_country].some(v=>String(v||'').toLocaleLowerCase('ru').includes(q));
+    return !q||[m.name,m.generic_name,m.category,m.search_name,m.dosage,m.manufacturer_country,m.manufacturer].some(v=>String(v||'').toLocaleLowerCase('ru').includes(q));
   });
   inventoryCount.textContent=`Найдено препаратов: ${visible.length}`;
   inventoryList.innerHTML=visible.map(m=>{
