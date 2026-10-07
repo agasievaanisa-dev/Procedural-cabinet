@@ -1,6 +1,6 @@
 let quickContext={favorites:[],recent:[],shifts:[]},pendingAction=null,lastTemplate=null,quickBusy=false,patientView4=0,hintView4=0;
 const normalizeSearch=v=>String(v||'').toLocaleLowerCase('ru-RU').replace(/ё/g,'е').trim();
-function matchesMedication(m,q){const hay=normalizeSearch([m.name,m.search_name,m.generic_name,m.dosage,m.category,m.manufacturer_country].join(' '));return normalizeSearch(q).split(/\s+/).every(term=>hay.includes(term))}
+function matchesMedication(m,q){const hay=normalizeSearch([m.name,m.search_name,m.generic_name,m.dosage,m.category,m.manufacturer,m.manufacturer_country].join(' '));return normalizeSearch(q).split(/\s+/).every(term=>hay.includes(term))}
 async function quickRpc(action,payload={}){const {data,error}=await db.rpc('quick_ui_v4',{p_action:action,p_payload:payload});if(error)throw new Error(error.message);return data}
 async function loadQuickContext(){quickContext=await quickRpc('context')||{favorites:[],recent:[],shifts:[]}}
 function assignShift(s){if(!s)return false;const ns=s.staff||[];if(ns.length<2)return false;shift={id:s.id,aId:ns[0].id,a:ns[0].full_name,bId:ns[1].id,b:ns[1].full_name,type:shiftLabel(s.started_at,s.planned_end_at)};return true}
