@@ -1,0 +1,14 @@
+.medication-delete-v7{border:1px solid #edc8c5;margin-top:24px;scroll-margin-top:16px}
+.medication-delete-entry-v7{margin:4px 0 16px}
+.medication-delete-v7 h2,.medication-deleted-card-v7 h2{margin-top:0}
+.medication-delete-v7 textarea{width:100%;min-height:76px}
+.medication-delete-balances-v7{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.medication-delete-balances-v7>div{background:#fff1ee;border-radius:12px;padding:12px;overflow-wrap:anywhere}
+.medication-delete-balances-v7 span,.medication-delete-balances-v7 strong{display:block}
+.medication-delete-balances-v7 strong{font-size:1.2rem;margin-top:5px}
+.medication-delete-effect-v7{font-weight:600;line-height:1.6}
+.medication-delete-confirm-v7{display:flex;align-items:flex-start;gap:10px;margin:16px 0;cursor:pointer;font-weight:500}
+.medication-delete-confirm-v7 input{width:22px;min-width:22px;height:22px;margin:0;accent-color:#b83d37}
+#medicationDeletedEntryV7{margin-top:12px}
+#medicationDeletedV7>.sub,.medication-deleted-card-v7,.medication-delete-v7 .notice{overflow-wrap:anywhere}
+@media(max-width:480px){.medication-delete-v7{padding:16px}.medication-delete-v7 .btn,#medicationDeletedV7 .btn{min-height:48px}.medication-delete-balances-v7>div{padding:9px}.medication-delete-balances-v7 strong{font-size:1rem}}
