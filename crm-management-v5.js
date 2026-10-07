@@ -167,7 +167,7 @@ prepareTreatment4=async function(kind,patientId){const ready=await managementPre
 const medicationBatchesExtraV5=new Map();
 matchesMedication=function(m,q){const hay=normalizeSearch([m.name,m.search_name,m.generic_name,m.dosage,m.category,m.manufacturer,m.manufacturer_country,m.release_form].join(' '));return normalizeSearch(q).split(/\s+/).every(term=>hay.includes(term))};
 function ensureMedicationExtrasV5(){
-  if(!$('medManufacturerV5'))$('medSaveButton').insertAdjacentHTML('beforebegin','<div class="grid2"><div><label for="medManufacturerV5">Производитель</label><input id="medManufacturerV5"></div><div><label for="medReleaseFormV5">Форма выпуска</label><input id="medReleaseFormV5" placeholder="Раствор, таблетки, порошок"></div></div><label for="medCommentV5">Комментарий к препарату</label><textarea id="medCommentV5"></textarea>');
+  if(!$('medManufacturerV5'))$('medPriceFields').insertAdjacentHTML('beforebegin','<div class="grid2"><div><label for="medManufacturerV5">Производитель</label><input id="medManufacturerV5"></div><div><label for="medReleaseFormV5">Форма выпуска</label><input id="medReleaseFormV5" placeholder="Раствор, таблетки, порошок"></div></div><label for="medCommentV5">Комментарий к препарату</label><textarea id="medCommentV5"></textarea>');
   for(const prefix of ['receive','opening']){
     if($(prefix+'BatchNumberV5'))continue;
     const fields=`<div class="grid3"><div><label for="${prefix}BatchNumberV5">Номер партии</label><input id="${prefix}BatchNumberV5"></div><div><label for="${prefix}SupplierV5">Поставщик</label><input id="${prefix}SupplierV5"></div><div><label for="${prefix}ReceivedDateV5">Дата поступления</label><input id="${prefix}ReceivedDateV5" type="date"></div></div>`;

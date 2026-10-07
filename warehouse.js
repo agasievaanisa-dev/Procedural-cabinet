@@ -9,6 +9,17 @@ function expiryDays(date){if(!date)return null;return Math.round((Date.parse(dat
 function stockFacts(m){const work=num(m.work_qty),reserve=num(m.reserve_qty),total=work+reserve,days=expiryDays(m.nearest_expiry);return {work,reserve,total,days,order:total<num(m.min_total_stock),refill:work<num(m.work_threshold)&&reserve>0}}
 function stockCells(m){const f=stockFacts(m);return `<div class="stock-grid"><div class="stock-cell"><span class="small">В запасе</span><strong>${esc(packLabel(f.reserve,m))}</strong><small>${qty(f.reserve)} ${esc(unit(m))} · по ${qty(packSize(m))} в упаковке</small></div><div class="stock-cell work"><span class="small">В работе</span><strong>${qty(f.work)} ${esc(unit(m))}</strong><small>Годно к использованию: ${qty(m.work_available??f.work)} ${esc(unit(m))}</small></div><div class="stock-cell"><span class="small">Всего</span><strong>${qty(f.total)} ${esc(unit(m))}</strong><small>Запас + рабочий шкаф</small></div></div>`}
 function isManager(){return ['admin','owner'].includes(currentStaff?.role)}
+function updateMedicationPriceLabels(){
+  const value=medUnit.value.trim(),single={ampoule:'ампулу','амп.':'ампулу',ампула:'ампулу',vial:'флакон','фл.':'флакон',флакон:'флакон',tablet:'таблетку','таб.':'таблетку',таблетка:'таблетку'}[value];
+  $('medSalePriceLabel').textContent=`Цена продажи за ${single||'1 '+(value||'единицу')}, ₽`;
+  $('medPricePackHint').textContent=`В упаковке: ${qty(medUnitsPerPack.value)} ${unit({consumption_unit:value})}. Закупочная цена указывается за целую упаковку.`;
+}
+function focusMedicationPrices(){
+  if(!isManager()||warehouseBusy)return;
+  $('medDetails').open=true;$('medPricesEntry').classList.add('hidden');
+  if(medId.value)$('medSaveButton').textContent='Сохранить карточку с новыми ценами';
+  $('medPriceFields').scrollIntoView({block:'center',behavior:'smooth'});medPurchasePrice.focus({preventScroll:true});
+}
 function message(id,text,success=false){$(id).innerHTML=text?`<div class="notice${success?' success':''}">${esc(text)}</div>`:''}
 async function warehouseRpc(action,payload={},write=false){
   if(!isManager())throw new Error('Нет доступа к складу');
@@ -53,7 +64,7 @@ function renderInventory(){
   inventoryCount.textContent=`Найдено препаратов: ${visible.length}`;
   inventoryList.innerHTML=visible.map(m=>{
     const f=stockFacts(m),bad=m.active===false?'В архиве':f.order?'Нужно заказать':f.refill?'Пополнить шкаф':'Остатки в норме';
-    return `<article class="inventory-card"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
+    return `<article class="inventory-card"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button><button class="btn secondary" onclick="openMedForm('${m.id}','prices')">Изменить цены</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
   }).join('')||'<div class="notice">Препараты не найдены. Измените поиск или добавьте новую карточку.</div>';
 }
 function openMedForm(id='',focus=''){
@@ -66,6 +77,7 @@ function openMedForm(id='',focus=''){
   medUnitsPerPack.value=m?.units_per_package||1;medUnitsPerPack.disabled=!!m&&stockFacts(m).total>0;
   medUnitsPerPack.title=medUnitsPerPack.disabled?'Размер упаковки нельзя менять при ненулевом остатке':'';
   medPurchasePrice.value=m?.purchase_price??0;medSalePrice.value=m?.sale_price??0;
+  updateMedicationPriceLabels();$('medPricesEntry').classList.toggle('hidden',!m||focus==='prices');$('medSaveButton').textContent=focus==='prices'?'Сохранить карточку с новыми ценами':'Сохранить карточку и фото';
   medMin.value=m?.min_total_stock??0;medWorkMin.value=m?.work_threshold??0;medLeadDays.value=m?.lead_time_days??3;
   medPhoto.value='';medPhotoMessage.textContent='';
   if(medPhotoObjectUrl){URL.revokeObjectURL(medPhotoObjectUrl);medPhotoObjectUrl=null}
@@ -80,6 +92,7 @@ function openMedForm(id='',focus=''){
   batchList.innerHTML='';movementList.innerHTML='';show('medForm');updateStockPreview();
   if(m)loadStockDetails(id,medView);
   $('openingPanel').open=!!m&&stockFacts(m).total===0;$('receivePanel').open=focus==='receive';$('transferPanel').open=focus==='transfer';$('returnQty').value='';$('writeoffQty').value='';$('writeoffReason').value='';$('writeoffBatch').innerHTML='';if(focus==='receive')receivePackages.focus();else if(focus==='transfer')transferQty.focus();
+  if(focus==='prices')focusMedicationPrices();
 }
 function positiveWhole(value,label){const n=Number(value);if(!Number.isSafeInteger(n)||n<=0)throw new Error(label+': введите целое число больше нуля');return n}
 function nonnegative(value,label){const n=Number(value);if(value===''||!Number.isFinite(n)||n<0)throw new Error(label+': введите число от нуля');return n}
@@ -99,6 +112,7 @@ function previewMedPhoto(){
 function setWarehouseBusy(value){warehouseBusy=value;document.querySelectorAll('#medForm button,#medForm input,#medForm select').forEach(el=>el.disabled=value)}
 async function saveMedication(){
   if(warehouseBusy||!isManager())return;
+  const existing=!!medId.value;
   let payload,file;
   try{
     const name=medName.value.trim();if(!name)throw new Error('Введите название препарата');
@@ -119,7 +133,7 @@ async function saveMedication(){
     }
     const loaded=await loadInventory();setWarehouseBusy(false);
     if(loaded){inventorySearch.value='';inventoryFilter.value='active';renderInventory();openMedForm(result.id);}
-    medPhotoMessage.textContent=loaded?'Карточка сохранена. Теперь внесите имеющийся остаток ниже или вернитесь к списку препаратов.':'Карточка сохранена, но остатки не обновились. Нажмите «Обновить остатки».';
+    medPhotoMessage.textContent=loaded?(existing?'Карточка и цены сохранены. Можно вернуться к списку препаратов.':'Карточка сохранена. Теперь внесите имеющийся остаток ниже или вернитесь к списку препаратов.'):'Карточка сохранена, но остатки не обновились. Нажмите «Обновить остатки».';
   }catch(e){medPhotoMessage.textContent=e.message}
   finally{setWarehouseBusy(false);restoreFieldLocks()}
 }

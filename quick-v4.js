@@ -111,7 +111,7 @@ async function quickTransfer4(id,quantity){
 const originalRenderInventory4=renderInventory;
 renderInventory=function(){originalRenderInventory4();$('inventoryNudges').innerHTML=inventory.filter(m=>m.active!==false&&num(m.work_available??m.work_qty)<num(m.work_threshold)&&num(m.reserve_available??m.reserve_qty)>=packSize(m)).slice(0,5).map(m=>`<div class="quick-alert"><strong>${esc(m.name)}</strong> · в шкафу ${qty(m.work_available??m.work_qty)} ${esc(unit(m))}<button class="btn primary wide" onclick="quickTransfer4('${m.id}',${packSize(m)})">Перевести 1 упаковку (${qty(packSize(m))} ${esc(unit(m))})</button></div>`).join('')};
 const originalOpenMedForm4=openMedForm;
-openMedForm=function(id='',focus=''){originalOpenMedForm4(id,focus);$('medDetails').open=!id;if(id&&!focus)$('openingPanel').open=stockFacts(inventory.find(m=>m.id===id)).total===0};
+openMedForm=function(id='',focus=''){originalOpenMedForm4(id,focus);$('medDetails').open=!id||focus==='prices';if(id&&!focus)$('openingPanel').open=stockFacts(inventory.find(m=>m.id===id)).total===0};
 const originalStockCells4=stockCells;
 stockCells=function(m){const days=expiryDays(m.nearest_expiry);return originalStockCells4(m)+(days!==null&&days<=30?`<div class="notice">${days<0?'Есть партия с истёкшим сроком. Проверьте партии и оформите списание.':`Ближайший срок годности — через ${days} дн. При расходе программа выберет эту годную партию первой.`}</div>`:'')};
 let photosLoadedAt4=0;const originalSignPhotos4=signMedicationPhotos;
