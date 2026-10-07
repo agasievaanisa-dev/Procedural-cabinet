@@ -1,0 +1,11 @@
+.stock-correction-v6{border:2px solid #d3e3dd;scroll-margin-top:16px}
+.stock-correction-entry-v6{margin:4px 0 16px}
+.stock-correction-v6 h2{margin-top:0}
+.stock-correction-current-v6{font-weight:700}
+.stock-correction-preview-v6{margin:14px 0;padding:12px;border-radius:12px;background:#eef5f1;min-height:48px;overflow-wrap:anywhere}
+.stock-correction-confirm-v6{display:flex;align-items:flex-start;gap:10px;margin:16px 0;cursor:pointer;font-weight:500}
+.stock-correction-confirm-v6 input{width:22px;min-width:22px;height:22px;margin:0;accent-color:#246f55}
+.stock-correction-v6 textarea{width:100%;min-height:78px}
+.stock-correction-v6 select{max-width:100%;text-overflow:ellipsis}
+.stock-correction-v6 .notice{overflow-wrap:anywhere}
+@media(max-width:480px){.stock-correction-v6{padding:16px}.stock-correction-v6 .btn{min-height:48px}}
