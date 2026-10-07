@@ -1,5 +1,23 @@
 const test=require('node:test'),assert=require('node:assert/strict');
-const {payload,balance,createRequester}=require('../crm-stock-correction-v6.js');
+const {payload,balance,inventoryResult,createRequester}=require('../crm-stock-correction-v6.js');
+test('remove and add use a quantity to change, while set accepts the final balance including zero',()=>{
+ assert.deepEqual(inventoryResult('remove',10,'3'),{before:10,amount:3,after:7,difference:-3});
+ assert.deepEqual(inventoryResult('add',10,'3'),{before:10,amount:3,after:13,difference:3});
+ assert.deepEqual(inventoryResult('set',10,'3'),{before:10,amount:3,after:3,difference:-7});
+ assert.deepEqual(inventoryResult('remove',10,'10'),{before:10,amount:10,after:0,difference:-10});
+ assert.deepEqual(inventoryResult('set',10,'0'),{before:10,amount:0,after:0,difference:-10});
+ const result=inventoryResult('remove',10,'3');
+ assert.deepEqual(payload('inventory',{id:'m1',batch_id:'b1',location:'reserve',actual:result.after,expected:result.before,reason:'Исправление ошибки ввода'}),{id:'m1',batch_id:'b1',location:'reserve',actual_quantity:7,expected_quantity:10,reason:'Исправление ошибки ввода'});
+});
+test('removing more than the selected stock is rejected and inventory arithmetic stays safe',()=>{
+ assert.throws(()=>inventoryResult('remove',4,5),/Нельзя убрать больше/);
+ assert.throws(()=>inventoryResult('remove',0,1),/Нельзя убрать больше/);
+ for(const operation of ['remove','add'])for(const invalid of ['',0,-1,0.5,Infinity])assert.throws(()=>inventoryResult(operation,10,invalid),/целое число/);
+ for(const invalid of ['',-1,0.5,Infinity])assert.throws(()=>inventoryResult('set',10,invalid),/целое число/);
+ assert.throws(()=>inventoryResult('add',Number.MAX_SAFE_INTEGER,1),/слишком большое/);
+ assert.throws(()=>inventoryResult('unknown',10,1),/Выберите/);
+ assert.throws(()=>inventoryResult('remove',-1,1),/Текущий остаток/);
+});
 test('corrections replace the counted balance, allow zero, and separate package metadata',()=>{
  const base={id:'m1',batch_id:'b1',location:'reserve',actual:'0',expected:12,reason:' Перепутала цифры '};
  assert.deepEqual(payload('inventory',base),{id:'m1',batch_id:'b1',location:'reserve',actual_quantity:0,expected_quantity:12,reason:'Перепутала цифры'});
