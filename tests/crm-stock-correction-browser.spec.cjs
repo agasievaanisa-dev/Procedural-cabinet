@@ -5,7 +5,7 @@ async function boot(page){
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
   window.requests=[];window.savedRequests={};window.transportAfterCommit=false;window.listFailures=0;window.staleNext=false;window.batchDelays={};window.deferCorrection=false;
-  window.medData=[{id:'m1',name:'Самыр <img src=x onerror=alert(1)>',consumption_unit:'амп.',units_per_package:10,reserve_qty:20,work_qty:4,reserve_available:20,work_available:4,purchase_price:100,sale_price:20,active:true},{id:'m2',name:'Препарат во флаконах',consumption_unit:'фл.',units_per_package:5,reserve_qty:9,work_qty:0,reserve_available:9,work_available:0,purchase_price:80,sale_price:25,active:true}];
+  window.medData=[{id:'m1',name:'Самыр <img src=x onerror=alert(1)>',consumption_unit:'амп.',units_per_package:10,reserve_qty:20,work_qty:4,reserve_available:20,work_available:4,purchase_price:100,sale_price:20,manufacturer:'Производитель',release_form:'Раствор',comment:'Сохранить комментарий',dosage:'400 мг',manufacturer_country:'Италия',active:true},{id:'m2',name:'Препарат во флаконах',consumption_unit:'фл.',units_per_package:5,reserve_qty:9,work_qty:0,reserve_available:9,work_available:0,purchase_price:80,sale_price:25,active:true}];
   window.batchData={m1:[{id:'b1',batch_number:'A-1',expiry_date:'2099-01-01',received_date:'2026-10-01',quantity_remaining:14,work_quantity:4,quantity_received:14,purchase_price_per_unit:10},{id:'b2',batch_number:'A-2',expiry_date:'2099-02-01',received_date:'2026-10-01',quantity_remaining:10,work_quantity:0,quantity_received:10,purchase_price_per_unit:12}],m2:[{id:'b3',batch_number:'B-1',expiry_date:'2099-03-01',received_date:'2026-10-01',quantity_remaining:9,work_quantity:0,quantity_received:9,purchase_price_per_unit:16}]};
   const copy=value=>JSON.parse(JSON.stringify(value));
   window.dbStub={auth:{getSession:async()=>({data:{session:null}}),signOut:async()=>({})},from:()=>({select(){return this},eq(){return this},order:async()=>({data:[],error:null})}),rpc:async(name,args)=>{
@@ -13,6 +13,7 @@ async function boot(page){
    if(name==='warehouse_v5'){
     if(action==='list'){if(listFailures>0){listFailures--;return {error:{message:'Нет связи'}};}return {data:copy(medData),error:null};}
     if(action==='batches'){const result=copy(batchData[p.id]||[]);if(batchDelays[p.id])await new Promise(resolve=>setTimeout(resolve,batchDelays[p.id]));return {data:result,error:null};}
+    if(action==='save'){const med=medData.find(m=>m.id===p.id);Object.assign(med,p,{consumption_unit:p.unit,manufacturer_country:p.country});return {data:{id:med.id},error:null};}
     return {data:[],error:null};
    }
    if(name==='crm_stock_correction_v6'){
@@ -94,4 +95,40 @@ test('signing out during a pending save keeps the next owner card untouched',asy
  const errors=await boot(page);await fillCorrection(page);await page.evaluate(()=>{deferCorrection=true;window.pendingSave=saveStockCorrectionV6();});await page.waitForFunction(()=>typeof releaseCorrection==='function');
  await page.evaluate(async()=>{await signOut();currentStaff={id:'other-owner',role:'owner',full_name:'Другой владелец'};await loadInventory();openMedForm('m2','correct');});await expect(page.locator('#stockCorrectionBatchV6')).toContainText('B-1');
  await page.evaluate(async()=>{releaseCorrection();await pendingSave;});await expect(page.locator('#medId')).toHaveValue('m2');await expect(page.locator('#stockCorrectionCurrentV6')).toContainText('9 фл.');await expect(page.locator('#stockCorrectionActualV6')).toHaveValue('');await expect(page.locator('#stockCorrectionMessageV6')).not.toContainText('Исправление сохранено');expect(errors).toEqual([]);
+});
+
+test('owner changes package purchase and unit sale prices without altering stock or batch costs',async({page})=>{
+ const errors=await boot(page);
+ await page.evaluate(()=>openMedForm('m1','edit'));
+ await page.fill('#medCommentV5','Исправленный комментарий');
+ await page.click('#medPricesEntry');
+ await expect(page.locator('#medCommentV5')).toHaveValue('Исправленный комментарий');
+ await expect(page.locator('#medDetails')).toHaveAttribute('open','');
+ await expect(page.locator('#medPurchasePrice')).toBeFocused();
+ await expect(page.locator('#medPriceFields')).toContainText('амп.');
+ await expect(page.locator('#medPriceFields')).toContainText('упаковку');
+ await expect(page.locator('#stockCorrectionPanelV6')).toBeHidden();
+ await page.fill('#medPurchasePrice','155.50');await page.fill('#medSalePrice','32.25');
+ await page.click('#medSaveButton');
+ await expect(page.locator('#medPhotoMessage')).toContainText('сохранены');
+ const saved=await page.evaluate(()=>requests.findLast(call=>call.name==='warehouse_v5'&&call.args.p_action==='save'));
+ expect(saved.args.p_payload).toMatchObject({id:'m1',purchase_price:155.5,sale_price:32.25,units_per_package:10,unit:'амп.',manufacturer:'Производитель',release_form:'Раствор',comment:'Исправленный комментарий',dosage:'400 мг',country:'Италия'});
+ const after=await page.evaluate(()=>({med:medData[0],batch:batchData.m1[0]}));
+ expect(after.med.reserve_qty).toBe(20);expect(after.med.work_qty).toBe(4);
+ expect(after.batch.purchase_price_per_unit).toBe(10);expect(after.batch.quantity_remaining).toBe(14);
+ await expect(page.locator('#receivePrice')).toHaveValue('155.5');await expect(page.locator('#openingPrice')).toHaveValue('155.5');
+ await page.click('button[onclick="show(\'admin\')"]');
+ const card=page.locator('.inventory-card').first();await expect(card).toContainText('155,5');await expect(card).toContainText('32,25');
+ await card.getByRole('button',{name:'Изменить цены',exact:true}).click();
+ await expect(page.locator('#medPurchasePrice')).toHaveValue('155.5');await expect(page.locator('#medSalePrice')).toHaveValue('32.25');
+ const saveCount=await page.evaluate(()=>requests.filter(call=>call.args?.p_action==='save').length);
+ await page.fill('#medSalePrice','-1');await page.click('#medSaveButton');
+ await expect(page.locator('#medPhotoMessage')).toContainText('число от нуля');await expect(page.locator('#medPurchasePrice')).toHaveValue('155.5');
+ expect(await page.evaluate(()=>requests.filter(call=>call.args?.p_action==='save').length)).toBe(saveCount);
+ await page.fill('#medSalePrice','0');await page.click('#medSaveButton');await expect(page.locator('#medPhotoMessage')).toContainText('сохранены');expect(await page.evaluate(()=>medData[0].sale_price)).toBe(0);
+ await page.evaluate(()=>openMedForm('m2','prices'));await expect(page.locator('#medPriceFields')).toContainText('фл.');
+ const beforeNurse=await page.evaluate(()=>requests.filter(call=>call.args?.p_action==='save').length);
+ await page.evaluate(async()=>{await signOut();currentStaff={id:'nurse',role:'nurse'};openMedForm('m1','prices');await saveMedication();});
+ expect(await page.evaluate(()=>requests.filter(call=>call.args?.p_action==='save').length)).toBe(beforeNurse);
+ expect(errors).toEqual([]);
 });
