@@ -24,6 +24,7 @@ async function boot(page,role='owner'){
     window.__crmRecords.push(args);return {data:{id:'saved-1',paid_total:args.p_payload.paid_total,payments:args.p_payload.payments}};
    }
    if(name==='crm_finance_v5'){
+    if(args.p_action==='accounting_mode')return {data:{payment_only:false,stock_deducted:true}};
     if(args.p_action==='settings_get')return {data:{float_amount:50000,time_zone:'Europe/Moscow'}};
     if(args.p_action==='summary')return {data:{from:args.p_payload.from,to:args.p_payload.to,time_zone:'Europe/Moscow',group_by:args.p_payload.group_by,patients_count:1,procedures_count:1,sales_count:0,revenue:{cash:40,terminal:40,owner_card:40,total:120,unclassified:0},payroll_total:4000,payroll_closed:0,payroll_open:4000,payroll_unknown:0,payroll_complete:true,cash_after_salary:-3880,has_open_shifts:true,days_complete:false,rows:[{id:'day',label:'2026-10-06',patients_count:1,procedures_count:1,sales_count:0,revenue:{cash:40,terminal:40,owner_card:40,total:120}}],shifts:[{...opened,shift_date:'2026-10-06',status:'open',payroll_total:4000,payroll_complete:true}],...window.__crmSummaryOverrides}};
     if(args.p_action==='close'){window.__crmShiftReport.shift.status='closed';return {data:window.__crmShiftReport}}

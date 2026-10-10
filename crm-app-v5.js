@@ -10,7 +10,7 @@ function renderCabinetHomeV5(){
  const actions=isManager()?[
   ['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊','Продажа препаратов','openSale()'],['📦','Склад','openStock()'],
   ['💰','Касса','openCashV5()'],['👩‍⚕️','Сотрудники','openStaffV5()'],['📊','Отчёты','openReportsV5()'],['📈','Аналитика','openAnalyticsV5()'],['⚙️','Настройки','openSettingsV5()']
- ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊','Препараты в работе','openStock()'],['💰','Оплата','openSale()'],['📋','Закрыть смену','openShiftMenu()']];
+ ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊',financeAccountingMode5?.payment_only?'Прайс препаратов':'Препараты в работе','openStock()'],['💰','Оплата','openSale()'],['📋','Закрыть смену','openShiftMenu()']];
  $('workspace').querySelector('.home-actions').innerHTML=actions.map(([icon,label,action])=>`<button onclick="${action}"><span>${icon}</span><strong>${label}</strong></button>`).join('');
  $('workspace').querySelector('h1').textContent=isManager()?'Кабинет владельца':'Работа со своей сменой';
  $('status').textContent=`${currentStaff.full_name} · ${isManager()?'Владелец':'Медсестра'}`;

@@ -21,10 +21,10 @@ async function saveTreatment(kind){
   if(kind==='procedure')payload.service_id=$('procService').value;
   clinicalBusy=true;document.querySelectorAll('#'+screen+' button,#'+screen+' input,#'+screen+' select,#'+screen+' textarea').forEach(e=>e.disabled=true);
   message(screen+'Message','Сохраняем…');
-  await treatmentRpc(kind,payload);
+  const receipt=await treatmentRpc(kind,payload);
   // Clear the saved form before refreshing, including on refresh failure.
   $(prefix+'Meds').innerHTML='';$(prefix+'Paid').value='';
-  message(screen+'Message','Сохранено. Препараты списаны из рабочего шкафа.',true);
+  message(screen+'Message',receipt?.stock_deducted===false?'Сохранено. Оплата учтена, остатки склада не изменены.':'Сохранено. Препараты списаны из рабочего шкафа.',true);
   show('workspace');await refreshDashboard();
  }catch(e){message(screen+'Message',e.message)}
  finally{clinicalBusy=false;document.querySelectorAll('#'+screen+' button,#'+screen+' input,#'+screen+' select,#'+screen+' textarea').forEach(e=>e.disabled=false)}

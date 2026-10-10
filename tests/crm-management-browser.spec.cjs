@@ -22,7 +22,7 @@ test('owner management mobile flows and nurse access restrictions',async({page})
     if(a==='backup_export')data={version:'5',exported_at:'2026-10-06',tables:{'public.patients':[]}};
    }
    if(name==='crm_backup_status_v5')data={last_run:null,last_success:null};
-   if(name==='crm_finance_v5'){if(a==='settings_get')data={float_amount:50000,time_zone:'Europe/Moscow'};if(a==='settings_save')data=p}
+   if(name==='crm_finance_v5'){if(a==='accounting_mode')data={payment_only:false,stock_deducted:true};if(a==='settings_get')data={float_amount:50000,time_zone:'Europe/Moscow',payment_only:false};if(a==='settings_save')data=p}
    if(name==='work_catalog_v2')data=medData;if(name==='nurse_service_catalog')data=serviceData;
    if(name==='warehouse_v5'||name==='warehouse_v2'){
     if(a==='list')data=medData;if(a==='save'){Object.assign(medData[0],p);data={id:'m1'}}

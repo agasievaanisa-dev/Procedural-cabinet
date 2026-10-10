@@ -137,7 +137,7 @@
   }
   function renderPatientHistory(data) {
     const events = [...(data?.procedures || []).map(event => ({ ...event, kind: 'Процедура', at: event.visit_at, items: event.medications || [] })), ...(data?.sales || []).map(event => ({ ...event, kind: 'Продажа препарата', at: event.sold_at, items: event.items || [] }))].sort((a, b) => new Date(b.at) - new Date(a.at));
-    $('patientHistory').innerHTML = events.map(event => `<div class="item"><div class="row between"><strong>${event.kind}${event.procedure_type ? ' · ' + esc(event.procedure_type) : ''}</strong>${owner() && event.paid_total != null ? `<span>${rub(event.paid_total)}</span>` : ''}</div><div class="small">${esc(new Date(event.at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }))} · ${esc(event.nurse || '')}</div>${event.items.length ? `<div class="small">${event.items.map(item => `${esc(item.name)} × ${esc(qty(item.quantity))} ${esc(item.unit || '')}`).join(', ')}</div>` : ''}${owner() && num(event.discount_amount) > 0 ? `<div class="small">Скидка: ${rub(event.discount_amount)}</div>` : ''}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<div class="notice">История пока пустая.</div>';
+    $('patientHistory').innerHTML = events.map(event => `<div class="item"><div class="row between"><strong>${event.kind}${event.procedure_type ? ' · ' + esc(event.procedure_type) : ''}</strong>${owner() && event.paid_total != null ? `<span>${rub(event.paid_total)}</span>` : ''}</div>${event.stock_deducted === false ? '<span class="pill accounting-badge-v5">Без списания со склада</span>' : ''}<div class="small">${esc(new Date(event.at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }))} · ${esc(event.nurse || '')}</div>${event.items.length ? `<div class="small">${event.items.map(item => `${esc(item.name)} × ${esc(qty(item.quantity))} ${esc(item.unit || '')}`).join(', ')}</div>` : ''}${owner() && num(event.discount_amount) > 0 ? `<div class="small">Скидка: ${rub(event.discount_amount)}</div>` : ''}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<div class="notice">История пока пустая.</div>';
   }
   loadPatientDocuments = async function (patientId) {
     const staffId = currentStaff?.id;
@@ -287,7 +287,7 @@
       case 'procedure': return selected ? `Открыть черновик процедуры для пациента «${selected.full_name}». Услугу и назначения выберите вручную.` : 'Открыть черновик процедуры. Выберите пациента, услугу и назначения.';
       case 'med_find': return `Найти препарат «${plan.query}».`;
       case 'med_create': return `Открыть новую карточку препарата с названием «${plan.name}». Остальные поля и цены проверьте перед сохранением.`;
-      case 'med_add': return `Добавить в черновик «${selected.name}»: ${plan.quantity} ${unit(selected)}. Это количество единиц списания. Остаток в работе: ${qty(selected.work_qty)} ${unit(selected)}.`;
+      case 'med_add': return `Добавить в черновик «${selected.name}»: ${plan.quantity} ${unit(selected)}. ${typeof isPaymentOnlyV5 === 'function' && isPaymentOnlyV5() ? 'Оплата будет учтена по прайсу без списания со склада.' : `Это количество единиц списания. Остаток в работе: ${qty(selected.work_qty)} ${unit(selected)}.`}`;
       case 'med_change': return `Изменить количество «${selected.name}» в черновике на ${plan.quantity} ${unit(selected)}. Это количество единиц списания.`;
       case 'med_remove': return `Убрать «${selected.name}» из черновика.`;
       default: return '';

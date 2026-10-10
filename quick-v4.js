@@ -21,8 +21,13 @@ const originalAddPatient4=addPatient;let patientSaving4=false;
 addPatient=async function(){if(patientSaving4)return;patientSaving4=true;const before=patients.length;try{await originalAddPatient4();if(patients.length>before)await openPatient(patients[0].id)}finally{patientSaving4=false}};
 renderPatients=function(){const q=normalizeSearch($('patientSearch').value);$('patientList').innerHTML=patients.filter(p=>normalizeSearch(p.full_name+' '+(p.phone||'')).includes(q)).map(p=>`<button class="item click" style="text-align:left" onclick="openPatient('${p.id}')"><strong>${esc(p.full_name)}</strong><div class="small">${esc(p.birth_date||'Дата рождения не указана')} · ${esc(p.phone||'Телефон не указан')}</div></button>`).join('')||'<p>Ничего не найдено.</p>'};
 staffOptions=function(){return [[shift.aId,shift.a],[shift.bId,shift.b]].map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')};
-async function openStock(){if(isManager()){show('admin');await loadInventory()}else{show('workStock');await loadMeds();renderWorkStock()}}
-function renderWorkStock(){const q=$('workSearch').value;const list=meds.filter(m=>matchesMedication(m,q));$('workStockList').innerHTML=list.map(m=>`<div class="item inventory-heading">${medPhotoHtml(m,'stock-photo')}<div><strong>${esc(m.name)}</strong><div>${esc(m.dosage||'')}</div><b>${qty(m.work_qty)} ${esc(unit(m))}</b><div class="small">${num(m.work_qty)>0?'В рабочем шкафу':'Нет в рабочем шкафу — обратитесь к администратору'}</div></div></div>`).join('')||'<p>Препараты не найдены.</p>'}
+async function openStock(){try{if(isManager()){show('admin');await loadInventory()}else{if(typeof loadAccountingModeV5==='function')await loadAccountingModeV5();show('workStock');await loadMeds();renderWorkStock()}}catch(e){message('homeMessage',e.message)}}
+function renderWorkStock(){
+ const q=$('workSearch').value,paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5();
+ const list=meds.filter(m=>matchesMedication(m,q));$('workStock').querySelector('h1').textContent=paymentOnly?'Прайс препаратов':'Препараты в работе';
+ const cards=list.map(m=>`<div class="item inventory-heading">${medPhotoHtml(m,'stock-photo')}<div><strong>${esc(m.name)}</strong><div>${esc(m.dosage||'')}</div><b>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))}</b><div class="small">${paymentOnly?'Учёт оплаты без складского списания':num(m.work_qty)>0?'В рабочем шкафу':'Нет в рабочем шкафу — обратитесь к администратору'}</div></div></div>`).join('')||'<p>Препараты не найдены.</p>';
+ $('workStockList').innerHTML=(paymentOnly?'<div class="notice accounting-mode-v5">Оплата учитывается по прайсу. Количество на складе не ограничивает запись и не меняется.</div>':'')+cards;
+}
 async function openShiftMenu(){
  try{await loadQuickContext();if(shift&&quickContext.shifts.some(s=>s.id===shift.id)){await openReport();return}
  shift=null;show('shift');await loadNurses();$('openShiftChoices').innerHTML=quickContext.shifts.map(s=>`<button class="btn secondary wide" onclick="selectOpenShift4('${s.id}')">Открытая смена: ${esc((s.staff||[]).map(n=>n.full_name).join(', '))} · ${esc(shiftLabel(s.started_at,s.planned_end_at))}</button>`).join('');
@@ -45,9 +50,9 @@ startShift=async function(){
 function sortedCatalog4(list){const favorites=new Set(quickContext.favorites||[]),recent=new Map((quickContext.recent||[]).map(x=>[x.id,x.count]));return [...list].sort((a,b)=>Number(favorites.has(b.id))-Number(favorites.has(a.id))||(recent.get(b.id)||0)-(recent.get(a.id)||0)||a.name.localeCompare(b.name,'ru'))}
 filterMedicationRows=function(target,q){renderMedVisualCatalog(target,q)};
 renderMedVisualCatalog=function(target,q=''){
- const panel=$(target==='procMeds'?'procPhotoCatalog':'salePhotoCatalog'),favorites=new Set(quickContext.favorites||[]);const matches=sortedCatalog4(meds.filter(m=>matchesMedication(m,q)));let group='';
+ const panel=$(target==='procMeds'?'procPhotoCatalog':'salePhotoCatalog'),favorites=new Set(quickContext.favorites||[]),paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(target==='procMeds'?'proc':'sale');const matches=sortedCatalog4(meds.filter(m=>matchesMedication(m,q)));let group='';
  panel.innerHTML=matches.slice(0,q?40:12).map(m=>{const g=favorites.has(m.id)?'⭐ Избранные':(quickContext.recent||[]).some(x=>x.id===m.id)?'Недавно использовали':'Препараты';const heading=!q&&g!==group?`<h3 class="catalog-group">${g}</h3>`:'';group=g;
- return `${heading}<div class="med-tile ${num(m.work_qty)<=0?'empty':''}"><button class="favorite-toggle" aria-label="${favorites.has(m.id)?'Убрать из избранного':'В избранное'}: ${esc(m.name)}" aria-pressed="${favorites.has(m.id)}" onclick="toggleFavorite4('${m.id}','${target}')">${favorites.has(m.id)?'★':'☆'}</button><button class="photo-choice" onclick="chooseMedication('${target}','${m.id}')">${medPhotoHtml(m)}<span><strong>${esc(m.name)}</strong><small>${esc(m.dosage||m.search_name||'')}</small><small>${qty(m.work_qty)} ${esc(unit(m))} в шкафу</small></span></button></div>`;
+ return `${heading}<div class="med-tile ${(!paymentOnly&&num(m.work_qty)<=0)||(paymentOnly&&num(m.sale_price)<=0)?'empty':''}"><button class="favorite-toggle" aria-label="${favorites.has(m.id)?'Убрать из избранного':'В избранное'}: ${esc(m.name)}" aria-pressed="${favorites.has(m.id)}" onclick="toggleFavorite4('${m.id}','${target}')">${favorites.has(m.id)?'★':'☆'}</button><button class="photo-choice" onclick="chooseMedication('${target}','${m.id}')">${medPhotoHtml(m)}<span><strong>${esc(m.name)}</strong><small>${esc(m.dosage||m.search_name||'')}</small><small>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))+' в шкафу'}</small></span></button></div>`;
  }).join('')||'<p class="catalog-group">Не найдено. Попробуйте название, дозировку или категорию.</p>';
  if(!q&&matches.length>12)panel.innerHTML+='<p class="catalog-group small">Остальные препараты найдутся через поиск.</p>';
 };
@@ -60,12 +65,15 @@ addMedRow=function(target,id='',amount=1,fallback=null){
 };
 chooseMedication=function(target,id){const row=[...$(target).querySelectorAll('.medrow')].find(r=>r.dataset.medicationId===id);if(row)row.querySelector('.medqty').value=num(row.querySelector('.medqty').value)+1;else addMedRow(target,id);recalc()};
 const originalRecalc4=recalc;
-recalc=function(){originalRecalc4();for(const target of ['procMeds','saleMeds']){
+function renderTreatmentAvailability4(){for(const target of ['procMeds','saleMeds']){
+ const paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(target==='procMeds'?'proc':'sale');
  const total=new Map();rows(target).forEach(x=>total.set(x.medication_id,(total.get(x.medication_id)||0)+x.quantity));
- $(target).querySelectorAll('.medrow').forEach(r=>{const m=meds.find(x=>x.id===r.dataset.medicationId),n=total.get(r.dataset.medicationId),missing=!m||n>num(m.work_qty);r.classList.toggle('short',missing);const h=r.querySelector('.stock-hint');if(h)h.textContent=!m?'Препарат недоступен':missing?`Не хватает ${qty(n-num(m.work_qty))} ${unit(m)} в шкафу`:`В шкафу: ${qty(m.work_qty)} ${unit(m)}`});
- }renderShortages4();};
+ $(target).querySelectorAll('.medrow').forEach(r=>{const m=meds.find(x=>x.id===r.dataset.medicationId),n=total.get(r.dataset.medicationId),missing=!m||(paymentOnly?num(m.sale_price)<=0:n>num(m.work_qty));r.classList.toggle('short',missing);const h=r.querySelector('.stock-hint');if(h)h.textContent=!m?'Препарат недоступен':paymentOnly?(num(m.sale_price)>0?`${rub(m.sale_price)} / ${unit(m)} · без списания со склада`:'Цена не задана — обратитесь к владельцу'):missing?`Не хватает ${qty(n-num(m.work_qty))} ${unit(m)} в шкафу`:`В шкафу: ${qty(m.work_qty)} ${unit(m)}`});
+ }renderShortages4();}
+recalc=function(){originalRecalc4();renderTreatmentAvailability4()};
 function renderShortages4(){
  const kind=$('procedure').classList.contains('active')?'proc':$('sale').classList.contains('active')?'sale':null;if(!kind)return;const host=$(kind+'Meds');let box=$(kind+'Shortage');if(!box){box=document.createElement('div');box.id=kind+'Shortage';host.after(box)}
+ if(typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(kind)){box.innerHTML='';return}
  const missing=rows(kind+'Meds').map(x=>({...x,m:meds.find(m=>m.id===x.medication_id)})).filter(x=>!x.m||x.quantity>num(x.m.work_qty));
  box.innerHTML=missing.map(x=>{const stock=isManager()?inventory.find(m=>m.id===x.medication_id):null;const amount=stock?Math.ceil((x.quantity-num(x.m?.work_qty))/packSize(stock))*packSize(stock):0;
  return `<div class="shortage">${esc(x.m?.name||'Препарат')}: недостаточно в рабочем шкафу. ${stock&&amount<=num(stock.reserve_available??stock.reserve_qty)?`<button class="btn secondary" onclick="quickTransfer4('${stock.id}',${amount})">Перевести ${qty(amount/packSize(stock))} уп. из запаса</button>`:isManager()?'Оформите приход или проверьте запас.':'Обратитесь к администратору для пополнения.'}</div>`}).join('');
@@ -84,12 +92,12 @@ const originalSaveTreatment4=saveTreatment;
 saveTreatment=async function(kind){
  const p=kind==='procedure'?'proc':'sale';try{
   if(kind==='procedure'&&(!$('procPatient').value||!$('procService').value))throw Error('Выберите пациента и услугу');
-  const selected=rows(p+'Meds');for(const x of selected){const m=meds.find(m=>m.id===x.medication_id);if(!m||x.quantity>num(m.work_qty))throw Error('Недостаточно препарата в рабочем шкафу. Сначала пополните шкаф или исправьте количество.')}
+  const paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(p),selected=rows(p+'Meds');for(const x of selected){const m=meds.find(m=>m.id===x.medication_id);if(!m||(!paymentOnly&&x.quantity>num(m.work_qty)))throw Error('Недостаточно препарата в рабочем шкафу. Сначала пополните шкаф или исправьте количество.');if(paymentOnly&&num(m.sale_price)<=0)throw Error('У препарата не указана цена продажи. Владелец может добавить её в карточке препарата.')}
   await originalSaveTreatment4(kind);
-  if($('workspace').classList.contains('active'))message('homeMessage',kind==='procedure'?'Процедура сохранена. Препараты списаны.':'Продажа сохранена. Препараты списаны.',true);
+  if($('workspace').classList.contains('active'))message('homeMessage',(kind==='procedure'?'Процедура сохранена. ':'Продажа сохранена. ')+(paymentOnly?'Оплата учтена, остатки склада не изменены.':'Препараты списаны.'),true);
  }catch(e){message(kind+'Message',e.message)}
 };
-function templateText4(t){return `${new Date(t.at).toLocaleDateString('ru-RU')} · ${esc(t.service_name||'Процедура')}<br>${(t.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit||'')}`).join(', ')||'Без препаратов'}`}
+function templateText4(t){return `${new Date(t.at).toLocaleDateString('ru-RU')} · ${esc(t.service_name||'Процедура')}${t.stock_deducted===false?' · без списания со склада':''}<br>${(t.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit||'')}`).join(', ')||'Без препаратов'}`}
 async function showRepeatHint(){const token=++hintView4,id=$('procPatient').value;$('repeatHint').innerHTML='';if(!id)return;try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==hintView4)return;if(t)$('repeatHint').innerHTML=`<div class="card"><span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn secondary" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button></div>`}catch(e){message('repeatHint',e.message)}}
 const originalOpenPatient4=openPatient;
 openPatient=async function(id){const token=++patientView4;lastTemplate=null;$('lastProcedure').textContent='Загружаем последнюю процедуру…';await originalOpenPatient4(id);try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==patientView4||currentPatientId!==id)return;lastTemplate=t;$('lastProcedure').innerHTML=t?`<span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn primary wide" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button>`:'Процедур пока нет.'}catch(e){$('lastProcedure').textContent=e.message}};

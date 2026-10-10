@@ -1,5 +1,6 @@
 /* Owner management and editable procedure templates. Authorization is enforced by RPCs. */
 let managementStaffV5=[],managementTemplatesV5=[],managementAuditV5=[],managementBusyV5=false,managementLoadV5=0;
+let managementSettingsLoadedV5=false;
 
 async function crmManagementRpcV5(action,payload={}){
   const {data,error}=await db.rpc('crm_management_v5',{p_action:action,p_payload:payload});
@@ -24,6 +25,7 @@ function managementMoneyV5(value,label){
 function roleLabelV5(role){return ({owner:'Владелец',admin:'Администратор',nurse:'Медсестра'})[role]||role||'Не указана'}
 function managementSetBusyV5(id,value){
   managementBusyV5=value;$(id)?.querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=value);
+  if(id==='settingsV5'&&!value&&!managementSettingsLoadedV5){if($('settingsPaymentOnlyV5'))$('settingsPaymentOnlyV5').disabled=true;if($('settingsSaveV5'))$('settingsSaveV5').disabled=true}
 }
 
 async function openStaffV5(){
@@ -67,15 +69,17 @@ async function createStaffAccountV5(){
 
 async function openSettingsV5(){
   if(!ownerManagementV5())return;
-  managementScreenV5('settingsV5','Настройки',`<div class="card"><h2>Касса и время</h2><label for="settingsFloatV5">Разменный фонд, ₽</label><input id="settingsFloatV5" type="number" inputmode="decimal" min="0" step="0.01"><p class="small">Разменный фонд используется для сдачи и не входит в выручку.</p><p>Время кабинета: <strong>Москва (UTC+3)</strong></p><p class="small">Смены, дневные отчёты и сроки годности рассчитываются по времени кабинета на всех устройствах.</p><button class="btn primary wide" onclick="saveSettingsV5()">Сохранить настройки</button><div id="settingsMessageV5" role="status" aria-live="polite"></div></div><div class="card"><h2>Услуги и назначения</h2><button class="btn secondary wide" onclick="goServicesV5()">Прайс услуг</button><button class="btn secondary wide" onclick="openTemplatesV5()">Шаблоны процедур</button></div><div class="card"><h2>История и резервная копия</h2><button class="btn secondary wide" onclick="openAuditV5()">Журнал действий</button><button class="btn secondary wide" onclick="downloadDataExportV5()">Скачать данные учёта</button><p class="small">JSON содержит данные учёта и ссылки на документы. Файлы документов и фотографии хранятся отдельно.</p><div id="backupMessageV5" role="status" aria-live="polite"></div></div>`);
+  managementSettingsLoadedV5=false;
+  managementScreenV5('settingsV5','Настройки',`<div class="card"><h2>Учёт оплаты и склада</h2><label class="management-check"><input id="settingsPaymentOnlyV5" type="checkbox" disabled><span>Учитывать оплату без списания препаратов со склада</span></label><p class="small">Медсёстры оформляют процедуры и продажи по прайсу. Оплата попадает в кассу и отчёт смены, а остатки не меняются.</p><p class="small">Когда склад будет готов, снимите отметку и сохраните настройки. Списания начнутся только для новых операций. Прошлые записи автоматически списываться не будут.</p></div><div class="card"><h2>Касса и время</h2><label for="settingsFloatV5">Разменный фонд, ₽</label><input id="settingsFloatV5" type="number" inputmode="decimal" min="0" step="0.01"><p class="small">Разменный фонд используется для сдачи и не входит в выручку.</p><p>Время кабинета: <strong>Москва (UTC+3)</strong></p><p class="small">Смены, дневные отчёты и сроки годности рассчитываются по времени кабинета на всех устройствах.</p><button id="settingsSaveV5" class="btn primary wide" onclick="saveSettingsV5()" disabled>Сохранить настройки</button><div id="settingsMessageV5" role="status" aria-live="polite"></div></div><div class="card"><h2>Услуги и назначения</h2><button class="btn secondary wide" onclick="goServicesV5()">Прайс услуг</button><button class="btn secondary wide" onclick="openTemplatesV5()">Шаблоны процедур</button></div><div class="card"><h2>История и резервная копия</h2><button class="btn secondary wide" onclick="openAuditV5()">Журнал действий</button><button class="btn secondary wide" onclick="downloadDataExportV5()">Скачать данные учёта</button><p class="small">JSON содержит данные учёта и ссылки на документы. Файлы документов и фотографии хранятся отдельно.</p><div id="backupMessageV5" role="status" aria-live="polite"></div></div>`);
   show('settingsV5');message('settingsMessageV5','Загружаем настройки…');
-  try{const s=await crmFinanceRpcV5('settings_get');if(!isManager())return;$('settingsFloatV5').value=s.float_amount??0;message('settingsMessageV5','')}
+  try{const s=await crmFinanceRpcV5('settings_get');if(!isManager())return;if(typeof s.payment_only!=='boolean')throw Error('Режим учёта не загрузился. Откройте настройки заново.');$('settingsFloatV5').value=s.float_amount??0;$('settingsPaymentOnlyV5').checked=s.payment_only;managementSettingsLoadedV5=true;$('settingsPaymentOnlyV5').disabled=false;$('settingsSaveV5').disabled=false;if(typeof setAccountingModeV5==='function')setAccountingModeV5(s);message('settingsMessageV5','')}
   catch(e){message('settingsMessageV5',e.message)}
 }
 async function saveSettingsV5(){
-  if(!ownerManagementV5()||managementBusyV5)return;
+  if(!ownerManagementV5()||managementBusyV5||!managementSettingsLoadedV5||$('settingsSaveV5')?.disabled)return;
   try{const float_amount=managementMoneyV5($('settingsFloatV5').value,'Разменный фонд'),time_zone='Europe/Moscow';
-    managementSetBusyV5('settingsV5',true);await crmFinanceRpcV5('settings_save',{float_amount,time_zone});message('settingsMessageV5','Настройки сохранены.',true);
+    const payment_only=$('settingsPaymentOnlyV5').checked;
+    managementSetBusyV5('settingsV5',true);const result=await crmFinanceRpcV5('settings_save',{float_amount,time_zone,payment_only});if(typeof setAccountingModeV5==='function')setAccountingModeV5(result);message('settingsMessageV5','Настройки сохранены. '+(payment_only?'Оплата учитывается без складского списания.':'Препараты будут списываться при новых процедурах и продажах.'),true);
     if(typeof refreshOwnerDashboardV5==='function')await refreshOwnerDashboardV5();
   }catch(e){message('settingsMessageV5',e.message)}finally{managementSetBusyV5('settingsV5',false)}
 }
@@ -243,6 +247,7 @@ async function downloadDataExportV5(){
 
 const managementSignOutV5=signOut;
 signOut=async function(){
+  managementSettingsLoadedV5=false;
   ++managementLoadV5;managementStaffV5=[];managementTemplatesV5=[];managementAuditV5=[];medicationBatchesExtraV5.clear();
   if($('staffCreatePasswordV5'))$('staffCreatePasswordV5').value='';
   for(const id of ['staffV5','settingsV5','templatesV5','auditV5'])$(id)?.remove();

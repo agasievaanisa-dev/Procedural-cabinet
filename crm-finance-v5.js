@@ -3,6 +3,68 @@ const financeRequests5 = new Map();
 let financeReportId5 = null, financeBusy5 = false, financeView5 = 0;
 const financeSnapshots5 = new Map();
 const financePaymentState5 = {proc: null, sale: null};
+let financeAccountingMode5 = null, financeAccountingLoad5 = 0;
+const financeTreatmentMode5 = {proc:null, sale:null};
+const financeTreatmentReceipt5 = {proc:null, sale:null};
+const financeAccountingMismatch5 = {proc:false, sale:false};
+
+function isPaymentOnlyV5(prefix = null) {
+ if (!prefix) prefix = $('procedure')?.classList.contains('active') ? 'proc' : $('sale')?.classList.contains('active') ? 'sale' : null;
+ return (prefix ? financeTreatmentMode5[prefix] : null)?.payment_only ?? financeAccountingMode5?.payment_only ?? false;
+}
+function setAccountingModeV5(data) {
+ if (typeof data?.payment_only !== 'boolean') throw Error('Не удалось проверить режим учёта. Повторите открытие формы.');
+ financeAccountingMode5 = {payment_only:data.payment_only, stock_deducted:!data.payment_only};
+ renderAccountingModeV5();
+ return financeAccountingMode5;
+}
+async function loadAccountingModeV5() {
+ const actor = currentStaff?.id, token = ++financeAccountingLoad5;
+ const data = await crmFinanceRpcV5('accounting_mode');
+ if (!actor || currentStaff?.id !== actor || token !== financeAccountingLoad5) throw Error('Учётная запись изменилась. Откройте форму заново.');
+ return setAccountingModeV5(data);
+}
+function accountingNoticeHtmlV5(paymentOnly) {
+ return paymentOnly ? '<strong>Учёт оплаты без списания со склада</strong><p>Процедуры и продажи учитываются по прайсу в кассе и смене. Остатки препаратов не меняются.</p>' : '<strong>Складской учёт включён</strong><p>Препараты списываются из раздела «В работе».</p>';
+}
+function renderAccountingModeV5() {
+ const home = $('workspace');
+ if (home) {
+  let banner = $('accountingModeBannerV5');
+  if (!banner) { banner = document.createElement('div'); banner.id = 'accountingModeBannerV5'; banner.className = 'notice accounting-mode-v5'; banner.setAttribute('role','status'); home.querySelector('.sub')?.after(banner); }
+  banner.innerHTML = financeAccountingMode5 ? accountingNoticeHtmlV5(financeAccountingMode5.payment_only) : 'Режим учёта ещё не проверен. При открытии процедуры или продажи программа проверит его повторно.';
+ }
+ for (const prefix of ['proc','sale']) {
+  const screen = $(prefix === 'proc' ? 'procedure' : 'sale'); if (!screen) continue;
+  let banner = $(prefix + 'AccountingModeV5');
+  if (!banner) { banner = document.createElement('div'); banner.id = prefix + 'AccountingModeV5'; banner.className = 'notice accounting-mode-v5'; banner.setAttribute('role','status'); (screen.querySelector('.sub') || screen.querySelector('h1'))?.after(banner); }
+  const mode = financeTreatmentMode5[prefix] || financeAccountingMode5;
+  banner.innerHTML = (mode ? accountingNoticeHtmlV5(mode.payment_only) : 'Проверяем режим учёта…') + (financeAccountingMismatch5[prefix] ? `<button type="button" class="btn secondary wide" onclick="refreshTreatmentAccountingV5('${prefix}')">Обновить режим учёта</button>` : '');
+ }
+ const reserveOption = $('reserveSaleOptionV5');
+ if (reserveOption) reserveOption.classList.toggle('hidden', !isManager() || isPaymentOnlyV5('sale'));
+ if (isPaymentOnlyV5('sale') && $('saleReserveV5')) $('saleReserveV5').checked = false;
+ if (typeof renderCabinetHomeV5 === 'function' && currentStaff) renderCabinetHomeV5();
+}
+async function refreshTreatmentAccountingV5(prefix) {
+ if (clinicalBusy || !financeAccountingMismatch5[prefix]) return;
+ const screen = prefix === 'proc' ? 'procedure' : 'sale';
+ try {
+  const mode = await loadAccountingModeV5();
+  financeTreatmentMode5[prefix] = {...mode};
+  financeAccountingMismatch5[prefix] = false;
+  $(prefix + 'PayConfirmed').checked = false;
+  renderAccountingModeV5(); renderMedVisualCatalog(prefix + 'Meds',$(prefix + 'MedSearch').value); renderTreatmentAvailability4();
+  message(screen + 'Message','Режим учёта обновлён. Черновик сохранён. Проверьте и подтвердите оплату заново.',true);
+ } catch (e) { message(screen + 'Message',e.message); }
+}
+function financeStockBadgeV5(event) {
+ return event.stock_deducted === false ? '<span class="pill accounting-badge-v5">Без списания со склада</span>' : '';
+}
+function financePaymentOnlyNoteV5(data) {
+ const procedures = num(data.payment_only_procedures_count), sales = num(data.payment_only_sales_count);
+ return procedures || sales ? `<div class="notice accounting-mode-v5">${isManager() ? 'В выручку включены' : 'Проведены'} операции без складского списания: процедур — ${procedures}, продаж — ${sales}. Их количества показаны отдельно от списаний.</div>` : '';
+}
 
 function financeCentsV5(value, label = 'Сумма') {
  const s = String(value ?? '').trim().replace(',', '.');
@@ -53,7 +115,7 @@ function resetPaymentV5(prefix) {
  $(prefix + 'PayConfirmed').checked = false;
  if (prefix === 'sale') {
   $('saleReserveV5').checked = false;
-  $('reserveSaleOptionV5').classList.toggle('hidden', !isManager());
+  $('reserveSaleOptionV5').classList.toggle('hidden', !isManager() || isPaymentOnlyV5('sale'));
  }
  $(prefix + 'Paid').readOnly = !isManager();
  $(prefix + 'DiscountBox').classList.toggle('hidden', !isManager());
@@ -125,8 +187,13 @@ function renderPaymentSummaryV5(prefix) {
 
 const financePrepareBase5 = prepareTreatment4;
 prepareTreatment4 = async function(kind, patientId) {
+ const prefix = kind === 'procedure' ? 'proc' : 'sale';
+ const mode = await loadAccountingModeV5();
+ financeTreatmentMode5[prefix] = {...mode};
+ financeTreatmentReceipt5[prefix] = null;
+ financeAccountingMismatch5[prefix] = false;
  const ready = await financePrepareBase5(kind, patientId);
- if (ready) resetPaymentV5(kind === 'procedure' ? 'proc' : 'sale');
+ if (ready) { resetPaymentV5(prefix); renderAccountingModeV5(); }
  return ready;
 };
 const financeCalcProcedureBase5 = calcProcedure, financeCalcSaleBase5 = calcSale;
@@ -136,18 +203,25 @@ calcSale = function(...args) { financeCalcSaleBase5(...args); syncPaymentV5('sal
 treatmentRpc = async function(kind, payload) {
  const prefix = kind === 'procedure' ? 'proc' : 'sale';
  const full = {...payload, payments:readPaymentsV5(prefix)};
- if (kind === 'sale' && isManager() && $('saleReserveV5')?.checked) full.reserve_sale = true;
+ const mode = financeTreatmentMode5[prefix];
+ if (!mode) throw Error('Режим учёта не проверен. Откройте форму заново.');
+ full.expected_stock_deducted = mode.stock_deducted;
+ if (!mode.payment_only && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) full.reserve_sale = true;
  const key = JSON.stringify([kind, full]);
  if (!financeRequests5.has(key)) financeRequests5.set(key, crypto.randomUUID());
+ financeAccountingMismatch5[prefix] = false;
  const {data,error} = await db.rpc('record_treatment_v5', {p_kind:kind,p_payload:full,p_request_id:financeRequests5.get(key)});
  if (error) {
   if (/^[0-9A-Z]{5}$/.test(error.code || '')) financeRequests5.delete(key);
+  financeAccountingMismatch5[prefix] = /^[0-9A-Z]{5}$/.test(error.code || '') && /^Режим уч[её]та (?:измен[её]н|изменился)/i.test(error.message || '');
+  renderAccountingModeV5();
   throw Error(error.message || 'Нет ответа от сервера. Повторите сохранение.');
  }
- financeRequests5.delete(key); return data;
+ financeRequests5.delete(key); financeTreatmentReceipt5[prefix] = data; return data;
 };
 // The workflow-v3 save still supplies the single-flight lock and preserves failed forms.
 saveTreatment = async function(kind) {
+ if (clinicalBusy) return;
  const prefix = kind === 'procedure' ? 'proc' : 'sale';
  try {
   if (kind === 'procedure' && (!$('procPatient').value || !$('procService').value)) throw Error('Выберите пациента и услугу');
@@ -155,13 +229,19 @@ saveTreatment = async function(kind) {
   if (!isManager() && financeCentsV5($(prefix + 'Paid').value) !== financeListCentsV5(prefix)) throw Error('Медсестра не может менять стоимость');
   const totals = new Map();
   rows(prefix + 'Meds').forEach(item => totals.set(item.medication_id, (totals.get(item.medication_id) || 0) + item.quantity));
-  const reserveAllowed = kind === 'sale' && isManager() && $('saleReserveV5')?.checked;
+  if (!financeTreatmentMode5[prefix]) throw Error('Режим учёта не проверен. Откройте форму заново.');
+  const paymentOnly = isPaymentOnlyV5(prefix);
+  const reserveAllowed = !paymentOnly && kind === 'sale' && isManager() && $('saleReserveV5')?.checked;
   for (const [id, quantity] of totals) {
    const med = meds.find(m => m.id === id);
-   if (!med || (!reserveAllowed && quantity > num(med.work_qty))) throw Error('Недостаточно препарата в рабочем шкафу. Пополните шкаф или исправьте количество.');
+   if (!med || med.active === false) throw Error('Препарат недоступен. Замените его или уберите из записи.');
+   if (paymentOnly && num(med.sale_price) <= 0) throw Error('У препарата не указана цена продажи. Владелец может добавить её в карточке препарата.');
+   if (!paymentOnly && !reserveAllowed && quantity > num(med.work_qty)) throw Error('Недостаточно препарата в рабочем шкафу. Пополните шкаф или исправьте количество.');
   }
+  financeTreatmentReceipt5[prefix] = null;
   await originalSaveTreatment4(kind);
-  if ($('workspace').classList.contains('active')) message('homeMessage', kind === 'procedure' ? 'Процедура сохранена. Оплата учтена, препараты списаны.' : 'Продажа сохранена. Оплата учтена, препараты списаны.', true);
+  const receipt = financeTreatmentReceipt5[prefix];
+  if (receipt && $('workspace').classList.contains('active')) message('homeMessage', (kind === 'procedure' ? 'Процедура сохранена. ' : 'Продажа сохранена. ') + (receipt.stock_deducted === false ? 'Оплата учтена. Остатки склада не изменены.' : 'Оплата учтена, препараты списаны.'), true);
  } catch (e) { message(kind + 'Message', e.message); }
 };
 
@@ -183,15 +263,20 @@ function financeWarningHtmlV5(warnings = []) {
  return warnings.length ? `<h2>Предупреждения</h2>${warnings.map(w => `<div class="notice finance-warning-v5"><strong>${esc(w.name || 'Препарат')}</strong> · ${esc(w.message || ({expired:'Есть просроченная партия',expiring:'Истекает срок годности',low_stock:'Минимальный остаток',low_work:'Мало в рабочем шкафу'}[w.type]) || w.type || 'Проверьте остатки')}${w.expiry_date ? ' · ' + esc(w.expiry_date) : ''}</div>`).join('')}` : '<p class="small">Предупреждений по остаткам нет.</p>';
 }
 function financeEventsHtmlV5(events = [], kind, owner) {
- return events.map(event => `<div class="item"><div class="row between"><strong>${kind}: ${esc(event.patient || 'Без пациента')}</strong>${owner ? `<b>${rub(event.paid_total ?? event.paid)}</b>` : ''}</div><div class="small">${esc(new Date(event.at).toLocaleString('ru-RU'))} · ${esc(event.nurse || '')}</div>${event.type ? `<div>${esc(event.type)}</div>` : ''}<div>${(event.items || []).map(m => `${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit || '')}`).join(', ') || 'Без препаратов'}</div>${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
+ return events.map(event => `<div class="item"><div class="row between"><strong>${kind}: ${esc(event.patient || 'Без пациента')}</strong>${owner ? `<b>${rub(event.paid_total ?? event.paid)}</b>` : ''}</div>${financeStockBadgeV5(event)}<div class="small">${esc(new Date(event.at).toLocaleString('ru-RU'))} · ${esc(event.nurse || '')}</div>${event.type ? `<div>${esc(event.type)}</div>` : ''}<div>${(event.items || []).map(m => `${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit || '')}`).join(', ') || 'Без препаратов'}</div>${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
+}
+function financeMedicationUsageHtmlV5(items) {
+ return items.map(m => `<div class="item"><div><strong>${esc(m.name)}</strong><div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('');
 }
 function renderShiftReportV5(data, closed = false) {
  const owner = isManager(), used = data.used || [], shiftData = data.shift || {};
  $('reportBody').innerHTML = `${closed ? '<div class="notice success">Смена закрыта. Итог сохранён.</div>' : ''}<p class="small">${esc(shiftData.date || '')} · ${esc(shiftLabel(shiftData.started_at, shiftData.ended_at || shiftData.planned_end_at))}</p>
  <div class="row">${(data.staff || []).map(s => `<span class="pill">${esc(s.full_name)}</span>`).join('')}</div>
  <div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>
+ ${financePaymentOnlyNoteV5(data)}
  ${owner ? financeRevenueHtmlV5(data.revenue) + `<div class="card"><div>Заработная плата: <b>${financePayrollTextV5(data)}</b></div><h2>Денежный остаток после выплаты зарплаты</h2><div class="money">${financeRemainingTextV5(data)}</div><p class="small">Выручка за вычетом зарплаты. Этот показатель не является прибылью.</p>${financePayrollNoteV5(data)}</div><h2>Зарплата сотрудников</h2>${(data.staff || []).map(s => `<details class="card salary-v5"><summary>${esc(s.full_name)} · ${s.amount == null ? 'Не задана' : rub(s.amount)}</summary><label for="salaryAmount5-${esc(s.id)}">Оплата за смену, ₽</label><input id="salaryAmount5-${esc(s.id)}" type="number" inputmode="decimal" min="0" step="0.01" value="${s.amount == null ? '' : num(s.amount)}"><label for="salaryReason5-${esc(s.id)}">Причина изменения *</label><input id="salaryReason5-${esc(s.id)}" value=""><p class="small">${s.amount == null ? 'Зарплата для этой смены не задана. Укажите сумму и причину.' : s.reason ? 'Последняя причина: ' + esc(s.reason) : 'Стандартная оплата: 2 000 ₽ за смену'}</p><button class="btn primary wide" onclick="saveSalaryV5('${esc(s.id)}')">Сохранить с указанием причины</button></details>`).join('')}` : ''}
- <h2>Использованные препараты</h2><div class="report-used">${used.map(m => `<div class="item"><div><strong>${esc(m.name)}</strong><div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('') || '<p class="small">Списаний нет.</p>'}</div>
+ <h2>Списано со склада</h2><div class="report-used">${financeMedicationUsageHtmlV5(used) || '<p class="small">Списаний нет.</p>'}</div>
+ ${(data.untracked || []).length ? `<h2>Учтено без складского списания</h2><p class="small">Количество препаратов в процедурах и продажах по прайсу. Эти операции включены в выручку и не меняли остатки склада.</p><div class="report-untracked-v5">${financeMedicationUsageHtmlV5(data.untracked)}</div>` : ''}
  <details><summary>Остатки ${owner ? 'склада и рабочего шкафа' : 'рабочего шкафа'}</summary>${(data.stock || []).map(m => `<div class="item"><strong>${esc(m.name)}</strong><div>В работе: ${qty(m.work)} ${esc(m.unit)}${owner ? ' · запас: ' + qty(m.reserve) + ' ' + esc(m.unit) : ''}</div></div>`).join('') || '<p>Нет препаратов.</p>'}</details>
  ${financeWarningHtmlV5((data.warnings || []).filter(w => owner || w.scope !== 'reserve'))}<details><summary>Процедуры (${num(data.procedures_count)})</summary>${financeEventsHtmlV5(data.procedures,'Процедура',owner)}</details><details><summary>Продажи (${num(data.sales_count)})</summary>${financeEventsHtmlV5(data.sales,'Продажа',owner)}</details><div id="salaryMessageV5" role="status"></div>`;
  $('report').querySelector('button[onclick="closeShift()"]').classList.toggle('hidden', closed || shiftData.status !== 'open');
@@ -264,9 +349,9 @@ function financeFilterGroupChangedV5() {
 }
 function renderFinanceSummaryV5(data, id) {
  const rows = data.rows || [], shifts = data.shifts || [];
- const basis = data.rows_revenue_basis === 'medication_line_share_of_paid_total' ? '<p class="small">По препаратам показана оплаченная стоимость препаратов с учётом скидки. Стоимость работы и расходников услуги в эти строки не входит.</p>' : '';
+ const basis = data.rows_revenue_basis === 'medication_line_share_of_paid_total' ? '<p class="small">По препаратам показана оплаченная стоимость препаратов с учётом скидки. Стоимость работы и расходников услуги в эти строки не входит. Количество — по процедурам и продажам; складские списания показаны отдельно в отчёте смены.</p>' : '';
  const operational = `<div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>`;
- return `<p class="small">${esc(data.from)} — ${esc(data.to)} · ${esc(data.time_zone || '')}</p>${operational}${financeRevenueHtmlV5(data.revenue)}<div class="card"><div>Зарплата за смены: <b>${financePayrollTextV5(data)}</b></div><h2>Денежный остаток после выплаты зарплаты</h2><div class="money">${financeRemainingTextV5(data)}</div><p class="small">Выручка минус зарплата. Не является прибылью.${data.has_open_shifts === true ? ' Есть незакрытые смены: итог предварительный.' : ''}</p>${financePayrollNoteV5(data)}${num(data.payroll_open) ? `<p class="small">По открытым сменам начислено: ${rub(data.payroll_open)}</p>` : ''}</div><h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод ${rub(row.revenue?.owner_card)}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(s.shift_date)} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
+ return `<p class="small">${esc(data.from)} — ${esc(data.to)} · ${esc(data.time_zone || '')}</p>${operational}${financePaymentOnlyNoteV5(data)}${financeRevenueHtmlV5(data.revenue)}<div class="card"><div>Зарплата за смены: <b>${financePayrollTextV5(data)}</b></div><h2>Денежный остаток после выплаты зарплаты</h2><div class="money">${financeRemainingTextV5(data)}</div><p class="small">Выручка минус зарплата. Не является прибылью.${data.has_open_shifts === true ? ' Есть незакрытые смены: итог предварительный.' : ''}</p>${financePayrollNoteV5(data)}${num(data.payroll_open) ? `<p class="small">По открытым сменам начислено: ${rub(data.payroll_open)}</p>` : ''}</div><h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод ${rub(row.revenue?.owner_card)}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(s.shift_date)} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
 }
 async function loadFinanceSummaryV5(id) {
  let token;
@@ -307,6 +392,8 @@ function financeCsvCellV5(value) {
 function buildFinanceCsvV5(data) {
  const revenue = data.revenue || {};
  const rows = [['Период',data.from,data.to],['Показатель','Значение'],['Общая выручка',revenue.total || 0],['Наличные',revenue.cash || 0],['Терминал',revenue.terminal || 0],['Переводы владельцу',revenue.owner_card || 0],['Без способа оплаты',revenue.unclassified || 0],['Зарплата',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : data.payroll_total || 0],['Не задана зарплата: сотрудников',data.payroll_unknown || 0],['Денежный остаток после выплаты зарплаты',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : data.cash_after_salary === null ? 'Не рассчитан: укажите зарплату за прошлые смены' : data.cash_after_salary || 0],[],['Группа','Пациенты','Процедуры','Продажи','Количество','Наличные','Терминал','Переводы','Общая выручка']];
+ if (num(data.payment_only_procedures_count) || num(data.payment_only_sales_count)) rows.splice(rows.length-2,0,['Процедуры без складского списания',num(data.payment_only_procedures_count)],['Продажи без складского списания',num(data.payment_only_sales_count)]);
+ rows[rows.length-1][4]='Количество по операциям';
  for (const row of data.rows || []) rows.push([row.label,row.patients_count,row.procedures_count,row.sales_count,row.quantity ?? '',row.revenue?.cash,row.revenue?.terminal,row.revenue?.owner_card,row.revenue?.total]);
  return '\uFEFF' + rows.map(row => row.map(financeCsvCellV5).join(';')).join('\r\n');
 }
@@ -340,10 +427,17 @@ refreshDashboard = async function() {
 const financeEnterBase5 = enterApp, financeSignOutBase5 = signOut;
 enterApp = async function(user) {
  await financeEnterBase5(user);
+ if (!currentStaff || !['owner','admin','nurse'].includes(currentStaff.role)) return;
  installPaymentControlsV5('proc'); installPaymentControlsV5('sale'); installFinanceScreensV5();
+ try { await loadAccountingModeV5(); } catch (e) { message('homeMessage', e.message); }
  if (isManager()) await refreshOwnerDashboardV5();
 };
 signOut = async function() {
+ financeAccountingLoad5++; financeAccountingMode5 = null;
+ financeTreatmentMode5.proc = null; financeTreatmentMode5.sale = null;
+ financeTreatmentReceipt5.proc = null; financeTreatmentReceipt5.sale = null;
+ financeAccountingMismatch5.proc = false; financeAccountingMismatch5.sale = false;
+ for (const id of ['accountingModeBannerV5','procAccountingModeV5','saleAccountingModeV5']) if ($(id)) $(id).innerHTML = '';
  financeView5++; financeRequests5.clear(); financeSnapshots5.clear(); financeReportId5 = null;
  for (const id of ['cashV5Body','reportsV5Body','analyticsV5Body','ownerDashboardV5','reportBody']) if ($(id)) $(id).innerHTML = '';
  financePaymentState5.proc = null; financePaymentState5.sale = null;

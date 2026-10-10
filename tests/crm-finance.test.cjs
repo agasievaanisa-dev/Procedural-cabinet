@@ -22,7 +22,7 @@ const c={console,Map,Set,Date,JSON,Error,Number,Math,String,Promise,crypto:requi
  localDateValue:()=> '2026-10-06',shiftLabel:()=> '08:30–16:00',expiryDays:()=>null,loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},
  prepareTreatment4:async()=>true,calcProcedure:()=>{el('procPaid').value='120.00'},calcSale:()=>{el('salePaid').value='20.00'},
  enterApp:async()=>{},signOut:async()=>{c.currentStaff=null},refreshDashboard:async()=>{},
- db:{rpc:async(name,args)=>{calls.push({name,args});if(name==='crm_finance_v5')return {data:{shift:{status:'open'},revenue:{total:120}}};return behavior(args)}},
+ db:{rpc:async(name,args)=>{if(name==='crm_finance_v5'&&args.p_action==='accounting_mode')return {data:{payment_only:false,stock_deducted:true}};calls.push({name,args});if(name==='crm_finance_v5')return {data:{shift:{status:'open'},revenue:{total:120}}};return behavior(args)}},
  saveProcedure:null,saveSale:null,bulkImportMeds:null};
 vm.createContext(c);
 vm.runInContext(fs.readFileSync(__dirname+'/../workflow-v3.js','utf8'),c);
@@ -33,6 +33,7 @@ function payment(prefix,total){
  c.resetPaymentV5(prefix);el(prefix+'PayConfirmed').checked=true;
 }
 (async()=>{
+ await c.prepareTreatment4('procedure');await c.prepareTreatment4('sale');
  assert.equal(c.financeCentsV5('10,02'),1002);assert.equal(c.financeCentsV5('0.30'),30);
  for(const invalid of ['','-1','0.001','NaN','Infinity','1e2'])assert.throws(()=>c.financeCentsV5(invalid));
  payment('proc',120);el('procPayConfirmed').checked=false;
