@@ -2,6 +2,8 @@
 const financeRequests5 = new Map();
 let financeReportId5 = null, financeBusy5 = false, financeView5 = 0;
 const financeSnapshots5 = new Map();
+const financeSnapshotFilters5 = new Map();
+let financeSession5 = 0;
 const financePaymentState5 = {proc: null, sale: null};
 let financeAccountingMode5 = null, financeAccountingLoad5 = 0;
 const financeTreatmentMode5 = {proc:null, sale:null};
@@ -83,10 +85,29 @@ function financeListCentsV5(prefix) {
  const service = prefix === 'proc' ? services.find(x => x.id === $('procService').value) : null;
  return medicationCents + Math.round((num(service?.work_price) + num(service?.consumables_price)) * 100);
 }
+function financeNetworkErrorV5(error, status) {
+ if (error?.code || (status != null && status !== 0)) return false;
+ return /^(?:(?:TypeError|NetworkError):\s*)?(?:Load failed|Failed to fetch|Network request failed|NetworkError when attempting to fetch resource)\.?$/i.test(String(error?.message || '').trim());
+}
 async function crmFinanceRpcV5(action, payload = {}) {
- const {data, error} = await db.rpc('crm_finance_v5', {p_action: action, p_payload: payload});
- if (error) throw Error(error.message || 'Нет ответа от сервера');
- return data;
+ const actor = currentStaff?.id, role = currentStaff?.role, session = financeSession5;
+ const requireActor = () => {
+  if (!actor || currentStaff?.id !== actor || currentStaff?.role !== role || session !== financeSession5) throw Error('Учётная запись изменилась. Откройте форму заново.');
+ };
+ const readOnly = ['summary','settings_get','accounting_mode','shift_report'].includes(action);
+ for (let attempt = 0; attempt < 2; attempt++) {
+  requireActor();
+  let response;
+  try { response = await db.rpc('crm_finance_v5', {p_action: action, p_payload: payload}); }
+  catch (error) { response = {error}; }
+  requireActor();
+  const {data,error,status} = response || {};
+  if (!response) throw Error('Нет ответа от сервера');
+  if (!error) return data;
+  if (!financeNetworkErrorV5(error,status)) throw Error(error.message || 'Нет ответа от сервера');
+  if (!readOnly || attempt === 1) throw Error('Не удалось связаться с сервером. Проверьте интернет и повторите действие.');
+  await new Promise(resolve => setTimeout(resolve,350));
+ }
 }
 function financeRequireOwnerV5() {
  if (!isManager()) throw Error('Этот раздел доступен только владельцу');
@@ -320,12 +341,39 @@ async function saveSalaryV5(staffId) {
  } catch (e) { message('salaryMessageV5', e.message); } finally { financeBusy5 = false; }
 }
 
+function financeSummaryKeyV5(id) {
+ return JSON.stringify([currentStaff?.id,currentStaff?.role,financeSession5,$(id + 'From')?.value || '',$(id + 'To')?.value || '',id === 'reportsV5' ? $('reportsV5Group')?.value || 'day' : 'day',id === 'reportsV5' ? $('reportsV5Filter')?.value || '' : '']);
+}
+function setFinanceExportStateV5(id, ready) {
+ for (const suffix of ['Print','Csv']) if ($(id + suffix)) $(id + suffix).disabled = !ready;
+}
+function invalidateFinanceSummaryV5(id, notify = true) {
+ financeView5++;
+ financeSnapshots5.delete(id); financeSnapshotFilters5.delete(id);
+ if ($(id + 'Body')) $(id + 'Body').innerHTML = '';
+ setFinanceExportStateV5(id,false);
+ if (notify) message(id + 'Message','Параметры изменены. Нажмите «Показать».');
+ return financeView5;
+}
+function requireFinanceSnapshotV5(id) {
+ financeRequireOwnerV5();
+ const data = financeSnapshots5.get(id);
+ if (!data || financeSnapshotFilters5.get(id) !== financeSummaryKeyV5(id)) {
+  invalidateFinanceSummaryV5(id,false);
+  throw Error('Сначала сформируйте отчёт за выбранный период');
+ }
+ return data;
+}
+function printFinanceReportV5(id) {
+ try { requireFinanceSnapshotV5(id); window.print(); }
+ catch (e) { message(id + 'Message',e.message); }
+}
 function installFinanceScreensV5() {
  const app = $('workspace')?.parentElement; if (!app) return;
  for (const [id,title] of [['cashV5','Касса'],['reportsV5','Отчёты'],['analyticsV5','Аналитика']]) {
   if ($(id)) continue;
   const screen = document.createElement('section'); screen.id = id; screen.className = 'screen finance-screen-v5';
-  screen.innerHTML = `<div class="row between no-print"><h1>${title}</h1><button class="btn secondary" onclick="show('workspace')">Назад</button></div><div class="card no-print finance-filters-v5"><div class="grid2"><div><label for="${id}From">С даты</label><input id="${id}From" type="date"></div><div><label for="${id}To">По дату</label><input id="${id}To" type="date"></div></div>${id === 'reportsV5' ? `<label for="${id}Group">Группировка</label><select id="${id}Group" onchange="financeFilterGroupChangedV5()"><option value="day">По дням</option><option value="employee">По сотрудникам</option><option value="patient">По пациентам</option><option value="medication">По препаратам</option><option value="service">По услугам</option></select><label for="reportsV5Filter">Фильтр</label><select id="reportsV5Filter"><option value="">Все записи</option></select>` : ''}<button class="btn primary wide" onclick="loadFinanceSummaryV5('${id}')">Показать</button></div><div id="${id}Message" role="status" aria-live="polite"></div><div id="${id}Body"></div><div class="row no-print finance-export-v5"><button class="btn secondary" onclick="window.print()">Печать / PDF</button><button class="btn secondary" onclick="downloadFinanceCsvV5('${id}')">Скачать CSV</button></div>`;
+  screen.innerHTML = `<div class="row between no-print"><h1>${title}</h1><button class="btn secondary" onclick="show('workspace')">Назад</button></div><div class="card no-print finance-filters-v5"><div class="grid2"><div><label for="${id}From">С даты</label><input id="${id}From" type="date" oninput="invalidateFinanceSummaryV5('${id}')" onchange="invalidateFinanceSummaryV5('${id}')"></div><div><label for="${id}To">По дату</label><input id="${id}To" type="date" oninput="invalidateFinanceSummaryV5('${id}')" onchange="invalidateFinanceSummaryV5('${id}')"></div></div>${id === 'reportsV5' ? `<label for="${id}Group">Группировка</label><select id="${id}Group" onchange="financeFilterGroupChangedV5()"><option value="day">По дням</option><option value="employee">По сотрудникам</option><option value="patient">По пациентам</option><option value="medication">По препаратам</option><option value="service">По услугам</option></select><label for="reportsV5Filter">Фильтр</label><select id="reportsV5Filter" onchange="invalidateFinanceSummaryV5('reportsV5')"><option value="">Все записи</option></select>` : ''}<button class="btn primary wide" onclick="loadFinanceSummaryV5('${id}')">Показать</button></div><div id="${id}Message" role="status" aria-live="polite"></div><div id="${id}Body"></div><div class="row no-print finance-export-v5"><button id="${id}Print" class="btn secondary" onclick="printFinanceReportV5('${id}')" disabled>Печать / PDF</button><button id="${id}Csv" class="btn secondary" onclick="downloadFinanceCsvV5('${id}')" disabled>Скачать CSV</button></div>`;
   app.appendChild(screen);
  }
 }
@@ -342,6 +390,7 @@ function openCashV5() { return openFinanceScreenV5('cashV5'); }
 function openReportsV5() { return openFinanceScreenV5('reportsV5'); }
 function openAnalyticsV5() { return openFinanceScreenV5('analyticsV5'); }
 function financeFilterGroupChangedV5() {
+ invalidateFinanceSummaryV5('reportsV5');
  const group = $('reportsV5Group').value;
  const list = group === 'employee' ? nurses : group === 'patient' ? patients : group === 'medication' ? (inventory.length ? inventory : meds) : group === 'service' ? services : [];
  $('reportsV5Filter').innerHTML = '<option value="">Все записи</option>' + list.map(item => `<option value="${esc(item.id)}">${esc(item.full_name || item.name)}</option>`).join('');
@@ -354,24 +403,29 @@ function renderFinanceSummaryV5(data, id) {
  return `<p class="small">${esc(data.from)} — ${esc(data.to)} · ${esc(data.time_zone || '')}</p>${operational}${financePaymentOnlyNoteV5(data)}${financeRevenueHtmlV5(data.revenue)}<div class="card"><div>Зарплата за смены: <b>${financePayrollTextV5(data)}</b></div><h2>Денежный остаток после выплаты зарплаты</h2><div class="money">${financeRemainingTextV5(data)}</div><p class="small">Выручка минус зарплата. Не является прибылью.${data.has_open_shifts === true ? ' Есть незакрытые смены: итог предварительный.' : ''}</p>${financePayrollNoteV5(data)}${num(data.payroll_open) ? `<p class="small">По открытым сменам начислено: ${rub(data.payroll_open)}</p>` : ''}</div><h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод ${rub(row.revenue?.owner_card)}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(s.shift_date)} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
 }
 async function loadFinanceSummaryV5(id) {
- let token;
+ let token, actor, key;
  try {
-  financeRequireOwnerV5(); token = ++financeView5;
+  financeRequireOwnerV5(); actor = currentStaff.id;
+  token = invalidateFinanceSummaryV5(id,false); key = financeSummaryKeyV5(id);
   const from = $(id + 'From').value, to = $(id + 'To').value;
   if (!from || !to || from > to) throw Error('Укажите корректный период');
   const payload = {from,to,group_by:id === 'reportsV5' ? $('reportsV5Group').value : 'day'};
   if (id === 'reportsV5' && $('reportsV5Filter').value) payload[payload.group_by + '_id'] = $('reportsV5Filter').value;
   message(id + 'Message','Загружаем…');
   const [data,settings] = await Promise.all([crmFinanceRpcV5('summary',payload),id === 'cashV5' ? crmFinanceRpcV5('settings_get') : Promise.resolve(null)]);
-  if (token !== financeView5 || !isManager()) return;
-  financeSnapshots5.set(id,data); $(id + 'Body').innerHTML = renderFinanceSummaryV5(data,id);
-  if (settings) $(id + 'Body').insertAdjacentHTML('afterbegin',`<div class="card"><span>Разменный фонд</span><div class="money">${rub(settings.float_amount)}</div><p class="small">Отдельная сумма для выдачи сдачи. В выручку и денежный остаток после зарплаты не включается.</p></div>`);
+  if (token !== financeView5 || !isManager() || currentStaff.id !== actor || key !== financeSummaryKeyV5(id)) return;
+  let html = renderFinanceSummaryV5(data,id);
+  if (settings) html = `<div class="card"><span>Разменный фонд</span><div class="money">${rub(settings.float_amount)}</div><p class="small">Отдельная сумма для выдачи сдачи. В выручку и денежный остаток после зарплаты не включается.</p></div>` + html;
   if (id === 'analyticsV5') {
-   await loadInventory(); if (token !== financeView5 || !isManager()) return;
-   $(id + 'Body').insertAdjacentHTML('beforeend', renderInventoryAnalyticsV5());
+   const loaded = await loadInventory();
+   if (token !== financeView5 || !isManager() || currentStaff.id !== actor || key !== financeSummaryKeyV5(id)) return;
+   if (loaded === false) throw Error('Не удалось обновить остатки склада. Нажмите «Показать», чтобы повторить.');
+   html += renderInventoryAnalyticsV5();
   }
+  financeSnapshots5.set(id,data); financeSnapshotFilters5.set(id,key);
+  $(id + 'Body').innerHTML = html; setFinanceExportStateV5(id,true);
   message(id + 'Message','');
- } catch (e) { if (token === undefined || token === financeView5) message(id + 'Message',e.message); }
+ } catch (e) { if ((token === undefined || token === financeView5) && isManager() && (!actor || currentStaff.id === actor)) message(id + 'Message',e.message); }
 }
 function renderInventoryAnalyticsV5() {
  const active = inventory.filter(m => m.active !== false);
@@ -399,7 +453,7 @@ function buildFinanceCsvV5(data) {
 }
 function downloadFinanceCsvV5(id) {
  try {
-  financeRequireOwnerV5(); const data = financeSnapshots5.get(id); if (!data) throw Error('Сначала сформируйте отчёт');
+  const data = requireFinanceSnapshotV5(id);
   const url = URL.createObjectURL(new Blob([buildFinanceCsvV5(data)],{type:'text/csv;charset=utf-8'}));
   const a = document.createElement('a'); a.href = url; a.download = `procedural-cabinet-${data.from}-${data.to}.csv`; a.click(); URL.revokeObjectURL(url);
  } catch (e) { message(id + 'Message', e.message); }
@@ -433,12 +487,14 @@ enterApp = async function(user) {
  if (isManager()) await refreshOwnerDashboardV5();
 };
 signOut = async function() {
+ financeSession5++;
  financeAccountingLoad5++; financeAccountingMode5 = null;
  financeTreatmentMode5.proc = null; financeTreatmentMode5.sale = null;
  financeTreatmentReceipt5.proc = null; financeTreatmentReceipt5.sale = null;
  financeAccountingMismatch5.proc = false; financeAccountingMismatch5.sale = false;
  for (const id of ['accountingModeBannerV5','procAccountingModeV5','saleAccountingModeV5']) if ($(id)) $(id).innerHTML = '';
- financeView5++; financeRequests5.clear(); financeSnapshots5.clear(); financeReportId5 = null;
+ financeView5++; financeRequests5.clear(); financeSnapshots5.clear(); financeSnapshotFilters5.clear(); financeReportId5 = null;
+ for (const id of ['cashV5','reportsV5','analyticsV5']) setFinanceExportStateV5(id,false);
  for (const id of ['cashV5Body','reportsV5Body','analyticsV5Body','ownerDashboardV5','reportBody']) if ($(id)) $(id).innerHTML = '';
  financePaymentState5.proc = null; financePaymentState5.sale = null;
  await financeSignOutBase5();

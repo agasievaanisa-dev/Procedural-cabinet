@@ -59,6 +59,88 @@ async function noOverflow(page){
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
 }
 
+test('finance report recovers from Safari Load failed with one read retry on a phone',async({page})=>{
+ const errors=await boot(page);
+ await page.evaluate(()=>{
+  const original=db.rpc;window.__summaryAttempts=0;
+  db.rpc=async(name,args)=>{
+   if(name==='crm_finance_v5'&&args.p_action==='summary'){
+    if(++window.__summaryAttempts===1)return {error:{message:'TypeError: Load failed',code:'',details:'TypeError: Load failed'}};
+   }
+   return original(name,args);
+  };
+  return openReportsV5();
+ });
+ await expect(page.locator('#reportsV5Body')).toContainText('Общая выручка');
+ expect(await page.evaluate(()=>window.__summaryAttempts)).toBe(2);
+ await expect(page.locator('#reportsV5Message')).toBeEmpty();
+ await expect(page.locator('#reportsV5Print')).toBeEnabled();
+ await expect(page.locator('#reportsV5Csv')).toBeEnabled();
+ await noOverflow(page);expect(errors).toEqual([]);
+});
+
+test('failed new finance period cannot export the old report and manual retry preserves dates',async({page})=>{
+ const errors=await boot(page);await page.evaluate(()=>openReportsV5());
+ await expect(page.locator('#reportsV5Csv')).toBeEnabled();
+ await page.evaluate(()=>{
+  const original=db.rpc;window.__failSummary=true;window.__summaryAttempts=0;window.__printCalls=0;
+  window.print=()=>window.__printCalls++;
+  db.rpc=async(name,args)=>{
+   if(name==='crm_finance_v5'&&args.p_action==='summary'){
+    window.__summaryAttempts++;
+    if(window.__failSummary)throw new TypeError('Load failed');
+   }
+   return original(name,args);
+  };
+ });
+ await page.fill('#reportsV5From','2026-10-01');await page.fill('#reportsV5To','2026-10-10');
+ await expect(page.locator('#reportsV5Body')).toBeEmpty();
+ await expect(page.locator('#reportsV5Csv')).toBeDisabled();
+ await page.click('#reportsV5 button[onclick="loadFinanceSummaryV5(\'reportsV5\')"]');
+ await expect(page.locator('#reportsV5Message')).toContainText('Не удалось связаться с сервером');
+ expect(await page.evaluate(()=>window.__summaryAttempts)).toBe(2);
+ await expect(page.locator('#reportsV5Body')).toBeEmpty();
+ await expect(page.locator('#reportsV5Print')).toBeDisabled();
+ await expect(page.locator('#reportsV5Csv')).toBeDisabled();
+ await page.evaluate(()=>{downloadFinanceCsvV5('reportsV5');printFinanceReportV5('reportsV5')});
+ await expect(page.locator('#reportsV5Message')).toContainText('Сначала сформируйте отчёт');
+ expect(await page.evaluate(()=>window.__printCalls)).toBe(0);
+ await page.evaluate(()=>{window.__failSummary=false});
+ await page.click('#reportsV5 button[onclick="loadFinanceSummaryV5(\'reportsV5\')"]');
+ await expect(page.locator('#reportsV5Body')).toContainText('2026-10-01 — 2026-10-10');
+ await expect(page.locator('#reportsV5Message')).toBeEmpty();
+ await expect(page.locator('#reportsV5Csv')).toBeEnabled();
+ await page.click('#reportsV5Print');expect(await page.evaluate(()=>window.__printCalls)).toBe(1);
+ const downloadPromise=page.waitForEvent('download');await page.click('#reportsV5Csv');
+ expect((await downloadPromise).suggestedFilename()).toBe('procedural-cabinet-2026-10-01-2026-10-10.csv');
+ await noOverflow(page);expect(errors).toEqual([]);
+});
+
+test('finance filter changes discard an in-flight report and require a fresh result',async({page})=>{
+ const errors=await boot(page);await page.evaluate(()=>openReportsV5());
+ await page.evaluate(()=>{
+  const original=db.rpc;window.__holdSummary=true;
+  db.rpc=async(name,args)=>{
+   const result=await original(name,args);
+   if(name==='crm_finance_v5'&&args.p_action==='summary'&&window.__holdSummary)
+    return new Promise(resolve=>{window.__finishSummary=()=>resolve(result)});
+   return result;
+  };
+  loadFinanceSummaryV5('reportsV5');
+ });
+ await page.waitForFunction(()=>!!window.__finishSummary);
+ await page.fill('#reportsV5To','2026-10-09');await page.selectOption('#reportsV5Group','employee');
+ await page.selectOption('#reportsV5Filter','nurse-1');
+ await page.evaluate(()=>{window.__holdSummary=false;window.__finishSummary()});
+ await expect(page.locator('#reportsV5Body')).toBeEmpty();
+ await expect(page.locator('#reportsV5Csv')).toBeDisabled();
+ await page.click('#reportsV5 button[onclick="loadFinanceSummaryV5(\'reportsV5\')"]');
+ await expect(page.locator('#reportsV5Body')).toContainText('2026-10-09');
+ const call=await page.evaluate(()=>window.__crmCalls.filter(x=>x.name==='crm_finance_v5'&&x.args.p_action==='summary').at(-1));
+ expect(call.args.p_payload).toEqual({from:await page.locator('#reportsV5From').inputValue(),to:'2026-10-09',group_by:'employee',employee_id:'nurse-1'});
+ await expect(page.locator('#reportsV5Csv')).toBeEnabled();expect(errors).toEqual([]);
+});
+
 test('warehouse interval report has CSV, preserves Moscow dates and recovers when filters change during a request',async({page})=>{
  const errors=await boot(page);
  await page.evaluate(()=>{
