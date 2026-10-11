@@ -183,7 +183,7 @@ test('warehouse interval report has CSV, preserves Moscow dates and recovers whe
 
 test('390px owner workspace, confirmed mixed payment, exact tender/change and one atomic save',async({page})=>{
  const errors=await boot(page);
- await expect(page.locator('#workspace .home-actions>button')).toHaveCount(9);
+ for(const label of ['Пациенты','Процедуры','Продажа препаратов','Прайс и препараты','Прайс услуг','Отчёты'])await expect(page.locator('#workspace .home-actions>button').filter({hasText:label})).toBeVisible();
  await noOverflow(page);await procedure(page);
  await page.click('#procedure button[onclick="saveProcedure()"]');
  await expect(page.locator('#procedureMessage')).toContainText('подтверждение');
@@ -214,16 +214,19 @@ test('terminal payment and failed save preserve every allocation and request ide
  expect(calls[1].args.p_payload.payments).toEqual({cash:0,terminal:120,owner_card:0,cash_received:0});expect(errors).toEqual([]);
 });
 
-test('nurse has five actions, fixed price and operational report without owner amounts or reserve',async({page})=>{
+test('nurse can record a discounted receipt and sees own-shift finance without payroll or warehouse',async({page})=>{
  const errors=await boot(page,'nurse');await expect(page.locator('#workspace .home-actions>button')).toHaveCount(5);
  await expect(page.locator('#ownerDashboardV5')).toHaveCount(0);await noOverflow(page);await procedure(page);
- await expect(page.locator('#procPaid')).toHaveAttribute('readonly','');
- await page.evaluate(()=>{document.getElementById('procPaid').value='1.00';calcProcedure(false)});
- await expect(page.locator('#procPaid')).toHaveValue('120.00');await expect(page.locator('#procDiscountBox')).toBeHidden();
+ await expect(page.locator('#procPaid')).toBeEditable();
+ await page.fill('#procPaid','100');
+ await expect(page.locator('#procPaid')).toHaveValue('100');
+ await expect(page.locator('#procDiscountBox')).toBeVisible();
  await page.evaluate(()=>openReport());await expect(page.locator('#report')).toBeVisible();
+ await page.locator('#reportBody details').evaluateAll(nodes=>nodes.forEach(node=>node.open=true));
  const report=await page.locator('#reportBody').innerText();
  expect(report).toContain('Наталья');expect(report).toContain('Самыр');
- for(const forbidden of ['Выручка','Общая выручка','Зарплата','Заработная','запас:','120 ₽','4 000','4000'])expect(report).not.toContain(forbidden);
+ expect(report).toContain('120');
+ for(const forbidden of ['Зарплата','Заработная','запас:','В работе:','4 000','4000'])expect(report).not.toContain(forbidden);
  await page.evaluate(()=>show('cashV5'));await expect(page.locator('#workspace')).toBeVisible();
  expect(await page.evaluate(()=>window.__crmCalls.filter(x=>x.name==='crm_finance_v5'&&x.args.p_action==='summary').length)).toBe(0);
  await noOverflow(page);expect(errors).toEqual([]);

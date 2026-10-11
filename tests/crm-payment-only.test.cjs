@@ -3,7 +3,7 @@ const {test}=require('node:test');
 
 function harness(paymentOnly=true){
  const elements=new Map(),calls=[],messages=[];
- function el(id){if(!elements.has(id)){const classes=new Set();elements.set(id,{id,value:'',checked:false,readOnly:false,disabled:false,innerHTML:'',textContent:'',classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x),toggle(x,state){if(state??!classes.has(x))classes.add(x);else classes.delete(x)}},querySelectorAll:()=>[],querySelector:()=>el('closeButton')});}return elements.get(id);}
+ function el(id){if(!elements.has(id)){const classes=new Set();elements.set(id,{id,value:'',checked:false,readOnly:false,disabled:false,innerHTML:'',textContent:'',classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x),toggle(x,state){if(state??!classes.has(x))classes.add(x);else classes.delete(x)}},setAttribute(name,value){this[name]=value},querySelectorAll:()=>[],querySelector:()=>el('closeButton')});}return elements.get(id);}
  const c={console,Map,Set,Date,JSON,Error,Number,Math,String,Promise,crypto:require('node:crypto').webcrypto,document:{querySelectorAll:()=>[]},$:el,window:{},
   currentStaff:{id:'n1',role:'nurse'},shift:{id:'s1'},patients:[],nurses:[],inventory:[],items:[{medication_id:'m1',quantity:2}],
   meds:[{id:'m1',name:'Препарат из прайса',sale_price:20,work_qty:0,active:true}],services:[{id:'service',name:'Услуга',work_price:100,consumables_price:50}],
@@ -11,7 +11,7 @@ function harness(paymentOnly=true){
   esc:s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;'),num:v=>Number(v||0),qty:v=>String(v||0),rub:v=>String(Number(v||0))+' ₽',unit:()=> 'амп.',isManager:()=>['owner','admin'].includes(c.currentStaff?.role),
   positiveWhole:v=>{if(!Number.isInteger(Number(v))||Number(v)<=0)throw Error('Количество');return Number(v)},nonnegative:v=>{if(v===''||Number(v)<0)throw Error('Оплата');return Number(v)},
   message:(...args)=>messages.push(args),show:id=>{for(const s of ['workspace','procedure','sale','report'])el(s).classList.toggle('active',s===id)},localDateValue:()=> '2026-10-09',shiftLabel:()=> '08:30–16:00',expiryDays:()=>null,
-  loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},prepareTreatment4:async()=>true,calcProcedure:()=>{el('procPaid').value='190.00'},calcSale:()=>{el('salePaid').value='40.00'},enterApp:async()=>{},signOut:async()=>{c.currentStaff=null},refreshDashboard:async()=>{},
+  loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},quickNavigation4:0,quickNavigationCurrent4:(version,actor)=>version===c.quickNavigation4&&actor===c.currentStaff?.id,prepareTreatment4:async()=>true,calcProcedure:()=>{el('procPaid').value='190.00'},calcSale:()=>{el('salePaid').value='40.00'},enterApp:async()=>{},signOut:async()=>{c.currentStaff=null},refreshDashboard:async()=>{},
   db:{rpc:async(name,args)=>{calls.push({name,args});if(name==='crm_finance_v5'&&args.p_action==='accounting_mode')return c.modeError?{error:c.modeError}:{data:{payment_only:c.mode,stock_deducted:!c.mode}};if(name==='record_treatment_v5')return c.saveBehavior?c.saveBehavior(args):{data:{id:'saved',stock_deducted:args.p_payload.expected_stock_deducted,paid_total:args.p_payload.paid_total,payments:args.p_payload.payments}};return {data:{}};}},saveProcedure:null,saveSale:null,bulkImportMeds:null};
  vm.createContext(c);vm.runInContext(fs.readFileSync(__dirname+'/../workflow-v3.js','utf8'),c);c.originalSaveTreatment4=c.saveTreatment;vm.runInContext(fs.readFileSync(__dirname+'/../crm-finance-v5.js','utf8'),c);
  async function form(kind='procedure',total=190){const prefix=kind==='procedure'?'proc':'sale';await c.prepareTreatment4(kind,'p1');el(prefix+'Paid').value=String(total);el(prefix+'Nurse').value='n1';el(prefix+'Patient').value='p1';el('procService').value='service';c.resetPaymentV5(prefix);el(prefix+'PayConfirmed').checked=true;c.show(kind);}
@@ -46,10 +46,10 @@ test('stale mode rejection and mode lookup failure preserve form and block unsaf
  c.modeError={message:'Нет ответа при проверке режима'};await assert.rejects(c.prepareTreatment4('sale','p1'),/проверке режима/);assert.equal(calls.filter(x=>x.name==='record_treatment_v5').length,1);
 });
 
-test('report marker is escaped and never grants nurse finance visibility',()=>{
+test('nurse own-shift report exposes receipts while payroll and warehouse remain private',()=>{
  const {c,el}=harness();const r={shift:{date:'2026-10-09',status:'open'},staff:[{id:'n1',full_name:'Медсестра',amount:2000}],patients_count:1,procedures_count:1,sales_count:0,revenue:{total:7777,cash:7777},payroll_total:2000,cash_after_salary:5777,
-  used:[],untracked:[{id:'m1',name:'<script>Препарат',quantity:2,procedure_qty:2,sale_qty:0,unit:'амп.'}],warnings:[{type:'payment_only',count:1}],payment_only_procedures_count:1,payment_only_sales_count:0,stock:[{name:'Препарат',work:0,reserve:9999}],
-  procedures:[{id:'p1',at:'2026-10-09T10:00:00Z',patient:'Пациент',type:'Услуга',stock_deducted:false,paid_total:7777,items:[{name:'Препарат',quantity:2,line_total:7777}]}],sales:[]};
- c.renderShiftReportV5(r);const html=el('reportBody').innerHTML;assert.ok(html.includes('Без списания со склада'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('<script>'));
- for(const secret of ['7777','2000','5777','9999'])assert.ok(!html.includes(secret),'Nurse report leaked '+secret);
+  used:[],untracked:[{id:'m1',name:'Складская пометка',quantity:2,procedure_qty:2,sale_qty:0,unit:'амп.'}],warnings:[{type:'payment_only',count:1}],payment_only_procedures_count:1,payment_only_sales_count:0,stock:[{name:'Препарат',work:0,reserve:9999}],
+  procedures:[{id:'p1',at:'2026-10-09T10:00:00Z',patient:'Пациент',type:'Услуга',stock_deducted:false,paid_total:7777,items:[{name:'<script>Препарат',quantity:2,line_total:7777}]}],sales:[]};
+ c.renderShiftReportV5(r);const html=el('reportBody').innerHTML;assert.ok(!html.includes('Без списания со склада'));assert.ok(!html.includes('Складская пометка'));assert.ok(html.includes('7777'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('<script>'));
+ for(const secret of ['2000','5777','9999','Зарплата','запас:','В работе:'])assert.ok(!html.includes(secret),'Nurse report leaked '+secret);
 });

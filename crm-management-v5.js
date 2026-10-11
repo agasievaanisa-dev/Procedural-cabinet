@@ -85,6 +85,7 @@ async function saveSettingsV5(){
 }
 
 function ensureServicesV5(){
+  $('serviceActive').closest('label').lastChild.textContent=' Показывать в прайсе (снимите, чтобы убрать услугу)';
   if(!$('serviceCommentV5'))$('serviceActive').closest('label').insertAdjacentHTML('beforebegin','<label for="serviceCommentV5">Комментарий</label><textarea id="serviceCommentV5"></textarea>');
   if(!$('serviceNewV5')){$('services').querySelector('.row').insertAdjacentHTML('beforeend','<button id="serviceNewV5" class="btn secondary" onclick="newServiceV5()">＋ Новая услуга</button>');$('services').querySelector('button[onclick="show(\'admin\')"]')?.setAttribute('onclick',"show('workspace')")}
 }

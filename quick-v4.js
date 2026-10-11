@@ -1,4 +1,8 @@
 let quickContext={favorites:[],recent:[],shifts:[]},pendingAction=null,lastTemplate=null,quickBusy=false,patientView4=0,hintView4=0;
+let quickNavigation4=0;
+function beginQuickNavigation4(){pendingAction=null;return ++quickNavigation4}
+function quickNavigationCurrent4(version,staffId=currentStaff?.id){return version===quickNavigation4&&!!staffId&&currentStaff?.id===staffId}
+document.addEventListener('click',event=>{const button=event.target.closest?.('button[onclick]');if(button&&/^show\(['"]/.test(button.getAttribute('onclick')||''))beginQuickNavigation4()},true);
 const normalizeSearch=v=>String(v||'').toLocaleLowerCase('ru-RU').replace(/ё/g,'е').trim();
 function matchesMedication(m,q){const hay=normalizeSearch([m.name,m.search_name,m.generic_name,m.dosage,m.category,m.manufacturer,m.manufacturer_country].join(' '));return normalizeSearch(q).split(/\s+/).every(term=>hay.includes(term))}
 async function quickRpc(action,payload={}){const {data,error}=await db.rpc('quick_ui_v4',{p_action:action,p_payload:payload});if(error)throw new Error(error.message);return data}
@@ -7,37 +11,40 @@ function assignShift(s){if(!s)return false;const ns=s.staff||[];if(ns.length<2)r
 const originalEnterApp4=enterApp,originalSignOut4=signOut,originalShow4=show;
 show=function(id){originalShow4(id);$('accountMenu').open=false;window.scrollTo({top:0,behavior:'instant'})};
 enterApp=async function(user){
+ const navigation=quickNavigation4;
  await originalEnterApp4(user);
+ if(navigation!==quickNavigation4)return;
  if(!['admin','owner','nurse'].includes(currentStaff?.role))return;
  $('homeNav').classList.remove('hidden');$('accountMenu').classList.remove('hidden');
  try{await Promise.all([loadPatients(),loadNurses(),loadServices(),loadMeds(),loadQuickContext()]);
   const own=quickContext.shifts.find(s=>(s.staff||[]).some(n=>n.id===currentStaff.id));if(own)assignShift(own);
- }catch(e){message('homeMessage',e.message)}show('workspace');
+ }catch(e){message('homeMessage',e.message)}if(navigation===quickNavigation4)show('workspace');
 };
-signOut=async function(){await originalSignOut4();quickContext={favorites:[],recent:[],shifts:[]};lastTemplate=null;pendingAction=null;patients=[];$('homeNav').classList.add('hidden');$('accountMenu').classList.add('hidden')};
+signOut=async function(){beginQuickNavigation4();await originalSignOut4();quickContext={favorites:[],recent:[],shifts:[]};lastTemplate=null;pendingAction=null;patients=[];$('homeNav').classList.add('hidden');$('accountMenu').classList.add('hidden')};
 async function goPatients(){await loadPatients();show('patients')}
 function goNewPatient(){show('newPatient');$('pname').focus()}
 const originalAddPatient4=addPatient;let patientSaving4=false;
 addPatient=async function(){if(patientSaving4)return;patientSaving4=true;const before=patients.length;try{await originalAddPatient4();if(patients.length>before)await openPatient(patients[0].id)}finally{patientSaving4=false}};
 renderPatients=function(){const q=normalizeSearch($('patientSearch').value);$('patientList').innerHTML=patients.filter(p=>normalizeSearch(p.full_name+' '+(p.phone||'')).includes(q)).map(p=>`<button class="item click" style="text-align:left" onclick="openPatient('${p.id}')"><strong>${esc(p.full_name)}</strong><div class="small">${esc(p.birth_date||'Дата рождения не указана')} · ${esc(p.phone||'Телефон не указан')}</div></button>`).join('')||'<p>Ничего не найдено.</p>'};
 staffOptions=function(){return [[shift.aId,shift.a],[shift.bId,shift.b]].map(x=>`<option value="${x[0]}">${esc(x[1])}</option>`).join('')};
-async function openStock(){try{if(isManager()){show('admin');await loadInventory()}else{if(typeof loadAccountingModeV5==='function')await loadAccountingModeV5();show('workStock');await loadMeds();renderWorkStock()}}catch(e){message('homeMessage',e.message)}}
+async function openStock(){const navigation=beginQuickNavigation4(),actor=currentStaff?.id;try{if(isManager()){show('admin');await loadInventory()}else{show('workStock');if(typeof loadAccountingModeV5==='function')await loadAccountingModeV5();if(!quickNavigationCurrent4(navigation,actor))return;await loadMeds();if(quickNavigationCurrent4(navigation,actor))renderWorkStock()}}catch(e){if(quickNavigationCurrent4(navigation,actor))message(isManager()?'inventoryMessage':'homeMessage',e.message)}}
 function renderWorkStock(){
  const q=$('workSearch').value,paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5();
  const list=meds.filter(m=>matchesMedication(m,q));$('workStock').querySelector('h1').textContent=paymentOnly?'Прайс препаратов':'Препараты в работе';
  const cards=list.map(m=>`<div class="item inventory-heading">${medPhotoHtml(m,'stock-photo')}<div><strong>${esc(m.name)}</strong><div>${esc(m.dosage||'')}</div><b>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))}</b><div class="small">${paymentOnly?'Учёт оплаты без складского списания':num(m.work_qty)>0?'В рабочем шкафу':'Нет в рабочем шкафу — обратитесь к администратору'}</div></div></div>`).join('')||'<p>Препараты не найдены.</p>';
  $('workStockList').innerHTML=(paymentOnly?'<div class="notice accounting-mode-v5">Оплата учитывается по прайсу. Количество на складе не ограничивает запись и не меняется.</div>':'')+cards;
 }
-async function openShiftMenu(){
- try{await loadQuickContext();if(shift&&quickContext.shifts.some(s=>s.id===shift.id)){await openReport();return}
- shift=null;show('shift');await loadNurses();$('openShiftChoices').innerHTML=quickContext.shifts.map(s=>`<button class="btn secondary wide" onclick="selectOpenShift4('${s.id}')">Открытая смена: ${esc((s.staff||[]).map(n=>n.full_name).join(', '))} · ${esc(shiftLabel(s.started_at,s.planned_end_at))}</button>`).join('');
- }catch(e){message('homeMessage',e.message)}
+async function openShiftMenu(navigation=null,forTreatment=false){
+ navigation??=beginQuickNavigation4();const actor=currentStaff?.id;
+ try{await loadQuickContext();if(!quickNavigationCurrent4(navigation,actor))return;if(!forTreatment&&shift&&quickContext.shifts.some(s=>s.id===shift.id)){await openReport();return}
+ shift=null;show('shift');await loadNurses();if(!quickNavigationCurrent4(navigation,actor))return;$('openShiftChoices').innerHTML=quickContext.shifts.map(s=>`<button class="btn secondary wide" onclick="selectOpenShift4('${s.id}')">Открытая смена: ${esc((s.staff||[]).map(n=>n.full_name).join(', '))} · ${esc(shiftLabel(s.started_at,s.planned_end_at))}</button>`).join('');
+ }catch(e){if(quickNavigationCurrent4(navigation,actor))message('homeMessage',e.message)}
 }
 async function selectOpenShift4(id){const s=quickContext.shifts.find(x=>x.id===id);if(!assignShift(s))return;const next=pendingAction;pendingAction=null;if(next)await next();else await openReport()}
-async function requireShift4(next){
- await loadQuickContext();if(shift&&quickContext.shifts.some(s=>s.id===shift.id))return true;
+async function requireShift4(next,navigation=quickNavigation4){
+ const actor=currentStaff?.id;await loadQuickContext();if(!quickNavigationCurrent4(navigation,actor))return false;if(shift&&quickContext.shifts.some(s=>s.id===shift.id))return true;
  shift=null;const own=quickContext.shifts.find(s=>(s.staff||[]).some(n=>n.id===currentStaff.id));if(own&&assignShift(own))return true;
- pendingAction=next;await openShiftMenu();$('shiftMessage').textContent='Для записи процедуры или продажи начните смену или выберите открытую.';return false;
+ pendingAction=next;await openShiftMenu(navigation,true);if(quickNavigationCurrent4(navigation,actor))$('shiftMessage').textContent='Для записи процедуры или продажи начните смену или выберите открытую.';return false;
 }
 startShift=async function(){
  if(quickBusy)return;quickBusy=true;$('shiftMessage').textContent='Открываем смену…';
@@ -78,16 +85,18 @@ function renderShortages4(){
  box.innerHTML=missing.map(x=>{const stock=isManager()?inventory.find(m=>m.id===x.medication_id):null;const amount=stock?Math.ceil((x.quantity-num(x.m?.work_qty))/packSize(stock))*packSize(stock):0;
  return `<div class="shortage">${esc(x.m?.name||'Препарат')}: недостаточно в рабочем шкафу. ${stock&&amount<=num(stock.reserve_available??stock.reserve_qty)?`<button class="btn secondary" onclick="quickTransfer4('${stock.id}',${amount})">Перевести ${qty(amount/packSize(stock))} уп. из запаса</button>`:isManager()?'Оформите приход или проверьте запас.':'Обратитесь к администратору для пополнения.'}</div>`}).join('');
 }
-async function prepareTreatment4(kind,patientId){
- if(!await requireShift4(()=>prepareTreatment4(kind,patientId)))return false;
+async function prepareTreatment4(kind,patientId,navigation=quickNavigation4){
+ const actor=currentStaff?.id;
+ if(!quickNavigationCurrent4(navigation,actor)||!await requireShift4(()=>prepareTreatment4(kind,patientId,navigation),navigation))return false;
  await Promise.all([loadMeds(),loadPatients(),loadServices(),isManager()?loadInventory():Promise.resolve()]);
+ if(!quickNavigationCurrent4(navigation,actor))return false;
  const p=kind==='procedure'?'proc':'sale';$(p+'Nurse').innerHTML=staffOptions();if([shift.aId,shift.bId].includes(currentStaff.id))$(p+'Nurse').value=currentStaff.id;
  $(p+'Patient').innerHTML=patientOptions(true).replace('Без пациента',p==='proc'?'Выберите пациента':'Без пациента');if(patientId)$(p+'Patient').value=patientId;
  if(p==='proc')$('procService').innerHTML='<option value="">Выберите услугу</option>'+services.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
- for(const suffix of ['Notes','Paid','DiscountReason','DiscountComment','MedSearch'])$(p+suffix).value='';$(p+'Meds').innerHTML='';message(kind+'Message','');show(kind);renderMedVisualCatalog(p+'Meds');if(p==='proc'){calcProcedure();await showRepeatHint()}else calcSale();recalc();return true;
+ for(const suffix of ['Notes','Paid','DiscountReason','DiscountComment','MedSearch'])$(p+suffix).value='';$(p+'Meds').innerHTML='';message(kind+'Message','');show(kind);renderMedVisualCatalog(p+'Meds');if(p==='proc'){calcProcedure();await showRepeatHint()}else calcSale();if(!quickNavigationCurrent4(navigation,actor))return false;recalc();return true;
 }
-openProcedure=async function(patientId=null){try{await prepareTreatment4('procedure',patientId)}catch(e){message('homeMessage',e.message)}};
-openSale=async function(){try{await prepareTreatment4('sale',null)}catch(e){message('homeMessage',e.message)}};
+openProcedure=async function(patientId=null){const navigation=beginQuickNavigation4(),actor=currentStaff?.id;message('homeMessage','Открываем процедуру…');try{await prepareTreatment4('procedure',patientId,navigation)}catch(e){if(quickNavigationCurrent4(navigation,actor))message('homeMessage',e.message)}};
+openSale=async function(){const navigation=beginQuickNavigation4(),actor=currentStaff?.id;message('homeMessage','Открываем продажу…');try{await prepareTreatment4('sale',null,navigation)}catch(e){if(quickNavigationCurrent4(navigation,actor))message('homeMessage',e.message)}};
 const originalSaveTreatment4=saveTreatment;
 saveTreatment=async function(kind){
  const p=kind==='procedure'?'proc':'sale';try{
@@ -101,9 +110,10 @@ function templateText4(t){return `${new Date(t.at).toLocaleDateString('ru-RU')} 
 async function showRepeatHint(){const token=++hintView4,id=$('procPatient').value;$('repeatHint').innerHTML='';if(!id)return;try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==hintView4)return;if(t)$('repeatHint').innerHTML=`<div class="card"><span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn secondary" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button></div>`}catch(e){message('repeatHint',e.message)}}
 const originalOpenPatient4=openPatient;
 openPatient=async function(id){const token=++patientView4;lastTemplate=null;$('lastProcedure').textContent='Загружаем последнюю процедуру…';await originalOpenPatient4(id);try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==patientView4||currentPatientId!==id)return;lastTemplate=t;$('lastProcedure').innerHTML=t?`<span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn primary wide" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button>`:'Процедур пока нет.'}catch(e){$('lastProcedure').textContent=e.message}};
-async function repeatLast4(id){
- try{if(!await requireShift4(()=>repeatLast4(id)))return;const t=await quickRpc('last_procedure',{patient_id:id});if(!t)return;
- await prepareTreatment4('procedure',id);$('procMeds').innerHTML='';$('procService').value=services.some(s=>s.id===t.service_id)?t.service_id:'';
+async function repeatLast4(id,navigation=null){
+ navigation??=beginQuickNavigation4();const actor=currentStaff?.id;
+ try{if(!await requireShift4(()=>repeatLast4(id,navigation),navigation))return;const t=await quickRpc('last_procedure',{patient_id:id});if(!t||!quickNavigationCurrent4(navigation,actor))return;
+ if(!await prepareTreatment4('procedure',id,navigation)||!quickNavigationCurrent4(navigation,actor))return;$('procMeds').innerHTML='';$('procService').value=services.some(s=>s.id===t.service_id)?t.service_id:'';
  (t.items||[]).forEach(m=>addMedRow('procMeds',m.medication_id,m.quantity,{id:m.medication_id,name:m.name,consumption_unit:m.unit}));
  // Current prices, current nurse and no inherited discount/payment/notes.
  calcProcedure();recalc();message('procedureMessage','Черновик заполнен по прошлой процедуре. Проверьте назначение, препараты, количество и оплату перед сохранением.');

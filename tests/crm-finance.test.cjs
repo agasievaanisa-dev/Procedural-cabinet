@@ -5,7 +5,7 @@ function el(id){
   const classes=new Set();
   elements.set(id,{id,value:'',checked:false,readOnly:false,disabled:false,innerHTML:'',textContent:'',
    classList:{add:x=>classes.add(x),remove:x=>classes.delete(x),contains:x=>classes.has(x),toggle(x,state){if(state??!classes.has(x))classes.add(x);else classes.delete(x)}},
-   querySelectorAll:()=>[],querySelector:()=>el('closeButton'),insertAdjacentHTML(where,s){this.innerHTML=s+this.innerHTML}});
+   setAttribute(name,value){this[name]=value},querySelectorAll:()=>[],querySelector:()=>el('closeButton'),insertAdjacentHTML(where,s){this.innerHTML=s+this.innerHTML}});
  }
  return elements.get(id);
 }
@@ -20,7 +20,7 @@ const c={console,Map,Set,Date,JSON,Error,Number,Math,String,Promise,crypto:requi
  nonnegative:v=>{if(v===''||Number(v)<0)throw Error('Оплата');return Number(v)},
  message:(...args)=>messages.push(args),show:id=>{for(const s of ['workspace','procedure','sale','report'])el(s).classList.toggle('active',s===id)},
  localDateValue:()=> '2026-10-06',shiftLabel:()=> '08:30–16:00',expiryDays:()=>null,loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},
- prepareTreatment4:async()=>true,calcProcedure:()=>{el('procPaid').value='120.00'},calcSale:()=>{el('salePaid').value='20.00'},
+ quickNavigation4:0,quickNavigationCurrent4:(version,actor)=>version===c.quickNavigation4&&actor===c.currentStaff?.id,prepareTreatment4:async()=>true,calcProcedure:()=>{el('procPaid').value='120.00'},calcSale:()=>{el('salePaid').value='20.00'},
  enterApp:async()=>{},signOut:async()=>{c.currentStaff=null},refreshDashboard:async()=>{},
  db:{rpc:async(name,args)=>{if(name==='crm_finance_v5'&&args.p_action==='accounting_mode')return {data:{payment_only:false,stock_deducted:true}};calls.push({name,args});if(name==='crm_finance_v5')return {data:{shift:{status:'open'},revenue:{total:120}}};return behavior(args)}},
  saveProcedure:null,saveSale:null,bulkImportMeds:null};
@@ -59,14 +59,14 @@ function payment(prefix,total){
  assert.equal(calls.length,before,'Repeated medication rows cannot bypass available quantity');
  el('saleReserveV5').checked=true;behavior=async()=>({data:{id:'reserve-sale'}});await c.saveSale();
  const reserve=calls.filter(x=>x.name==='record_treatment_v5').at(-1);assert.equal(reserve.args.p_payload.reserve_sale,true);
- c.currentStaff.role='nurse';c.items=[{medication_id:'m1',quantity:2}];payment('proc',1);c.calcProcedure();
- assert.equal(el('procPaid').value,'120.00');assert.equal(el('procPaid').readOnly,true);
+ c.currentStaff.role='nurse';c.items=[{medication_id:'m1',quantity:2}];payment('proc',120);
  const report={shift:{date:'2026-10-06',status:'open'},staff:[{id:'n1',full_name:'<script>name',amount:2000}],patients_count:1,procedures_count:1,sales_count:1,
   revenue:{cash:9999,terminal:22,owner_card:33,total:10054},payroll_total:2000,cash_after_salary:8054,
   procedures:[{at:'2026-10-06T10:00:00Z',patient:'<img src=x onerror=alert(1)>',paid_total:777,type:'Укол',items:[{name:'Ампула',quantity:1,line_total:777}]}],
   stock:[{name:'Препарат',work:2,reserve:99999}],used:[]};
  c.renderShiftReportV5(report);const nurseHtml=el('reportBody').innerHTML;
- for(const secret of ['9999','10054','2000','8054','99999','777','Зарплата','выручка'])assert.ok(!nurseHtml.includes(secret),'Nurse report leaks '+secret);
+ for(const receipt of ['9999','10054','777'])assert.ok(nurseHtml.includes(receipt),'Nurse own-shift report omits '+receipt);
+ for(const secret of ['2000','8054','99999','Зарплата','В работе:','запас:'])assert.ok(!nurseHtml.includes(secret),'Nurse report leaks private field '+secret);
  assert.ok(nurseHtml.includes('&lt;img'));assert.ok(!nurseHtml.includes('<script>'));
  const ownerCallCount=calls.length;await c.openReportsV5();assert.equal(calls.length,ownerCallCount,'Nurse cannot request owner summary');
  c.currentStaff.role='owner';c.renderShiftReportV5(report);assert.ok(el('reportBody').innerHTML.includes('2000'));assert.ok(el('reportBody').innerHTML.includes('Денежный остаток после выплаты зарплаты'));
@@ -77,5 +77,5 @@ function payment(prefix,total){
  const csv=c.buildFinanceCsvV5({from:'2026-10-01',to:'2026-10-06',revenue:{total:10},rows:[{label:'=IMPORTXML("x")',revenue:{total:10}}]});
  assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.includes('"\'=IMPORTXML(""x"")"'));assert.ok(csv.includes('Денежный остаток после выплаты зарплаты'));
  assert.ok(messages.some(x=>x[1]==='Недостаточно'));
- console.log('PASS: exact payment cents/splits/tender, explicit confirmation, replay and concurrent-save guards, preserved failed editor, duplicate stock checks, owner reserve-sale, nurse report/price separation, escaped names and CSV formula safety');
+ console.log('PASS: exact payment cents/splits/tender, explicit confirmation, replay and concurrent-save guards, preserved failed editor, duplicate stock checks, owner reserve-sale, nurse own-shift receipts and private payroll/stock separation, escaped names and CSV formula safety');
 })().catch(error=>{console.error(error);process.exitCode=1});

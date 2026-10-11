@@ -8,9 +8,9 @@ const ownerScreensV5=new Set(['admin','medForm','services','servicesAdmin','bulk
 function renderCabinetHomeV5(){
  if(!currentStaff)return;
  const actions=isManager()?[
-  ['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊','Продажа препаратов','openSale()'],['📦','Склад','openStock()'],
+  ['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊','Продажа препаратов','openSale()'],['📦','Прайс и препараты','openStock()'],['🧾','Прайс услуг','openPriceServicesV10()'],
   ['💰','Касса','openCashV5()'],['👩‍⚕️','Сотрудники','openStaffV5()'],['📊','Отчёты','openReportsV5()'],['📈','Аналитика','openAnalyticsV5()'],['⚙️','Настройки','openSettingsV5()']
- ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊',financeAccountingMode5?.payment_only?'Прайс препаратов':'Препараты в работе','openStock()'],['💰','Оплата','openSale()'],['📋','Закрыть смену','openShiftMenu()']];
+ ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊',financeAccountingMode5?.payment_only?'Прайс препаратов':'Препараты в работе','openStock()'],['💰','Продажа препарата','openSale()'],['📋','Закрыть смену','openShiftMenu()']];
  $('workspace').querySelector('.home-actions').innerHTML=actions.map(([icon,label,action])=>`<button onclick="${action}"><span>${icon}</span><strong>${label}</strong></button>`).join('');
  $('workspace').querySelector('h1').textContent=isManager()?'Кабинет владельца':'Работа со своей сменой';
  $('status').textContent=`${currentStaff.full_name} · ${isManager()?'Владелец':'Медсестра'}`;
@@ -19,12 +19,14 @@ function renderCabinetHomeV5(){
  const newPatient=$('patients').querySelector('.card');if(!$('patientCreateV5')){const b=document.createElement('button');b.id='patientCreateV5';b.className='btn primary wide';b.textContent='＋ Новый пациент';b.onclick=goNewPatient;newPatient.append(b)}
 }
 show=function(id){if(ownerScreensV5.has(id)&&!isManager()){message('homeMessage','Раздел доступен только владельцу');id='workspace'}showCabinetV5(id);if(id==='workspace')renderCabinetHomeV5()};
+async function openPriceServicesV10(){beginQuickNavigation4();await goServicesV5()}
 enterApp=async function(user){try{await enterCabinetV5(user);if(currentStaff)renderCabinetHomeV5()}catch(e){$('loginMessage').textContent='Не удалось загрузить кабинет. '+e.message;show('login')}};
 signOut=async function(){await signOutCabinetV5();const s=$('backupStatusV5');if(s)s.textContent='';};
 
 // Interpret entered shift times in the cabinet timezone, regardless of the phone.
 startShift=async function(){
  if(quickBusy)return;quickBusy=true;$('shiftMessage').textContent='Открываем смену…';
+ const navigation=quickNavigation4,actor=currentStaff?.id;
  try{
   const date=$('shiftDate').value||localDateValue(),st=$('shiftStartTime').value||'08:30',et=$('shiftEndTime').value||'16:00';
   const start=new Date(`${date}T${st}:00+03:00`),end=new Date(`${date}T${et}:00+03:00`);
@@ -33,6 +35,7 @@ startShift=async function(){
   const {data,error}=await db.rpc('start_shift_v82',{p_shift_date:date,p_started_at:start.toISOString(),p_planned_end_at:end.toISOString(),p_nurse1:$('n1').value,p_nurse2:$('n2').value});
   if(error)throw Error(error.message);await loadQuickContext();
   if(!assignShift(quickContext.shifts.find(s=>s.id===data)))throw Error('Смена создана. Выберите её в меню сотрудника');
+  if(!quickNavigationCurrent4(navigation,actor))return;
   const next=pendingAction;pendingAction=null;if(next)await next();else show('workspace');
  }catch(e){$('shiftMessage').textContent=e.message}finally{quickBusy=false}
 };

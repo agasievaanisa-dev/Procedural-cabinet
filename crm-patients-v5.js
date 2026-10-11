@@ -3,6 +3,7 @@
   'use strict';
   const normalize = value => String(value || '').toLocaleLowerCase('ru-RU').replace(/ё/g, 'е').trim();
   const isArchived = patient => !!(patient?.archived_at || patient?.archived || patient?.is_archived);
+  const isDeleted = patient => !!patient?.deleted_at;
   const sexLabel = value => ({ female: 'Женский', male: 'Мужской', unknown: 'Не указан' }[value] || 'Не указан');
   function voiceQuantity(value) {
     const amount = Number(String(value).replace(',', '.'));
@@ -40,13 +41,15 @@
     }
     throw new Error('Команда не распознана. Используйте один из примеров ниже или исправьте текст.');
   }
-  const pure = { parseVoiceCommand, voiceQuantity, normalize, isArchived, sexLabel };
+  const pure = { parseVoiceCommand, voiceQuantity, normalize, isArchived, isDeleted, sexLabel };
   if (typeof module !== 'undefined' && module.exports) module.exports = pure;
   if (typeof document === 'undefined') return;
   global.CrmPatientsV5 = pure;
 
   let directory = [], editId = null, saving = false, archiveBusy = false, cardVersion = 0, listVersion = 0, documentSaving = false;
   const documentDrafts = new Map();
+  const deletionRequests = new Map();
+  let deletionBusy = false;
   let recognition = null, voicePlan = null, voiceVersion = 0, voiceBusy = false, voiceReturnFocus = null;
   const allowed = () => ['owner', 'admin', 'nurse'].includes(currentStaff?.role);
   const owner = () => ['owner', 'admin'].includes(currentStaff?.role);
@@ -65,13 +68,13 @@
     const version = ++listVersion, staffId = currentStaff.id;
     const data = await patientRpc('patient_list', { include_archived: owner() });
     if (version !== listVersion || currentStaff?.id !== staffId) return;
-    directory = Array.isArray(data) ? data : data?.patients || [];
+    directory = (Array.isArray(data) ? data : data?.patients || []).filter(patient => !isDeleted(patient));
     patients = directory.filter(patient => !isArchived(patient));
     if ($('patientArchiveFilterV5')) $('patientArchiveFilterV5').classList.toggle('hidden', !owner());
     if ($('patients').classList.contains('active')) renderPatients();
   };
   patientOptions = function (blank = false) {
-    return (blank ? '<option value="">Без пациента</option>' : '') + patients.filter(patient => !isArchived(patient)).map(patient => `<option value="${esc(patient.id)}">${esc(patient.full_name)}</option>`).join('');
+    return (blank ? '<option value="">Без пациента</option>' : '') + patients.filter(patient => !isArchived(patient) && !isDeleted(patient)).map(patient => `<option value="${esc(patient.id)}">${esc(patient.full_name)}</option>`).join('');
   };
   renderPatients = function () {
     const query = normalize($('patientSearch').value), archived = owner() && $('patientIncludeArchivedV5')?.checked;
@@ -79,7 +82,14 @@
     $('patientList').innerHTML = visible.map(patient => `<button type="button" class="item click patient-list-item-v5" data-patient-id="${esc(patient.id)}"><strong>${esc(patient.full_name)}</strong>${isArchived(patient) ? '<span class="pill">В архиве</span>' : ''}<div class="small">${esc(patient.birth_date || 'Дата рождения не указана')} · ${esc(patient.phone || 'Телефон не указан')}</div></button>`).join('') || '<div class="notice">Пациенты не найдены.</div>';
   };
   goPatients = async function () {
-    try { await loadPatients(); show('patients'); } catch (error) { message('homeMessage', error.message); }
+    const staffId = currentStaff?.id;
+    const navigation = typeof beginQuickNavigation4 === 'function' ? beginQuickNavigation4() : null;
+    const stillCurrent = () => currentStaff?.id === staffId && $('patients').classList.contains('active') &&
+      (navigation === null || quickNavigationCurrent4(navigation, staffId));
+    try {
+      requireAccess(); show('patients'); $('patientList').innerHTML = '<div class="notice">Загрузка пациентов…</div>';
+      await loadPatients(); if (stillCurrent()) renderPatients();
+    } catch (error) { if (stillCurrent()) $('patientList').innerHTML = `<div class="notice">${esc(error.message)}</div>`; }
   };
   function fillPatientForm(patient = {}) {
     Object.entries(patientFields).forEach(([id, key]) => { $(id).value = patient[key] || (key === 'sex' ? 'unknown' : ''); });
@@ -88,7 +98,7 @@
     patientMessage('');
   }
   goNewPatient = function () {
-    try { requireAccess(); editId = null; fillPatientForm(); show('newPatient'); $('pname').focus(); }
+    try { requireAccess(); if (typeof beginQuickNavigation4 === 'function') beginQuickNavigation4(); editId = null; fillPatientForm(); show('newPatient'); $('pname').focus(); }
     catch (error) { message('homeMessage', error.message); }
   };
   global.editPatientV5 = function () {
@@ -130,6 +140,32 @@
       message('patientCardMessageV5', archived ? 'Пациент в архиве. История и документы сохранены.' : 'Пациент восстановлен.', true);
     } catch (error) { message('patientCardMessageV5', error.message); }
     finally { archiveBusy = false; }
+  };
+  global.deletePatientV10 = async function () {
+    if (!owner() || deletionBusy) return;
+    const patient = patientById(currentPatientId), staffId = currentStaff?.id;
+    if (!patient || isDeleted(patient)) return;
+    if (!global.confirm(`Удалить пациента «${patient.full_name}» из списка? Новые процедуры для него будут недоступны. История процедур и оплат останется в отчётах. Документы сохранятся.`)) return;
+    const key = JSON.stringify([staffId, patient.id, patient.updated_at]);
+    if (!deletionRequests.has(key)) deletionRequests.set(key, crypto.randomUUID());
+    const stillCurrent = () => currentStaff?.id === staffId && currentPatientId === patient.id && $('patientCard').classList.contains('active');
+    deletionBusy = true; $('patientDeleteV10').disabled = true;
+    try {
+      requireAccess();
+      if (!owner()) throw new Error('Удалять пациента может только владелец.');
+      const { error } = await db.rpc('crm_patient_delete_v10', { p_payload: { id: patient.id, request_id: deletionRequests.get(key), expected_updated_at: patient.updated_at } });
+      if (error) throw new Error(error.message || 'Не удалось удалить пациента. Повторите действие.');
+      if (currentStaff?.id !== staffId) return;
+      deletionRequests.delete(key);
+      ++listVersion;
+      directory = directory.filter(item => item.id !== patient.id); patients = patients.filter(item => item.id !== patient.id);
+      if (stillCurrent()) {
+        ++cardVersion; ++patientView4; currentPatientId = null; lastTemplate = null;
+        ['patientHistory', 'patientDocuments', 'patientCourses', 'patientCardInfo', 'lastProcedure'].forEach(id => { $(id).textContent = ''; });
+        renderPatients(); show('patients'); message('homeMessage', 'Пациент удалён из списка. История и документы сохранены.', true);
+      }
+    } catch (error) { if (stillCurrent()) message('patientCardMessageV5', error.message); }
+    finally { deletionBusy = false; $('patientDeleteV10').disabled = false; }
   };
   function renderPatientInfo(patient) {
     const fields = [['Дата рождения', patient.birth_date], ['Пол', sexLabel(patient.sex)], ['Телефон', patient.phone], ['Жалобы', patient.complaints], ['Запрос', patient.request], ['Назначения врача', patient.prescriptions], ['Комментарий', patient.notes]];
@@ -206,7 +242,7 @@
   };
   openPatient = async function (id) {
     requireAccess();
-    const patient = patientById(id); if (!patient || (isArchived(patient) && !owner())) return;
+    const patient = patientById(id); if (!patient || isDeleted(patient) || (isArchived(patient) && !owner())) return;
     const version = ++cardVersion; ++patientView4; currentPatientId = id; lastTemplate = null;
     const archived = isArchived(patient);
     ['courseTitle', 'courseEnd', 'coursePlan', 'courseNotes', 'docTitle', 'docFile'].forEach(input => { $(input).value = ''; });
@@ -214,6 +250,7 @@
     $('patientCardName').textContent = patient.full_name; renderPatientInfo(patient);
     message('patientCardMessageV5', archived ? 'Пациент в архиве. Для новой процедуры восстановите карточку.' : '');
     $('patientEditV5').classList.toggle('hidden', !owner()); $('patientArchiveV5').classList.toggle('hidden', !owner());
+    $('patientDeleteV10').classList.toggle('hidden', !owner());
     $('patientArchiveV5').textContent = archived ? 'Восстановить из архива' : 'Архивировать';
     $('patientCard').querySelector('button[onclick="openProcedure(currentPatientId)"]').disabled = archived;
     $('patientCard').querySelector('button[onclick="uploadPatientDocument()"]').disabled = archived || documentSaving;
@@ -389,8 +426,9 @@
     $('patientList').addEventListener('click', event => { const button = event.target.closest('[data-patient-id]'); if (button) openPatient(button.dataset.patientId).catch(error => message('homeMessage', error.message)); });
     $('patientDocuments').addEventListener('click', event => { const button = event.target.closest('[data-document-path]'); if (button) openPatientDocument(button.dataset.documentPath); });
     $('patientCourses').addEventListener('click', event => { const button = event.target.closest('[data-course-id]'); if (button && !isArchived(patientById(currentPatientId))) setCourseStatus(button.dataset.courseId, button.dataset.courseStatus); });
-    const controls = document.createElement('div'); controls.className = 'row patient-controls-v5'; controls.innerHTML = '<button id="patientEditV5" type="button" class="btn secondary hidden">Редактировать</button><button id="patientArchiveV5" type="button" class="btn secondary hidden">Архивировать</button>';
+    const controls = document.createElement('div'); controls.className = 'row patient-controls-v5'; controls.innerHTML = '<button id="patientEditV5" type="button" class="btn secondary hidden">Редактировать</button><button id="patientArchiveV5" type="button" class="btn secondary hidden">Архивировать</button><button id="patientDeleteV10" type="button" class="btn danger hidden">Удалить пациента</button>';
     $('patientCardName').after(controls); $('patientEditV5').onclick = global.editPatientV5; $('patientArchiveV5').onclick = global.archivePatientV5;
+    $('patientDeleteV10').onclick = global.deletePatientV10;
     const cardMessage = document.createElement('div'); cardMessage.id = 'patientCardMessageV5'; cardMessage.setAttribute('role', 'status'); controls.after(cardMessage);
     const back = $('newPatient').querySelector(':scope > button'); if (back) back.onclick = () => { const id = editId; editId = null; if (id) openPatient(id); else show('workspace'); };
     const voiceButton = (host, label = '🎙 Голосовой помощник') => { if (!host) return; const button = document.createElement('button'); button.type = 'button'; button.className = 'btn secondary voice-button-v5'; button.textContent = label; button.onclick = global.openVoiceV5; host.append(button); };
