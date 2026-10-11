@@ -91,7 +91,10 @@
   const paid = $(prefix + 'Paid'), host = document.createElement('div');
   host.id = prefix + 'ClinicalV10'; host.className = 'clinical-payment-v10';
   host.innerHTML = `<label for="${prefix}PaymentStatusV10">Вариант оплаты</label><select id="${prefix}PaymentStatusV10"><option value="paid">Полностью оплачено</option><option value="debt">В долг / частично оплачено</option><option value="free">Бесплатно</option></select><div id="${prefix}ReceivedBoxV10" class="hidden"><label for="${prefix}ReceivedV10">Оплачено сейчас, ₽</label><input id="${prefix}ReceivedV10" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div id="${prefix}DebtSummaryV10" class="small" role="status" aria-live="polite"></div><div id="${prefix}EditReasonBoxV10" class="hidden"><label for="${prefix}EditReasonV10">Что изменили и почему *</label><textarea id="${prefix}EditReasonV10"></textarea></div>`;
-  paid.after(host); paid.previousElementSibling.textContent = 'Стоимость для пациента, ₽'; paid.removeAttribute('oninput');
+  paid.after(host); paid.previousElementSibling.textContent = 'Стоимость с учётом скидки, ₽'; paid.removeAttribute('oninput');
+  const debtHint = document.createElement('p'); debtHint.id = prefix + 'DebtHintV13'; debtHint.className = 'notice hidden';
+  debtHint.textContent = 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
+  $(prefix + 'PaymentStatusV10').after(debtHint);
   paid.addEventListener('input',() => chargeChanged(prefix));
   $(prefix + 'PaymentStatusV10').addEventListener('change',() => paymentStatusChanged(prefix));
   $(prefix + 'ReceivedV10').addEventListener('input',() => { clearConfirmation(prefix); syncPaymentV5(prefix); });
@@ -100,7 +103,7 @@
   $(prefix + 'DiscountReason').addEventListener('change',() => { clearConfirmation(prefix); discountVisibility(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountComment').previousElementSibling.textContent = 'Почему стоимость отличается от прайса / бесплатно *';
   const inline = document.createElement('div'); inline.className = 'clinical-discount-inline-v11';
-  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">К оплате с учётом скидки, ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: скидка от начальника"></textarea></div>`;
+  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">Стоимость с учётом скидки (включая долг), ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: скидка от начальника"></textarea></div>`;
   $(prefix + 'PaymentV5').querySelector('h2').after(inline);
   const shortCash = document.createElement('div'); shortCash.id = prefix + 'ShortCashBoxV11'; shortCash.className = 'clinical-short-cash-v11 hidden';
   shortCash.innerHTML = `<p id="${prefix}ShortCashHintV11" class="small"></p><button id="${prefix}ApplyDiscountV11" type="button" class="btn secondary wide">Учесть разницу как скидку</button><div id="${prefix}ApplyDiscountMessageV11" role="alert"></div>`;
@@ -216,8 +219,15 @@
   if (!pay.tenderEdited) $(prefix + 'PayTender').value = amount(cash);
   $(prefix + 'PayTenderBox').classList.toggle('hidden',total === 0 || (cash === 0 && pay.method !== 'cash' && pay.method !== 'mixed'));
   $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',$(prefix + 'PaymentStatusV10').value !== 'debt');
+  const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
+  $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected);
+  $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
+  $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
+  const kind = prefix === 'proc' ? 'procedure' : 'sale';
+  const saveButton = document.querySelector('#' + kind + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]');
+  if (saveButton) saveButton.textContent = prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
-  try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. Долг: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
+  try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `К оплате с учётом скидки: ${rub(m.charge / 100)}. ${m.list > m.charge ? 'Скидка: ' + rub((m.list - m.charge) / 100) + '. ' : ''}${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. Долг: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
   inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
