@@ -155,3 +155,44 @@ test('owner collects preserved debt directly after a patient has been removed fr
  const call=await page.evaluate(()=>__v10Calls.find(x=>x.name==='crm_clinical_v10'&&x.args.p_action==='debt_payment'));
  expect(call.args.p_payload).toMatchObject({id:'procedure-1',shift_id:'shift-1',nurse_id:'nurse-1',payments:{cash:50,cash_received:50}});expect(errors).toEqual([]);
 });
+
+async function shortCashProcedure(page){
+ await page.evaluate(()=>{services[0].work_price=600;services[0].consumables_price=0;meds[0].sale_price=3500});
+ await page.evaluate(()=>openProcedure('patient-1'));await expect(page.locator('#procedure')).toBeVisible();await page.selectOption('#procService','service-1');await page.evaluate(()=>chooseMedication('procMeds','med-1'));await page.fill('#procMeds .medqty','2');await expect(page.locator('#procPaid')).toHaveValue('7600.00');
+}
+
+test('a smaller cash tender and general discount note never silently change the charge',async({page})=>{
+ const errors=await boot(page);await shortCashProcedure(page);await page.fill('#procNotes','Скидка от начальника');await page.fill('#procPayTender','6800');await expect(page.locator('#procShortCashBoxV11')).toBeVisible();
+ await expect(page.locator('#procPaid')).toHaveValue('7600.00');await expect(page.locator('#procPayCash')).toHaveValue('7600.00');await save(page);await expect(page.locator('#procedureMessage')).toContainText(/меньше|скидк|коррект/i);expect(await created(page)).toHaveLength(0);
+ await expect(page.locator('#procPaid')).toHaveValue('7600.00');await expect(page.locator('#procPayTender')).toHaveValue('6800');await expect(page.locator('#procNotes')).toHaveValue('Скидка от начальника');expect(errors).toEqual([]);
+});
+
+test('explicit cash discount requires a reason then records the agreed 6800 without a debt',async({page})=>{
+ const errors=await boot(page);await shortCashProcedure(page);await page.fill('#procNotes','Скидка от начальника');await page.fill('#procPayTender','6800');await page.check('#procPayConfirmed');await page.click('#procApplyDiscountV11');await expect(page.locator('#procApplyDiscountMessageV11')).toContainText('причину скидки');await expect(page.locator('#procDiscountInPaymentV11')).toBeFocused();
+ await expect(page.locator('#procPaid')).toHaveValue('7600.00');expect(await created(page)).toHaveLength(0);await expect(page.locator('#procShortCashBoxV11')).toBeVisible();
+ await page.fill('#procDiscountInPaymentV11','Скидка от владельца согласована: 800 ₽');await page.click('#procApplyDiscountV11');await expect(page.locator('#procPayConfirmed')).not.toBeChecked();await expect(page.locator('#procPaid')).toHaveValue('6800.00');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('6800.00');await expect(page.locator('#procList')).toContainText('7 600');await expect(page.locator('#procPayCash')).toHaveValue('6800.00');await expect(page.locator('#procShortCashBoxV11')).not.toBeVisible();await expect(page.locator('#procDebtSummaryV10')).toContainText('Долг: 0');
+ await noOverflow(page);await save(page);await expect(page.locator('#workspace')).toBeVisible();const payload=(await created(page))[0].args.p_payload;expect(payload).toMatchObject({charge_total:6800,paid_total:6800,payment_status:'paid',discount_comment:'Скидка от владельца согласована: 800 ₽',notes:'Скидка от начальника',payments:{cash:6800,terminal:0,owner_card:0,cash_received:6800}});expect(errors).toEqual([]);
+});
+
+test('cash discount preserves the terminal and owner-card parts of a mixed receipt',async({page})=>{
+ const errors=await boot(page);await shortCashProcedure(page);await page.click('#procPaymentV5 [data-pay-method="mixed"]');await page.fill('#procPayCash','3600');await page.fill('#procPayTerminal','2000');await page.fill('#procPayOwnerCard','2000');await page.fill('#procPayTender','2800');await page.fill('#procDiscountInPaymentV11','Согласована скидка на наличную часть');await page.click('#procApplyDiscountV11');
+ await expect(page.locator('#procPaid')).toHaveValue('6800.00');await expect(page.locator('#procPayCash')).toHaveValue('2800.00');await expect(page.locator('#procPayTerminal')).toHaveValue(/^2000(?:\.00)?$/);await expect(page.locator('#procPayOwnerCard')).toHaveValue(/^2000(?:\.00)?$/);await save(page);await expect(page.locator('#workspace')).toBeVisible();expect((await created(page))[0].args.p_payload).toMatchObject({charge_total:6800,paid_total:6800,payments:{cash:2800,terminal:2000,owner_card:2000,cash_received:2800}});expect(errors).toEqual([]);
+});
+
+test('cash above the charge remains change and needs no discount correction',async({page})=>{
+ const errors=await boot(page);await shortCashProcedure(page);await page.fill('#procPayTender','7800');await expect(page.locator('#procShortCashBoxV11')).not.toBeVisible();await expect(page.locator('#procPaid')).toHaveValue('7600.00');await expect(page.locator('#procPaySummary')).toContainText('Сдача: 200');await save(page);await expect(page.locator('#workspace')).toBeVisible();expect((await created(page))[0].args.p_payload).toMatchObject({charge_total:7600,paid_total:7600,discount_comment:null,payments:{cash:7600,terminal:0,owner_card:0,cash_received:7800}});expect(errors).toEqual([]);
+});
+
+test('short tender in debt mode cannot become a cash discount or erase the agreed debt',async({page})=>{
+ const errors=await boot(page);await shortCashProcedure(page);await page.selectOption('#procPaymentStatusV10','debt');await page.fill('#procReceivedV10','6800');await page.fill('#procPayTender','6700');await expect(page.locator('#procShortCashBoxV11')).not.toBeVisible();await save(page);await expect(page.locator('#procedureMessage')).toContainText(/меньше/);expect(await created(page)).toHaveLength(0);await expect(page.locator('#procPaid')).toHaveValue('7600.00');await expect(page.locator('#procDebtSummaryV10')).toContainText('800');
+ await page.fill('#procPayTender','6800');await save(page);await expect(page.locator('#workspace')).toBeVisible();expect((await created(page))[0].args.p_payload).toMatchObject({charge_total:7600,paid_total:6800,payment_status:'debt',discount_comment:null});expect(errors).toEqual([]);
+});
+
+test('the payment-area charge and reason mirrors work for medication sales too',async({page})=>{
+ const errors=await boot(page);await page.evaluate(async()=>{meds[0].sale_price=3800;await openSale();chooseMedication('saleMeds','med-1')});await page.fill('#saleMeds .medqty','2');await expect(page.locator('#salePaid')).toHaveValue('7600.00');await page.fill('#saleChargeInPaymentV11','6800');await expect(page.locator('#salePaid')).toHaveValue(/^6800(?:\.00)?$/);await page.fill('#saleDiscountInPaymentV11','Постоянная скидка на продажу');await expect(page.locator('#saleDiscountComment')).toHaveValue('Постоянная скидка на продажу');await page.check('#salePayConfirmed');await page.click('#sale button[onclick="saveSale()"]');await expect(page.locator('#workspace')).toBeVisible();const payload=(await created(page))[0].args.p_payload;expect(payload).toMatchObject({charge_total:6800,paid_total:6800,discount_comment:'Постоянная скидка на продажу',payments:{cash:6800,terminal:0,owner_card:0,cash_received:6800}});expect(errors).toEqual([]);
+});
+
+test('editing cannot reduce the charge below money already received through the payment mirror',async({page})=>{
+ const errors=await boot(page);await page.evaluate(()=>{Object.assign(__v10Record,{list_total:7600,charge_total:7600,paid_total:7000,debt_total:600});Object.assign(__v10Record.services[0],{unit_price:600,work_price:600,consumables_price:0,line_total:600});Object.assign(__v10Record.items[0],{unit_price:3500,line_total:7000});return editTreatmentV10('procedure','procedure-1')});
+ await page.fill('#procChargeInPaymentV11','6800');await page.fill('#procDiscountInPaymentV11','Попытка уменьшить стоимость ниже ранее оплаченной');await page.fill('#procEditReasonV10','Проверка ограничения корректировки');await save(page);await expect(page.locator('#procedureMessage')).toContainText(/уже полученной|меньше уже/);await expect(page.locator('#procPaid')).toHaveValue(/^6800(?:\.00)?$/);await expect(page.locator('#procDiscountInPaymentV11')).toHaveValue('Попытка уменьшить стоимость ниже ранее оплаченной');expect(await page.evaluate(()=>__v10Calls.filter(call=>call.name==='crm_clinical_v10'&&call.args.p_action==='treatment_edit'))).toHaveLength(0);expect(errors).toEqual([]);
+});

@@ -99,6 +99,16 @@
   $(prefix + 'DiscountReason').removeAttribute('onchange');
   $(prefix + 'DiscountReason').addEventListener('change',() => { clearConfirmation(prefix); discountVisibility(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountComment').previousElementSibling.textContent = 'Почему стоимость отличается от прайса / бесплатно *';
+  const inline = document.createElement('div'); inline.className = 'clinical-discount-inline-v11';
+  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">К оплате с учётом скидки, ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: скидка от начальника"></textarea></div>`;
+  $(prefix + 'PaymentV5').querySelector('h2').after(inline);
+  const shortCash = document.createElement('div'); shortCash.id = prefix + 'ShortCashBoxV11'; shortCash.className = 'clinical-short-cash-v11 hidden';
+  shortCash.innerHTML = `<p id="${prefix}ShortCashHintV11" class="small"></p><button id="${prefix}ApplyDiscountV11" type="button" class="btn secondary wide">Учесть разницу как скидку</button><div id="${prefix}ApplyDiscountMessageV11" role="alert"></div>`;
+  $(prefix + 'PayTenderBox').after(shortCash);
+  $(prefix + 'PayTender').previousElementSibling.textContent = 'Получено наличными (для расчёта сдачи), ₽';
+  $(prefix + 'ChargeInPaymentV11').addEventListener('input',() => { $(prefix + 'Paid').value = $(prefix + 'ChargeInPaymentV11').value; chargeChanged(prefix); });
+  $(prefix + 'DiscountInPaymentV11').addEventListener('input',() => { $(prefix + 'DiscountComment').value = $(prefix + 'DiscountInPaymentV11').value; clearConfirmation(prefix); syncPaymentV5(prefix); });
+  $(prefix + 'ApplyDiscountV11').onclick = () => applyCashDiscount(prefix);
   if (prefix === 'proc') {
    const extra = document.createElement('div'); extra.className = 'clinical-extra-v10';
    extra.innerHTML = '<h2>Дополнительные процедуры</h2><div id="procAdditionalServicesV10"></div><button type="button" id="procAddServiceV10" class="btn secondary wide">＋ Добавить укол или другую процедуру</button><h2>Препараты пациента</h2><p class="small">Укажите свои препараты или ранее купленные у нас. Здесь они не добавляются к стоимости.</p><div id="procOwnMedsV10"></div><button type="button" id="procAddOwnV10" class="btn secondary wide">＋ Свой / ранее купленный препарат</button>';
@@ -143,12 +153,44 @@
   const s = state(prefix); if (!s) throw Error('Откройте форму заново');
   return paymentModel({list:amount(listCents(prefix)),charge:$(prefix + 'Paid').value,previous:amount(s.previous || 0),received:amount(receivedCents(prefix)),status:$(prefix + 'PaymentStatusV10').value,reason:$(prefix + 'DiscountComment').value,patient:$(prefix + 'Patient').value});
  }
+ function shortCashDiscount(prefix) {
+  if (!state(prefix) || $(prefix + 'PaymentStatusV10').value !== 'paid') return null;
+  try {
+   const charge = cents($(prefix + 'Paid').value), cash = cents($(prefix + 'PayCash').value), terminal = cents($(prefix + 'PayTerminal').value), card = cents($(prefix + 'PayOwnerCard').value), tender = cents($(prefix + 'PayTender').value);
+   if (tender >= cash || cash + terminal + card !== receivedCents(prefix)) return null;
+   return {charge:charge - cash + tender,cash:tender,discount:cash - tender};
+  } catch { return null; }
+ }
+ function inlinePayment(prefix) {
+  if (!$(prefix + 'ChargeInPaymentV11')) return;
+  const charge = $(prefix + 'ChargeInPaymentV11'), reason = $(prefix + 'DiscountInPaymentV11'), correction = shortCashDiscount(prefix);
+  if (document.activeElement !== charge) charge.value = $(prefix + 'Paid').value;
+  if (document.activeElement !== reason) reason.value = $(prefix + 'DiscountComment').value;
+  $(prefix + 'DiscountInPaymentBoxV11').classList.toggle('hidden',$(prefix + 'DiscountBox').classList.contains('hidden') && !correction);
+  $(prefix + 'ShortCashBoxV11').classList.toggle('hidden',!correction);
+  $(prefix + 'ApplyDiscountMessageV11').textContent = '';
+  if (correction) $(prefix + 'ShortCashHintV11').textContent = `Наличными введено на ${rub(correction.discount / 100)} меньше. Если это скидка, укажите причину и примените её. К оплате станет ${rub(correction.charge / 100)}. Если это долг, выберите «В долг / частично оплачено».`;
+ }
+ function applyCashDiscount(prefix) {
+  const correction = shortCashDiscount(prefix); if (!correction) return;
+  const reason = $(prefix + 'DiscountComment').value.trim();
+  if (!reason || correction.charge === 0) {
+   $(prefix + 'ApplyDiscountMessageV11').textContent = !reason ? 'Укажите причину скидки в поле выше' : 'Для нулевой стоимости выберите «Бесплатно» и укажите причину';
+   (!reason ? $(prefix + 'DiscountInPaymentV11') : $(prefix + 'PaymentStatusV10')).focus();
+   clearConfirmation(prefix); return;
+  }
+  $(prefix + 'Paid').value = amount(correction.charge); $(prefix + 'PayCash').value = amount(correction.cash);
+  state(prefix).chargeEdited = true; clearConfirmation(prefix); calculate(prefix,false);
+  message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage','Скидка учтена. Подтвердите сумму оплаты и сохраните запись.',true);
+ }
  discountVisibility = function(prefix) {
   if (!state(prefix) || !$(prefix + 'ClinicalV10')) return;
   let modified = true; try { modified = cents($(prefix + 'Paid').value) !== listCents(prefix) || $(prefix + 'PaymentStatusV10').value === 'free'; } catch {}
   $(prefix + 'DiscountBox').classList.toggle('hidden',!modified); $(prefix + 'OtherBox').classList.remove('hidden');
   $(prefix + 'Paid').readOnly = false;
  };
+ const oldPaymentEdited = paymentEditedV5;
+ paymentEditedV5 = function(prefix, tender = false) { oldPaymentEdited(prefix,tender); inlinePayment(prefix); };
  const oldInstall = installPaymentControlsV5;
  installPaymentControlsV5 = function(prefix) { oldInstall(prefix); };
  resetPaymentV5 = function(prefix) {
@@ -177,7 +219,7 @@
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
   try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. Долг: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
-  renderPaymentSummaryV5(prefix);
+  inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
   const model = currentModel(prefix), cash = cents($(prefix + 'PayCash').value,'Наличные'), terminal = cents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = cents($(prefix + 'PayOwnerCard').value,'Перевод');
