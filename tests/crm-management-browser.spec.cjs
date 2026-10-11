@@ -1,11 +1,11 @@
 const {test}=require('@playwright/test');
 const fs=require('node:fs'),assert=require('node:assert/strict'),path=require('node:path');
-const root='/workspace/procedural-cabinet';
+const root=path.resolve(__dirname,'..');
 test('owner management mobile flows and nurse access restrictions',async({page})=>{
  await page.setViewportSize({width:390,height:844});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.addInitScript(()=>{
-  window.requests=[];
+  window.requests=[];window.serviceReceipts=new Map();
   window.staffData=[{id:'owner',full_name:'Владелец',role:'owner',active:true,email:'owner@example.com',auth_user_id:'a1'},{id:'n1',full_name:'Нина',role:'nurse',active:true,auth_user_id:'a2',email:'nina@example.com'}];
   window.serviceData=[{id:'s1',name:'Капельница',work_price:500,consumables_price:100,active:true}];
   window.medData=[{id:'m1',name:'Самыр',manufacturer:'Производитель',release_form:'Раствор',comment:'Комментарий',consumption_unit:'амп.',work_qty:10,reserve_qty:10,work_available:10,reserve_available:10,units_per_package:5,purchase_price:100,sale_price:20,active:true}];window.templateData=[];
@@ -15,11 +15,14 @@ test('owner management mobile flows and nurse access restrictions',async({page})
     if(a==='staff_list')data=staffData;
     if(a==='staff_save'){Object.assign(staffData.find(s=>s.id===p.id),p);data=staffData.find(s=>s.id===p.id)}
     if(a==='services_list')data=serviceData;
-    if(a==='service_save'){data={...p,id:p.id||'s2'};serviceData.push(data)}
     if(a==='templates_list')data=templateData;
     if(a==='template_save'){data={...p,id:p.id||'t1'};templateData.push(data)}
     if(a==='audit_list')data=[{actor_name:'Владелец',created_at:'2026-10-06T12:00:00Z',action:'update',entity_type:'medication',reason:'<img src=x onerror=alert(1)>',before_data:{name:'Самыр',sale_price:20},after_data:{name:'Самыр',sale_price:25}}];
     if(a==='backup_export')data={version:'5',exported_at:'2026-10-06',tables:{'public.patients':[]}};
+   }
+   if(name==='crm_service_save_v11'){
+    if(serviceReceipts.has(args.p_request_id))data=serviceReceipts.get(args.p_request_id);
+    else{data={...p,id:p.id||'s2'};serviceData.push(data);serviceReceipts.set(args.p_request_id,data)}
    }
    if(name==='crm_backup_status_v5')data={last_run:null,last_success:null};
    if(name==='crm_finance_v5'){if(a==='accounting_mode')data={payment_only:false,stock_deducted:true};if(a==='settings_get')data={float_amount:50000,time_zone:'Europe/Moscow',payment_only:false};if(a==='settings_save')data=p}
@@ -40,7 +43,7 @@ test('owner management mobile flows and nurse access restrictions',async({page})
  });
  await page.goto('http://127.0.0.1:4173/');await page.evaluate(async()=>{currentStaff={id:'owner',role:'owner',full_name:'Владелец'};await openStaffV5()});
  assert.equal(await page.locator('#staffListV5 button').count(),2);await page.fill('#staffCreateNameV5','Амина');await page.fill('#staffCreateEmailV5','amina@example.com');await page.fill('#staffCreatePasswordV5','long-secure-password');await page.click('button[onclick="createStaffAccountV5()"]');await page.waitForFunction(()=>document.getElementById('staffListV5').children.length===3);assert.equal(await page.locator('#staffCreatePasswordV5').inputValue(),'');
- await page.evaluate(()=>goServicesV5());await page.fill('#serviceName','Новая услуга');await page.fill('#serviceWork','700');await page.fill('#serviceConsumables','50');await page.fill('#serviceCommentV5','Комментарий услуги');await page.click('button[onclick="saveService()"]');await page.waitForFunction(()=>serviceData.length===2);assert.equal(await page.evaluate(()=>requests.find(x=>x.args?.p_action==='service_save').args.p_payload.comment),'Комментарий услуги');
+ await page.evaluate(()=>goServicesV5());await page.fill('#serviceName','Новая услуга');await page.fill('#serviceWork','700');await page.fill('#serviceConsumables','50');await page.fill('#serviceCommentV5','Комментарий услуги');await page.click('button[onclick="saveService()"]');await page.waitForFunction(()=>serviceData.length===2);assert.equal(await page.evaluate(()=>requests.find(x=>x.name==='crm_service_save_v11').args.p_payload.comment),'Комментарий услуги');assert.match(await page.evaluate(()=>requests.find(x=>x.name==='crm_service_save_v11').args.p_request_id),/^[0-9a-f-]{36}$/i);
  await page.evaluate(()=>openTemplatesV5());await page.click('button[onclick="editTemplateV5(-1)"]');await page.fill('#templateNameV5','Капельница №1');await page.selectOption('#templateServiceV5','s1');await page.click('button[onclick="addTemplateItemV5()"]');await page.selectOption('.template-med-v5','m1');await page.fill('.template-quantity-v5','2');await page.click('button[onclick="saveTemplateV5()"]');await page.waitForFunction(()=>templateData.length===1);
  await page.evaluate(async()=>{show('procedure');procService.innerHTML=services.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');await loadProcedureTemplatesV5()});const before=await page.evaluate(()=>requests.length);await page.selectOption('#procTemplateSelectV5','0');await page.click('button[onclick="applyProcedureTemplateV5()"]');assert.equal(await page.locator('#procMeds .medqty').inputValue(),'2');assert.equal(await page.evaluate(()=>requests.length),before);
  await page.evaluate(async()=>{await loadInventory();openMedForm('m1')});await page.waitForFunction(()=>document.getElementById('batchList').textContent.includes('N-17'));assert.equal(await page.locator('#medManufacturerV5').inputValue(),'Производитель');assert.ok((await page.locator('#batchList').textContent()).includes('Поставщик'));

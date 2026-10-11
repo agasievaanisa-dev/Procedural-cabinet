@@ -1,6 +1,29 @@
 /* Owner management and editable procedure templates. Authorization is enforced by RPCs. */
 let managementStaffV5=[],managementTemplatesV5=[],managementAuditV5=[],managementBusyV5=false,managementLoadV5=0;
 let managementSettingsLoadedV5=false;
+let serviceSessionV11=0,serviceFormV11=0,serviceListV11=0,serviceDraftV11=null,serviceOperationV11=null;
+const serviceActorV11=()=>JSON.stringify([currentStaff?.id,currentStaff?.role,serviceSessionV11]);
+function requireServiceActorV11(actor){
+  if(!isManager()||actor!==serviceActorV11())throw Error('Учётная запись изменилась. Откройте прайс заново.');
+}
+function serviceNetworkFailureV11(error,status){
+  if(error?.code||(status!=null&&status!==0))return false;
+  return /^(?:(?:TypeError|NetworkError):\s*)?(?:Load failed|Failed to fetch|Network request failed|NetworkError when attempting to fetch resource)\.?$/i.test(String(error?.message||'').trim());
+}
+async function serviceRequestV11(name,args,onAmbiguous=null){
+  const actor=serviceActorV11();
+  for(let attempt=0;attempt<2;attempt++){
+    requireServiceActorV11(actor);let response;
+    try{response=await db.rpc(name,args)}catch(error){response={error}}
+    requireServiceActorV11(actor);
+    if(response&&!response.error)return response.data;
+    const error=response?.error||{message:'Load failed'},network=serviceNetworkFailureV11(error,response?.status);
+    if(network)onAmbiguous?.();
+    if(network&&attempt===0){await new Promise(resolve=>setTimeout(resolve,350));continue}
+    const failure=Error(network?'Не удалось получить ответ от сервера. Проверьте интернет и повторите действие.':error.message||'Не удалось выполнить действие.');
+    failure.network=network;throw failure;
+  }
+}
 
 async function crmManagementRpcV5(action,payload={}){
   const {data,error}=await db.rpc('crm_management_v5',{p_action:action,p_payload:payload});
@@ -89,20 +112,96 @@ function ensureServicesV5(){
   if(!$('serviceCommentV5'))$('serviceActive').closest('label').insertAdjacentHTML('beforebegin','<label for="serviceCommentV5">Комментарий</label><textarea id="serviceCommentV5"></textarea>');
   if(!$('serviceNewV5')){$('services').querySelector('.row').insertAdjacentHTML('beforeend','<button id="serviceNewV5" class="btn secondary" onclick="newServiceV5()">＋ Новая услуга</button>');$('services').querySelector('button[onclick="show(\'admin\')"]')?.setAttribute('onclick',"show('workspace')")}
 }
-async function goServicesV5(){if(!ownerManagementV5())return;ensureServicesV5();newServiceV5();show('services');await loadServicesAdmin()}
-function newServiceV5(){if(!isManager())return;ensureServicesV5();$('serviceId').value='';$('serviceName').value='';$('serviceWork').value='0';$('serviceConsumables').value='0';$('serviceActive').checked=true;$('serviceCommentV5').value=''}
+function serviceControlsV11(){
+  const frozen=!!serviceDraftV11||serviceSaving;
+  for(const id of ['serviceName','serviceWork','serviceConsumables','serviceActive','serviceCommentV5','serviceNewV5'])if($(id))$(id).disabled=frozen;
+  $('serviceList')?.querySelectorAll('button').forEach(button=>button.disabled=frozen);
+  const button=$('services').querySelector('button[onclick="saveService()"]');
+  button.disabled=serviceSaving;
+  button.textContent=serviceDraftV11?.result?'Завершить сохранение':serviceDraftV11?.uncertain?'Повторить сохранение':'Сохранить услугу';
+}
+function fillServiceV11(s={}){
+  ++serviceFormV11;ensureServicesV5();
+  $('serviceId').value=s.id||'';$('serviceName').value=s.name||'';$('serviceWork').value=s.work_price??0;$('serviceConsumables').value=s.consumables_price??0;
+  $('serviceActive').checked=s.active!==false;$('serviceCommentV5').value=s.comment||'';serviceControlsV11();
+}
+function resumeServiceV11(){
+  if(!serviceDraftV11||serviceDraftV11.actor!==serviceActorV11())return false;
+  fillServiceV11(serviceDraftV11.payload);show('services');
+  message('serviceMessage',serviceDraftV11.result?'Услуга уже сохранена. Нажмите «Завершить сохранение».':serviceSaving?'Сохраняем услугу…':'Ответ о сохранении не получен. Данные остались в форме. Нажмите «Повторить сохранение».',!!serviceDraftV11.result);
+  return true;
+}
+async function goServicesV5(){
+  if(!ownerManagementV5())return;
+  if(typeof beginQuickNavigation4==='function')beginQuickNavigation4();
+  ensureServicesV5();if(resumeServiceV11())return;
+  newServiceV5();show('services');await loadServicesAdmin();
+}
+function newServiceV5(){
+  if(!isManager())return false;if(resumeServiceV11())return false;
+  fillServiceV11();message('serviceMessage','');return true;
+}
+function renderServicesV11(){
+  $('serviceList').innerHTML=serviceRows.map((s,i)=>`<button class="item management-list-button" onclick="editService(serviceRows[${i}])"><div class="row between"><strong>${esc(s.name)}</strong><span class="pill">${s.active!==false?'Активна':'В архиве'}</span></div><div>Стоимость: ${rub(num(s.work_price)+num(s.consumables_price))}</div><div class="small">Работа ${rub(s.work_price)} · расходники ${rub(s.consumables_price)}</div>${s.comment?`<div class="small">${esc(s.comment)}</div>`:''}</button>`).join('')||'<p>Добавьте первую услугу.</p>';
+  serviceControlsV11();
+}
 loadServicesAdmin=async function(){
-  if(!ownerManagementV5())return;ensureServicesV5();message('serviceMessage','Загружаем услуги…');
-  try{serviceRows=await crmManagementRpcV5('services_list')||[];if(!isManager())return;$('serviceList').innerHTML=serviceRows.map((s,i)=>`<button class="item management-list-button" onclick="editService(serviceRows[${i}])"><div class="row between"><strong>${esc(s.name)}</strong><span class="pill">${s.active!==false?'Активна':'В архиве'}</span></div><div>Стоимость: ${rub(num(s.work_price)+num(s.consumables_price))}</div><div class="small">Работа ${rub(s.work_price)} · расходники ${rub(s.consumables_price)}</div>${s.comment?`<div class="small">${esc(s.comment)}</div>`:''}</button>`).join('')||'<p>Добавьте первую услугу.</p>';message('serviceMessage','')}
-  catch(e){message('serviceMessage',e.message)}
+  if(!ownerManagementV5())return false;ensureServicesV5();
+  const actor=serviceActorV11(),version=++serviceListV11;
+  if(!serviceDraftV11)message('serviceMessage','Загружаем услуги…');
+  try{
+    const rows=await serviceRequestV11('crm_management_v5',{p_action:'services_list',p_payload:{}});
+    if(actor!==serviceActorV11()||version!==serviceListV11||!$('services').classList.contains('active'))return false;
+    serviceRows=rows||[];renderServicesV11();if(!serviceDraftV11)message('serviceMessage','');return true;
+  }catch(e){if(actor===serviceActorV11()&&version===serviceListV11&&$('services').classList.contains('active')&&!serviceDraftV11)message('serviceMessage',e.message);return false}
 };
-editService=function(s){if(!ownerManagementV5()||!s)return;ensureServicesV5();$('serviceId').value=s.id;$('serviceName').value=s.name;$('serviceWork').value=s.work_price??0;$('serviceConsumables').value=s.consumables_price??0;$('serviceActive').checked=s.active!==false;$('serviceCommentV5').value=s.comment||'';$('serviceName').scrollIntoView({behavior:'smooth',block:'center'})};
+editService=function(s){
+  if(!ownerManagementV5()||!s)return;if(resumeServiceV11())return;
+  fillServiceV11(s);message('serviceMessage','');$('serviceName').scrollIntoView({behavior:'smooth',block:'center'});
+};
+function cacheServiceV11(saved){
+  ++serviceListV11;
+  serviceRows=[saved,...serviceRows.filter(s=>s.id!==saved.id)];
+  services=services.filter(s=>s.id!==saved.id);if(saved.active!==false)services.push(saved);
+}
 saveService=async function(){
   if(!ownerManagementV5()||serviceSaving)return;
-  try{const name=$('serviceName').value.trim();if(!name)throw Error('Укажите название услуги');
-    const payload={id:$('serviceId').value||null,name,work_price:managementMoneyV5($('serviceWork').value,'Стоимость работы'),consumables_price:managementMoneyV5($('serviceConsumables').value,'Стоимость расходников'),comment:$('serviceCommentV5')?.value.trim()||null,active:$('serviceActive').checked};
-    serviceSaving=true;managementSetBusyV5('services',true);await crmManagementRpcV5('service_save',payload);newServiceV5();await Promise.all([loadServicesAdmin(),loadServices()]);message('serviceMessage','Услуга сохранена. Изменение записано в журнал.',true);
-  }catch(e){message('serviceMessage',e.message)}finally{serviceSaving=false;managementSetBusyV5('services',false)}
+  const actor=serviceActorV11(),version=serviceFormV11,navigation=typeof quickNavigation4==='undefined'?null:quickNavigation4;
+  const stillCurrent=()=>actor===serviceActorV11()&&version===serviceFormV11&&$('services').classList.contains('active')&&(navigation===null||navigation===quickNavigation4);
+  let operation;
+  try{
+    if(!serviceDraftV11){
+      const name=$('serviceName').value.trim();if(!name)throw Error('Укажите название услуги');
+      const payload={id:$('serviceId').value||null,name,work_price:managementMoneyV5($('serviceWork').value,'Стоимость работы'),consumables_price:managementMoneyV5($('serviceConsumables').value,'Стоимость расходников'),comment:$('serviceCommentV5')?.value.trim()||null,active:$('serviceActive').checked};
+      serviceDraftV11={actor,payload,requestId:crypto.randomUUID(),uncertain:false,result:null};
+    }
+    requireServiceActorV11(serviceDraftV11.actor);
+    const draft=serviceDraftV11;operation={draft};serviceOperationV11=operation;serviceSaving=true;serviceControlsV11();message('serviceMessage','Сохраняем услугу…');
+    const result=draft.result||await serviceRequestV11('crm_service_save_v11',{p_payload:draft.payload,p_request_id:draft.requestId},()=>{draft.uncertain=true});
+    const saved=result?.service||result;
+    if(!saved?.id||typeof saved.id!=='string'||typeof saved.name!=='string'){
+      const failure=Error('Ответ о сохранении не получен.');failure.network=true;throw failure;
+    }
+    requireServiceActorV11(actor);draft.result=saved;draft.uncertain=false;cacheServiceV11(saved);
+    if(!stillCurrent())return;
+    serviceDraftV11=null;fillServiceV11();renderServicesV11();message('serviceMessage','Услуга сохранена. Изменение записано в журнал.',true);
+    const clearedVersion=serviceFormV11,clearedList=serviceListV11;
+    const refresh=await Promise.allSettled([
+      serviceRequestV11('crm_management_v5',{p_action:'services_list',p_payload:{}}),
+      serviceRequestV11('nurse_service_catalog',{})
+    ]);
+    if(actor!==serviceActorV11()||clearedVersion!==serviceFormV11||clearedList!==serviceListV11||!$('services').classList.contains('active')||(navigation!==null&&navigation!==quickNavigation4))return;
+    if(refresh[0].status==='fulfilled'){serviceRows=refresh[0].value||[];renderServicesV11()}
+    if(refresh[1].status==='fulfilled')services=refresh[1].value||[];
+    message('serviceMessage',refresh.some(r=>r.status==='rejected')?'Услуга сохранена. Список пока не обновился. Повторно создавать услугу не нужно.':'Услуга сохранена. Изменение записано в журнал.',true);
+  }catch(e){
+    if(actor!==serviceActorV11())return;
+    if(serviceDraftV11&&e.network)serviceDraftV11.uncertain=true;
+    else if(!serviceDraftV11?.result&&!serviceDraftV11?.uncertain)serviceDraftV11=null;
+    if(stillCurrent())message('serviceMessage',e.message+(serviceDraftV11?.uncertain?' Данные остались в форме. Нажмите «Повторить сохранение».':''));
+  }finally{
+    if(operation&&serviceOperationV11===operation){serviceOperationV11=null;serviceSaving=false;serviceControlsV11()}
+  }
 };
 
 function templateMedicationV5(id){return meds.find(m=>m.id===id)||(isManager()?inventory.find(m=>m.id===id):null)}
@@ -249,6 +348,7 @@ async function downloadDataExportV5(){
 const managementSignOutV5=signOut;
 signOut=async function(){
   managementSettingsLoadedV5=false;
+  ++serviceSessionV11;++serviceListV11;serviceDraftV11=null;serviceOperationV11=null;serviceSaving=false;fillServiceV11();serviceRows=[];$('serviceList').innerHTML='';message('serviceMessage','');
   ++managementLoadV5;managementStaffV5=[];managementTemplatesV5=[];managementAuditV5=[];medicationBatchesExtraV5.clear();
   if($('staffCreatePasswordV5'))$('staffCreatePasswordV5').value='';
   for(const id of ['staffV5','settingsV5','templatesV5','auditV5'])$(id)?.remove();
