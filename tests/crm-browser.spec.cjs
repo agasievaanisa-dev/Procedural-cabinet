@@ -215,7 +215,7 @@ test('terminal payment and failed save preserve every allocation and request ide
 });
 
 test('nurse can record a discounted receipt and sees own-shift finance without payroll or warehouse',async({page})=>{
- const errors=await boot(page,'nurse');await expect(page.locator('#workspace .home-actions>button')).toHaveCount(5);
+ const errors=await boot(page,'nurse');await expect(page.locator('#workspace .home-actions>button')).toHaveCount(6);
  await expect(page.locator('#ownerDashboardV5')).toHaveCount(0);await noOverflow(page);await procedure(page);
  await expect(page.locator('#procPaid')).toBeEditable();
  await page.fill('#procPaid','100');

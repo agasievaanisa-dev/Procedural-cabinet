@@ -1,0 +1,17 @@
+.shift-journal-v12 h1{margin-bottom:0}
+.journal-filter-v12{max-width:540px}
+#journalMessageV12{margin-bottom:16px}
+.journal-shift-v12 h2{margin:0;font-size:18px;overflow-wrap:anywhere}
+.journal-shift-v12 p{margin:12px 0 0;overflow-wrap:anywhere}
+.journal-events-v12{display:grid;gap:14px;margin:0;padding:0;list-style:none}
+.journal-event-v12{min-width:0;padding:18px;background:var(--card,#fff);border:1px solid var(--line,#dfe4e8);border-radius:18px;overflow-wrap:anywhere}
+.journal-event-heading-v12{display:flex;gap:10px;align-items:flex-start}
+.journal-event-heading-v12>div{min-width:0}
+.journal-event-heading-v12 h3{margin:0;font-size:19px}
+.journal-event-number-v12{flex:none;font-size:19px;font-weight:800;color:var(--accent,#246b63)}
+.journal-event-time-v12{margin:6px 0 0;font-size:14px;color:var(--muted,#6d7782)}
+.journal-event-kind-v12{margin:14px 0 10px}
+.journal-event-v12 ul{padding-left:22px;margin:8px 0 14px}
+.journal-event-v12 li{margin-bottom:6px}
+.journal-payment-v12{padding-top:10px;border-top:1px solid var(--line,#dfe4e8)}
+@media(max-width:700px){.journal-event-v12{padding:15px}.journal-shift-v12 .row{align-items:flex-start}.journal-shift-v12 .pill{flex-shrink:0}}

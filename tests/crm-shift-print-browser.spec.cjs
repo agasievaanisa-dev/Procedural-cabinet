@@ -23,7 +23,7 @@ async function boot(page,role='nurse') {
 
 test('nurse has explicit medication sale action and prints the entire own shift with finance only',async({page})=>{
  const errors=await boot(page);
- await expect(page.locator('#workspace .home-actions button')).toHaveCount(5);
+ await expect(page.locator('#workspace .home-actions button')).toHaveCount(6);
  await expect(page.locator('#workspace .home-actions button[onclick="openSale()"]')).toContainText('Продажа препарата');
  await page.evaluate(()=>renderShiftReportV5(window.__reportV10,true));
  await expect(page.locator('#reportBody')).toContainText('1 000');await expect(page.locator('#reportBody')).toContainText('В долг');
