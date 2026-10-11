@@ -1,4 +1,4 @@
-/* Read-only chronological journal of shifts assigned to the signed-in nurse. */
+/* Chronological journal of assigned shifts, with receipt and correction actions. */
 (function(global){
  'use strict';
  let session=0,view=0;
@@ -48,9 +48,7 @@
  }
  function payment(event){
   if(!['charge_total','charged_total','paid_total','paid','received_total','debt_total','debt_amount'].some(key=>event[key]!=null))return '';
-  const amounts=financeEventAmountsV5(event);
-  const reason=[event.discount_reason,event.discount_comment].filter(Boolean).join(' · ');
-  return '<p class="journal-payment-v12">Стоимость: <b>'+esc(rub(amounts.charge))+'</b>'+(amounts.charge===0?' · Бесплатно':'')+' · '+(event.received_total!=null?'Оплачено всего':'Оплачено')+': '+esc(rub(amounts.received))+(amounts.debt>0?' · <b>В долг: '+esc(rub(amounts.debt))+'</b>':'')+'</p>'+(reason?'<p class="small">Причина изменения стоимости: '+esc(reason)+'</p>':'');
+  return '<div class="journal-payment-v12">'+financeEventPaymentHtmlV5(event)+'</div>';
  }
  function render(data){
   const reports=data.reports.slice().sort((a,b)=>chronology({at:a.shift?.started_at,id:a.shift?.id},{at:b.shift?.started_at,id:b.shift?.id}));
@@ -67,7 +65,7 @@
   ]).sort(chronology);
   const entries=events.map((event,index)=>{
    const label=event.kind==='sale'?'Продажа препарата':event.type||event.procedure_type||event.service_name||'Процедура';
-   return '<li class="journal-event-v12" data-event-id="'+esc(event.id||'')+'" data-event-kind="'+esc(event.kind)+'" data-shift-id="'+esc(event.journalShift.id||'')+'"><div class="journal-event-heading-v12"><span class="journal-event-number-v12" aria-hidden="true">'+(index+1)+'.</span><div><h3>'+esc(event.patient||'Без пациента')+'</h3><p class="journal-event-time-v12">'+esc(financeDateTimeV5(event.at))+' · Москва</p></div></div><p class="journal-event-kind-v12"><b>'+esc(label)+'</b>'+(event.nurse?' · Медсестра: '+esc(event.nurse):'')+'</p>'+(reports.length>1?'<p class="small">Смена '+esc(shiftTime(event.journalShift))+'</p>':'')+financeEventDetailsHtmlV5(event)+payment(event)+(event.notes?'<p>Комментарий: '+esc(event.notes)+'</p>':'')+'</li>';
+   return '<li class="journal-event-v12" data-event-id="'+esc(event.id||'')+'" data-event-kind="'+esc(event.kind)+'" data-shift-id="'+esc(event.journalShift.id||'')+'"><div class="journal-event-heading-v12"><span class="journal-event-number-v12" aria-hidden="true">'+(index+1)+'.</span><div><h3>'+esc(event.patient||'Без пациента')+'</h3><p class="journal-event-time-v12">'+esc(financeDateTimeV5(event.at))+' · Москва</p></div></div><p class="journal-event-kind-v12"><b>'+esc(label)+'</b>'+(event.nurse?' · Медсестра: '+esc(event.nurse):'')+'</p>'+(reports.length>1?'<p class="small">Смена '+esc(shiftTime(event.journalShift))+'</p>':'')+financeEventDetailsHtmlV5(event)+payment(event)+(event.notes?'<p>Комментарий: '+esc(event.notes)+'</p>':'')+(typeof treatmentActionsHtmlV14==='function'?treatmentActionsHtmlV14(event,true):'')+'</li>';
   }).join('');
   $('journalBodyV12').innerHTML=shifts+'<h2>Пациенты по времени</h2><p class="small">Записей: '+events.length+'.</p>'+(entries?'<ol class="journal-events-v12">'+entries+'</ol>':'<div class="card">В этих сменах процедуры и продажи пока не записаны.</div>');
  }

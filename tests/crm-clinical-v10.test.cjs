@@ -16,6 +16,13 @@ test('free visits require an explicit reason and zero receipts; debt is not disc
  assert.equal(debt.charge,30000);assert.equal(debt.debt,30000);assert.equal(debt.reason,'');
  assert.throws(()=>paymentModel({list:'300',charge:'300',received:'300',status:'free',reason:'Помощь',patient:'patient'}),/нулевую/);
 });
+test('payment after the procedure preserves the discounted bill without creating a receipt',()=>{
+ const waiting=paymentModel({list:'14300',charge:'11500',received:'0',status:'pending',reason:'Скидка согласована',patient:'patient'});
+ assert.equal(waiting.charge,1150000);assert.equal(waiting.received,0);assert.equal(waiting.debt,1150000);assert.equal(waiting.status,'pending');
+ assert.throws(()=>paymentModel({list:'300',charge:'300',received:'0',status:'pending'}),/пациента/);
+ const settled=paymentModel({list:'300',charge:'300',received:'300',status:'pending',patient:'patient'});
+ assert.equal(settled.status,'paid');assert.equal(settled.debt,0);
+});
 test('edited visit preserves earlier receipts and only counts newly collected money',()=>{
  const edited=paymentModel({list:'1700',charge:'1500',previous:'1000',received:'200',status:'debt',reason:'Скидка от владельца',patient:'patient'});
  assert.equal(edited.previous,100000);assert.equal(edited.received,20000);assert.equal(edited.debt,30000);

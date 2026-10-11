@@ -2,7 +2,7 @@
 
 .accounting-mode-v5{margin:14px 0;padding:14px;line-height:1.5}.accounting-mode-v5 p{margin:6px 0 0}.accounting-badge-v5{display:inline-block;margin:8px 0;background:#e3f2ef;color:#205f57;white-space:normal}.report-untracked-v5{margin:12px 0}.management-check span{line-height:1.4}
 
-.report-event-v5 ul{margin:6px 0 12px;padding-left:20px;overflow-wrap:anywhere}.report-detail-label-v5{font-weight:700;margin-top:10px}.report-event-payment-v5{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0}.report-event-payment-v5 span{overflow-wrap:anywhere}.report-discount-reason-v5{overflow-wrap:anywhere}#shiftPrintV5{display:none}
+.report-event-v5 ul{margin:6px 0 12px;padding-left:20px;overflow-wrap:anywhere}.report-detail-label-v5{font-weight:700;margin-top:10px}.report-event-prices-v14{display:grid;gap:6px;margin:12px 0;line-height:1.5;overflow-wrap:anywhere}.report-event-prices-v14>div:last-child{font-weight:700}.report-event-payment-v5{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0}.report-event-payment-v5 span{overflow-wrap:anywhere}.report-discount-reason-v5{overflow-wrap:anywhere}.treatment-actions-v14{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}#shiftPrintV5{display:none}
 @media print{
  body.crm-shift-printing-v5{background:#fff;color:#111}
  body.crm-shift-printing-v5> :not(#shiftPrintV5){display:none!important}

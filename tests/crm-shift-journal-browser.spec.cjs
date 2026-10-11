@@ -56,6 +56,22 @@ test('nurse opens a dated shift journal with all distinct visits and sales in st
  expect(await page.locator('#journalBodyV12 script,#journalBodyV12 img').count()).toBe(0);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await noUnexpected(page);expect(errors).toEqual([]);
 });
 
+test('journal explains 14300 captured list minus 2800 discount as 11500 payable with zero received and 11500 debt',async({page})=>{
+ const errors=await boot(page);
+ await page.evaluate(()=>{
+  const event={...__journalMorning.procedures.find(item=>item.id==='proc-a'),id:'discounted-unpaid',patient:'Пациент со скидкой без оплаты',list_total:14300,charge_total:11500,paid_total:0,received_total:0,debt_total:11500,discount_comment:'Скидка 2 800 ₽ согласована начальником',
+   services:[{service_id:'captured-service',name:'Капельница по сохранённому прайсу',quantity:1,unit_price:300,line_total:300}],items:[{medication_id:'captured-med',name:'Препарат с сохранённой ценой',quantity:2,unit:'фл.',unit_price:7000,line_total:14000}]};
+  delete event.discount_amount;services=[{id:'captured-service',name:'Услуга после изменения прайса',work_price:99997,consumables_price:0}];meds=[{id:'captured-med',name:'Переименованный препарат',sale_price:99998}];
+  __journalByDate['2026-10-11']={date:'2026-10-11',time_zone:'Europe/Moscow',reports:[{...__journalMorning,procedures:[event],sales:[]}]};
+ });
+ await page.click('#homeJournalV12');await expect(rows(page)).toHaveCount(1);const entry=rows(page);await expect(entry).toHaveAttribute('data-event-id','discounted-unpaid');
+ for(const amount of [/По прайсу:\s*14\s*300\s*₽/,/Скидка:\s*2\s*800\s*₽/,/К оплате:\s*11\s*500\s*₽/,/Оплачено(?: всего)?:\s*0\s*₽/,/В долг:\s*11\s*500\s*₽/])await expect(entry).toContainText(amount);
+ expect(await entry.innerText()).toMatch(/По прайсу:[\s\S]*Скидка:[\s\S]*К оплате:[\s\S]*Оплачено(?: всего)?:[\s\S]*В долг:/);
+ await expect(entry).toContainText(/Препарат с сохранённой ценой\s*×\s*2\s*фл\./);await expect(entry).toContainText('Капельница по сохранённому прайсу');await expect(entry).toContainText('Скидка 2 800 ₽ согласована начальником');
+ for(const changed of ['Услуга после изменения прайса','Переименованный препарат','99 997','99 998'])await expect(entry).not.toContainText(changed);
+ await expect(entry).not.toContainText('Бесплатно');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await noUnexpected(page);expect(errors).toEqual([]);
+});
+
 test('journal date defaults to the Moscow day at the UTC boundary regardless of phone timezone',async({page})=>{
  const errors=await boot(page);await page.clock.setFixedTime(new Date('2026-10-11T21:30:00Z'));await page.click('#homeJournalV12');
  await expect(page.locator('#journalDateV12')).toHaveValue('2026-10-12');await expect.poll(async()=>((await calls(page)).length)).toBe(1);expect((await calls(page))[0]).toEqual({p_date:'2026-10-12'});await noUnexpected(page);expect(errors).toEqual([]);

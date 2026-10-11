@@ -12,15 +12,15 @@
   const list = cents(input.list, 'Стоимость по прайсу'), charge = cents(input.charge, 'Стоимость для пациента');
   const previous = cents(input.previous ?? 0, 'Ранее оплачено'), received = cents(input.received, 'Оплата сейчас');
   const reason = String(input.reason || '').trim(), status = input.status || 'paid';
-  if (!['paid','debt','free'].includes(status)) throw Error('Выберите вариант оплаты');
+  if (!['paid','pending','debt','free'].includes(status)) throw Error('Выберите вариант оплаты');
   if (charge !== list && !reason) throw Error('Укажите комментарий, почему стоимость отличается от прайса');
   if (charge === 0 && status !== 'free') throw Error('Для нулевой стоимости выберите «Бесплатно» и укажите комментарий');
   if (status === 'free' && (charge !== 0 || received !== 0 || previous !== 0 || !reason)) throw Error('Для бесплатной процедуры укажите нулевую стоимость и обязательный комментарий');
   if (previous + received > charge) throw Error('Стоимость не может быть меньше уже полученной оплаты. Для возврата обратитесь к владельцу');
   const debt = charge - previous - received;
-  if (status === 'paid' && debt !== 0) throw Error('Для полной оплаты получите всю стоимость или выберите «В долг / частично оплачено»');
-  if (status === 'debt' && !input.patient) throw Error('Для записи в долг выберите пациента');
-  return {list,charge,previous,received,debt,status:debt > 0 ? 'debt' : charge === 0 ? 'free' : 'paid',reason};
+  if (status === 'paid' && debt !== 0) throw Error('Для полной оплаты получите всю стоимость или выберите «Оплатит после процедуры» / «В долг»');
+  if ((status === 'debt' || status === 'pending') && !input.patient) throw Error('Для записи без полной оплаты выберите пациента');
+  return {list,charge,previous,received,debt,status:debt > 0 ? (status === 'pending' ? 'pending' : 'debt') : charge === 0 ? 'free' : 'paid',reason};
  }
  function ownedItems(items) {
   return items.map(item => {
@@ -82,7 +82,7 @@
   const status = $(prefix + 'PaymentStatusV10').value;
   if (status === 'free') { $(prefix + 'Paid').value = '0.00'; s.chargeEdited = true; $(prefix + 'ReceivedV10').value = '0.00'; }
   else if ($(prefix + 'Paid').value === '0.00' && !s.edit) { s.chargeEdited = false; $(prefix + 'Paid').value = amount(listCents(prefix)); }
-  if (status === 'debt') $(prefix + 'ReceivedV10').value = '0.00';
+  if (status === 'debt' || status === 'pending') $(prefix + 'ReceivedV10').value = '0.00';
   clearConfirmation(prefix); discountVisibility(prefix); syncPaymentV5(prefix,true);
  }
  function install(prefix) {
@@ -92,6 +92,7 @@
   host.id = prefix + 'ClinicalV10'; host.className = 'clinical-payment-v10';
   host.innerHTML = `<label for="${prefix}PaymentStatusV10">Вариант оплаты</label><select id="${prefix}PaymentStatusV10"><option value="paid">Полностью оплачено</option><option value="debt">В долг / частично оплачено</option><option value="free">Бесплатно</option></select><div id="${prefix}ReceivedBoxV10" class="hidden"><label for="${prefix}ReceivedV10">Оплачено сейчас, ₽</label><input id="${prefix}ReceivedV10" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div id="${prefix}DebtSummaryV10" class="small" role="status" aria-live="polite"></div><div id="${prefix}EditReasonBoxV10" class="hidden"><label for="${prefix}EditReasonV10">Что изменили и почему *</label><textarea id="${prefix}EditReasonV10"></textarea></div>`;
   paid.after(host); paid.previousElementSibling.textContent = 'Стоимость с учётом скидки, ₽'; paid.removeAttribute('oninput');
+  $(prefix + 'PaymentStatusV10').add(new Option('Оплатит после процедуры','pending'),1);
   const debtHint = document.createElement('p'); debtHint.id = prefix + 'DebtHintV13'; debtHint.className = 'notice hidden';
   debtHint.textContent = 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentStatusV10').after(debtHint);
@@ -112,6 +113,9 @@
   $(prefix + 'ChargeInPaymentV11').addEventListener('input',() => { $(prefix + 'Paid').value = $(prefix + 'ChargeInPaymentV11').value; chargeChanged(prefix); });
   $(prefix + 'DiscountInPaymentV11').addEventListener('input',() => { $(prefix + 'DiscountComment').value = $(prefix + 'DiscountInPaymentV11').value; clearConfirmation(prefix); syncPaymentV5(prefix); });
   $(prefix + 'ApplyDiscountV11').onclick = () => applyCashDiscount(prefix);
+  const savePending = document.createElement('button'); savePending.id = prefix + 'SavePendingV14'; savePending.type = 'button'; savePending.className = 'btn secondary wide';
+  savePending.textContent = 'Сохранить без оплаты'; savePending.setAttribute('onclick',prefix === 'proc' ? 'saveProcedureWithoutPaymentV14()' : 'saveSaleWithoutPaymentV14()');
+  document.querySelector('#' + (prefix === 'proc' ? 'procedure' : 'sale') + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]').after(savePending);
   if (prefix === 'proc') {
    const extra = document.createElement('div'); extra.className = 'clinical-extra-v10';
    extra.innerHTML = '<h2>Дополнительные процедуры</h2><div id="procAdditionalServicesV10"></div><button type="button" id="procAddServiceV10" class="btn secondary wide">＋ Добавить укол или другую процедуру</button><h2>Препараты пациента</h2><p class="small">Укажите свои препараты или ранее купленные у нас. Здесь они не добавляются к стоимости.</p><div id="procOwnMedsV10"></div><button type="button" id="procAddOwnV10" class="btn secondary wide">＋ Свой / ранее купленный препарат</button>';
@@ -150,7 +154,7 @@
  }
  function receivedCents(prefix) {
   const s = state(prefix), status = $(prefix + 'PaymentStatusV10').value, charge = cents($(prefix + 'Paid').value || '0');
-  return status === 'free' ? 0 : status === 'debt' ? cents($(prefix + 'ReceivedV10').value,'Оплата сейчас') : Math.max(0,charge - (s?.previous || 0));
+  return status === 'free' ? 0 : status === 'debt' || status === 'pending' ? cents($(prefix + 'ReceivedV10').value,'Оплата сейчас') : Math.max(0,charge - (s?.previous || 0));
  }
  function currentModel(prefix) {
   const s = state(prefix); if (!s) throw Error('Откройте форму заново');
@@ -218,16 +222,20 @@
   let cash = 0; try { cash = cents($(prefix + 'PayCash').value); } catch {}
   if (!pay.tenderEdited) $(prefix + 'PayTender').value = amount(cash);
   $(prefix + 'PayTenderBox').classList.toggle('hidden',total === 0 || (cash === 0 && pay.method !== 'cash' && pay.method !== 'mixed'));
-  $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',$(prefix + 'PaymentStatusV10').value !== 'debt');
+  const paymentStatus = $(prefix + 'PaymentStatusV10').value,pendingSelected = paymentStatus === 'pending';
+  $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',paymentStatus !== 'debt' && !pendingSelected);
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
-  $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected);
+  $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
+  $(prefix + 'DebtHintV13').textContent = pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
   $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
   const saveButton = document.querySelector('#' + kind + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]');
-  if (saveButton) saveButton.textContent = prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
+  if (saveButton) saveButton.textContent = pendingSelected && total === 0 ? 'Сохранить без оплаты' : prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
+  let unpaidBalance = 0; try { unpaidBalance = cents($(prefix + 'Paid').value || '0') - (s.previous || 0); } catch {}
+  $(prefix + 'SavePendingV14').classList.toggle('hidden',pendingSelected || paymentStatus === 'free' || unpaidBalance <= 0);
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
-  try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `К оплате с учётом скидки: ${rub(m.charge / 100)}. ${m.list > m.charge ? 'Скидка: ' + rub((m.list - m.charge) / 100) + '. ' : ''}${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. Долг: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
+  try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `По прайсу: ${rub(m.list / 100)}. Скидка: ${rub(Math.max(0,m.list - m.charge) / 100)}. К оплате с учётом скидки: ${rub(m.charge / 100)}. ${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. ${m.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
   inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
@@ -274,7 +282,8 @@
     const reserve = kind === 'sale' && isManager() && $('saleReserveV5')?.checked;
     if (!paymentOnly && !reserve && quantity > num(med?.work_qty) + previous) throw Error('Недостаточно препарата в рабочем шкафу. Пополните шкаф или исправьте количество');
    }
-   const model = currentModel(prefix), payments = readPaymentsV5(prefix);
+   const model = currentModel(prefix), payments = readPaymentsV5(prefix,!(model.status === 'pending' && model.received === 0));
+   if (model.status === 'pending' && model.received === 0) $(prefix + 'PayConfirmed').checked = true;
    const allServices = kind === 'procedure' ? selectedServices() : [];
    allServices.forEach(item => positiveWhole(item.quantity,'Количество процедур'));
    const payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly};
@@ -287,12 +296,21 @@
    const receipt = s.edit ? await clinicalRpc('treatment_edit',payload,true) : await treatmentRpc(kind,payload);
    assertActor(actor); saved = true; forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = '';
    show('workspace');
-   message('homeMessage',`${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. Долг: ${rub(receipt?.debt_total ?? model.debt / 100)}.`,true);
+   message('homeMessage',`${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`,true);
    try { await refreshDashboard(); } catch (error) { message('homeMessage','Запись сохранена. Не удалось обновить экран: ' + error.message); }
   } catch (error) { if (actorKey() === actor) message(saved ? 'homeMessage' : kind + 'Message',error.message); }
   finally { clinicalBusy = false; document.querySelectorAll('#' + kind + ' button,#' + kind + ' input,#' + kind + ' select,#' + kind + ' textarea').forEach(element => element.disabled = false); if (state(prefix)?.edit) { $(prefix + 'Patient').disabled = true; $(prefix + 'Nurse').disabled = true; } }
  };
  const treatmentBase = treatmentRpc;
+ async function saveWithoutPayment(kind) {
+  const prefix = kind === 'procedure' ? 'proc' : 'sale';
+  if (clinicalBusy || !state(prefix)) return;
+  $(prefix + 'PaymentStatusV10').value = 'pending'; $(prefix + 'ReceivedV10').value = '0.00';
+  syncPaymentV5(prefix,true); $(prefix + 'PayConfirmed').checked = true;
+  await saveTreatment(kind);
+ }
+ global.saveProcedureWithoutPaymentV14 = () => saveWithoutPayment('procedure');
+ global.saveSaleWithoutPaymentV14 = () => saveWithoutPayment('sale');
  treatmentRpc = async function(kind,payload) { try { return await treatmentBase(kind,payload); } catch (error) { if (financeNetworkErrorV5(error)) throw Error('Не удалось получить ответ. Черновик сохранён; повторите с теми же данными.'); throw error; } };
  global.editTreatmentV10 = async function(kind,id) {
   if (clinicalBusy) return;
@@ -320,12 +338,19 @@
    (record.items || []).forEach(item => addMedRow(prefix + 'Meds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name,consumption_unit:item.unit}));
    $(prefix + 'Notes').value = record.notes || ''; $(prefix + 'DiscountReason').value = record.discount_reason || ''; $(prefix + 'DiscountComment').value = record.discount_comment || '';
    $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0)); resetPaymentV5(prefix); $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0));
-   $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? 'debt' : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonBoxV10').classList.remove('hidden');
+   $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonBoxV10').classList.remove('hidden');
    $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Редактирование процедуры' : 'Редактирование продажи'; show(kind); calculate(prefix,false); renderAccountingModeV5();
    message(kind + 'Message','Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
   } catch (error) { if (actorKey() === actor) message('patientCardMessageV5',error.message); }
  };
  function dateText(at) { return esc(new Date(at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})); }
+ global.treatmentActionsHtmlV14 = function(event,fromJournal=false) {
+  if (!event.id) return '';
+  const kind = event.kind === 'sale' ? 'sale' : 'procedure',remaining = financeEventAmountsV5(event).debt,patientId = event.patient_id || (!fromJournal ? currentPatientId : null);
+  const edit = event.editable ? `<button type="button" class="btn secondary" onclick="editTreatmentV10('${esc(kind)}','${esc(event.id)}')">Редактировать</button>` : '';
+  const pay = remaining > 0 && patientId ? `<button type="button" class="btn primary" onclick="${fromJournal ? 'openJournalPaymentV14' : 'openSavedPaymentV14'}('${esc(kind)}','${esc(event.id)}',${remaining},'${esc(patientId)}',${event.payment_pending === true})">${event.payment_pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : '';
+  return edit || pay ? `<div class="treatment-actions-v14">${edit}${pay}</div>` : '';
+ };
  global.loadPatientClinicalV10 = async function(id = currentPatientId) {
   const actor = actorKey(), version = ++patientView;
   let host = $('patientClinicalV10'); if (!host) { host = document.createElement('div'); host.id = 'patientClinicalV10'; $('patientHistory').before(host); }
@@ -334,7 +359,7 @@
    const data = await clinicalRpc('patient_treatments',{patient_id:id});
    if (version !== patientView || id !== currentPatientId || actor !== actorKey()) return;
    const events = treatmentEvents(data);
-   host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div><div>Стоимость: ${rub(event.charge_total ?? event.paid_total)} · оплачено: ${rub(event.paid_total)}${num(event.debt_total) > 0 ? ` · <b>Долг: ${rub(event.debt_total)}</b>` : ''}${num(event.charge_total ?? event.paid_total) === 0 ? ' · Бесплатно' : ''}</div>${event.discount_comment ? `<p class="small">${esc(event.discount_comment)}</p>` : ''}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}<div class="row">${event.editable ? `<button type="button" class="btn secondary" onclick="editTreatmentV10('${esc(event.kind || 'procedure')}','${esc(event.id)}')">Редактировать</button>` : ''}${num(event.debt_total) > 0 ? `<button type="button" class="btn primary" onclick="openDebtPaymentV10('${esc(event.kind || 'procedure')}','${esc(event.id)}',${Number(event.debt_total)})">Принять оплату долга</button>` : ''}</div></div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
+   host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div>${financeEventPaymentHtmlV5(event)}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}${global.treatmentActionsHtmlV14(event)}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
   } catch (error) { if (version === patientView && id === currentPatientId && actor === actorKey()) host.innerHTML = `<div class="notice">${esc(error.message)}<button type="button" class="btn secondary wide" onclick="loadPatientClinicalV10()">Повторить</button></div>`; }
  };
  const openPatientBase = openPatient;
@@ -343,6 +368,7 @@
   beginQuickNavigation4();
   let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
   host.dataset.kind = kind; host.dataset.recordId = id; host.dataset.debt = String(debt); host.dataset.patientId = patientId || ''; host.dataset.returnToDebts=String(returnToDebts);
+  delete host.dataset.returnToJournal;
   host.innerHTML = `<h1>Оплата долга</h1><div class="card"><p>Осталось оплатить: <b>${rub(debt)}</b></p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод владельцу</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10"><label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">Сохранить оплату долга</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':`openPatient('${esc(patientId)}')`}">${returnToDebts?'Назад к долгам':'Назад к пациенту'}</button>`;
   host.querySelectorAll('input,select').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   let tenderEdited = false;
@@ -350,6 +376,16 @@
   $('debtAmountV10').addEventListener('input',() => { if (!tenderEdited) $('debtTenderV10').value = $('debtAmountV10').value; });
   $('debtMethodV10').addEventListener('change',() => { const cash = $('debtMethodV10').value === 'cash'; $('debtTenderV10').classList.toggle('hidden',!cash); $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!cash); $('debtConfirmV10').checked = false; });
   show('debtPaymentV10');
+ };
+ global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
+  global.openDebtPaymentV10(kind,id,amount,patientId);
+  if (pending) $('debtPaymentV10').querySelector('h1').textContent = 'Оплата процедуры';
+ };
+ global.openJournalPaymentV14 = function(kind,id,amount,patientId,pending=false) {
+  const date = $('journalDateV12')?.value;
+  global.openSavedPaymentV14(kind,id,amount,patientId,pending);
+  const host = $('debtPaymentV10'); host.dataset.returnToJournal = date || '';
+  host.querySelector('.btn.secondary').onclick = () => global.openShiftJournalV12(date);
  };
  global.saveDebtPaymentV10 = async function() {
   if (debtBusy) return; const navigation=quickNavigation4, actor = actorKey(), host = $('debtPaymentV10');
@@ -364,10 +400,10 @@
    const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
    const receipt = await clinicalRpc('debt_payment',{kind:host.dataset.kind,id:host.dataset.recordId,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null},true);
    assertActor(actor); $('debtConfirmV10').checked = false;
-   const patient = host.dataset.patientId, returnToDebts=host.dataset.returnToDebts==='true'; host.innerHTML = '';
+   const patient = host.dataset.patientId, returnToDebts=host.dataset.returnToDebts==='true',returnToJournal=host.dataset.returnToJournal; host.innerHTML = '';
    if(!quickNavigationCurrent4(navigation,currentStaff?.id))return;
-   if(returnToDebts)await global.openDebtsV10();else await openPatient(patient);
-   message(returnToDebts?'debtsMessageV10':'patientCardMessageV5','Оплата долга сохранена. Осталось: ' + rub(receipt?.debt_total ?? (remaining - paid) / 100),true);
+   if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else await openPatient(patient);
+   message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':'patientCardMessageV5','Оплата сохранена. Осталось: ' + rub(receipt?.debt_total ?? (remaining - paid) / 100),true);
   } catch (error) { if (actor === actorKey()) message('debtMessageV10',error.message); }
   finally { debtBusy = false; host.querySelectorAll('button,input,select').forEach(input => input.disabled = false); }
  };

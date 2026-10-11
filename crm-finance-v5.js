@@ -294,7 +294,12 @@ function financeDateTimeV5(value) {
 function financeEventAmountsV5(event) {
  const received = num(event.received_total ?? event.paid_total ?? event.paid);
  const debt = num(event.debt_total ?? event.debt_amount);
- return {received,debt,charge:num(event.charge_total ?? event.charged_total ?? (received + debt)),list:num(event.list_total ?? (received + debt))};
+ const charge = num(event.charge_total ?? event.charged_total ?? (received + debt));
+ return {received,debt,charge,list:num(event.list_total ?? (charge + num(event.discount_amount)))};
+}
+function financeEventPriceHtmlV14(event) {
+ const amounts = financeEventAmountsV5(event),discount = Math.max(0,Math.round((amounts.list - amounts.charge) * 100) / 100);
+ return `<div class="report-event-prices-v14"><div>По прайсу: <b>${esc(rub(amounts.list))}</b></div><div>Скидка: <b>${esc(rub(discount))}</b></div><div>К оплате: <b>${esc(rub(amounts.charge))}</b>${amounts.charge === 0 ? ' · Бесплатно' : ''}</div></div>`;
 }
 function financeEventDetailsHtmlV5(event) {
  const serviceItems = Array.isArray(event.services) && event.services.length ? event.services : event.type || event.service_name ? [{name:event.service_name || event.type,quantity:1}] : [];
@@ -307,7 +312,7 @@ function financeEventPaymentHtmlV5(event) {
  const amounts = financeEventAmountsV5(event);
  const reason = [event.discount_reason,event.discount_comment].filter(Boolean).join(' · ');
  const payments = event.payments;
- return `<div class="report-event-payment-v5"><span>По прайсу: <b>${esc(rub(amounts.list))}</b></span><span>Стоимость: <b>${esc(rub(amounts.charge))}</b>${amounts.charge === 0 ? ' · Бесплатно' : ''}</span><span>${event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span><span>В долг: <b>${esc(rub(amounts.debt))}</b></span></div>${event.received_total !== undefined && num(event.paid_total) !== amounts.received ? `<p>Первоначальная оплата в этой смене: ${esc(rub(event.paid_total))}. Доплаты отражены в смене их получения.</p>` : ''}${num(event.discount_amount) ? `<p>Скидка: ${esc(rub(event.discount_amount))}</p>` : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${payments ? `<p>Наличные ${esc(rub(payments.cash))} · терминал ${esc(rub(payments.terminal))} · перевод ${esc(rub(payments.owner_card))}</p>` : ''}`;
+ return `${financeEventPriceHtmlV14(event)}<div class="report-event-payment-v5"><span>${event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span><span>${event.payment_pending && amounts.debt > 0 ? 'Ожидает оплаты' : 'В долг'}: <b>${esc(rub(amounts.debt))}</b></span></div>${event.received_total !== undefined && num(event.paid_total) !== amounts.received ? `<p>Первоначальная оплата в этой смене: ${esc(rub(event.paid_total))}. Доплаты отражены в смене их получения.</p>` : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${payments ? `<p>Наличные ${esc(rub(payments.cash))} · терминал ${esc(rub(payments.terminal))} · перевод ${esc(rub(payments.owner_card))}</p>` : ''}`;
 }
 function financeReceiptHtmlV5(receipt) {
  const payments = receipt.payments || {};
@@ -329,7 +334,7 @@ function financePeriodDebtHtmlV5(data, note = true) {
  return `<div class="finance-totals-v5"><div class="stat"><span>Начислено за период</span><b>${esc(rub(data.charge_total))}</b></div><div class="stat"><span>Остаток долга по записям периода</span><b>${esc(rub(data.debt_total))}</b></div><div class="stat"><span>Первоначально в долг</span><b>${esc(rub(data.debt_created_total))}</b></div><div class="stat"><span>Доплаты и погашение долга</span><b>${esc(rub(data.debt_payments_total))}</b></div></div>${note ? '<p class="small">Выручка — деньги, полученные в выбранный период. Начислено — стоимость процедур и продаж этого периода. Остаток долга показан на момент формирования отчёта. Доплаты и погашение долга входят в выручку по дате получения денег, даже если процедура была раньше.</p>' : ''}`;
 }
 function financeEventsHtmlV5(events = [], kind, owner) {
- return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}${financeEventPaymentHtmlV5(event)}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
+ return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}${financeEventPaymentHtmlV5(event)}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}${typeof treatmentActionsHtmlV14 === 'function' ? treatmentActionsHtmlV14(event) : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
 }
 function buildShiftPrintV5(data) {
  const shiftData = data.shift || {};
