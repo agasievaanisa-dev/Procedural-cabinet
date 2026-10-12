@@ -36,6 +36,7 @@
   if(['start_shift_v82','manager_set_medication_test','add_patient_course_test'].includes(name))return typeof data==='string'&&!!data;
   if(name==='crm_management_v5'&&['staff_save','template_save','patient_archive'].includes(action))return !!data&&typeof data.id==='string';
   if(name==='crm_finance_v5'&&['settings_save','salary','close'].includes(action))return !!data&&typeof data==='object'&&!Array.isArray(data);
+  if(name==='crm_payment_correction_v22')return !!data&&typeof data.id==='string';
   if(name==='crm_patient_delete_v10')return !!data&&typeof data==='object';
   if(['crm_patient_save_v11','crm_service_save_v11'].includes(name)){const row=data?.patient||data?.service||data;return !!row&&typeof row.id==='string';}
   if(/^record_treatment_v[35]$/.test(name)||name==='crm_clinical_v10'&&['treatment_edit','debt_payment','treatment_get'].includes(action))return !!data&&typeof data.id==='string';

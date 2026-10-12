@@ -67,3 +67,9 @@ test('timeout preserves a mutation receipt for subsequent retry',async()=>{
  let resolveFirst;const h=harness((name,args,n)=>n===1?new Promise(resolve=>resolveFirst=resolve):{data:{id:'procedure-1'},status:200},{timeoutMs:10});
  const result=await h.client.rpc('record_treatment_v5',{p_request_id:'fixed-timeout-id',p_payload:{}});assert.equal(result.data.id,'procedure-1');assert.equal(h.calls.length,2);assert.equal(h.calls[0].args.p_request_id,h.calls[1].args.p_request_id);resolveFirst({data:{id:'procedure-1'},status:200});
 });
+
+test('payment correction acknowledges only a complete treatment result and replays its fixed receipt',async()=>{
+ const h=harness((name,args,n)=>n===1?{data:{},status:200}:{data:{id:'visit-corrected',paid_total:0,debt_total:7500},status:200});
+ const result=await h.client.rpc('crm_payment_correction_v22',{p_request_id:'correction-id',p_payload:{kind:'procedure',id:'visit-corrected',confirm_no_money_received:true}});
+ assert.equal(result.data.debt_total,7500);assert.equal(h.calls.length,2);assert.deepEqual(h.calls[0].args,h.calls[1].args);
+});

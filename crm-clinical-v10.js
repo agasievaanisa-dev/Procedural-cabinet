@@ -56,7 +56,12 @@
   if (!pendingUnpaidRecord(record)) return false;
   try { return cents(record.charge_total) === cents(record.list_total); } catch { return false; }
  }
- const helpers = {cents,paymentModel,ownedItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge};
+ function paymentCorrectionAllowed(record, manager) {
+  if (!manager || !record?.id || record.editable !== true) return false;
+  try { return cents(record.paid_total ?? 0) > 0; } catch { return false; }
+ }
+ const correctionReasonV22 = 'Оплата отмечена ошибочно: деньги не получены';
+ const helpers = {cents,paymentModel,ownedItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge,paymentCorrectionAllowed};
  if (typeof module === 'object' && module.exports) module.exports = helpers;
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
@@ -75,7 +80,9 @@
   const actor = actorKey(), key = JSON.stringify([actor,action,payload]);
   if (mutate && !requests.has(key)) requests.set(key, crypto.randomUUID());
   let response;
-  try { response = await db.rpc('crm_clinical_v10', {p_action:action,p_payload:payload,p_request_id:mutate ? requests.get(key) : null}); }
+  try { response = action === 'payment_correction'
+   ? await db.rpc('crm_payment_correction_v22', {p_payload:payload,p_request_id:mutate ? requests.get(key) : null})
+   : await db.rpc('crm_clinical_v10', {p_action:action,p_payload:payload,p_request_id:mutate ? requests.get(key) : null}); }
   catch (error) { assertActor(actor); const failure = saveError(error,undefined,mutate); if (mutate && (failure.uncertain || ambiguousRequests16.has(key))) { failure.uncertain = true; ambiguousRequests16.add(key); } throw failure; }
   assertActor(actor);
   if (response?.error) {
@@ -84,7 +91,7 @@
    if (mutate && !error.uncertain && /^[0-9A-Z]{5}$/.test(response.error.code || '')) requests.delete(key);
    throw error;
   }
-  if (!response || (mutate && response.data == null)) { if (mutate) ambiguousRequests16.add(key); throw saveError({uncertain:true,message:'Не удалось получить ответ. Повторите действие'},undefined,mutate); }
+  if (!response || (mutate && response.data == null) || (action === 'payment_correction' && !response.data?.id)) { if (mutate) ambiguousRequests16.add(key); throw saveError({uncertain:true,message:'Не удалось получить ответ. Повторите действие'},undefined,mutate); }
   if (mutate) { requests.delete(key); ambiguousRequests16.delete(key); }
   return response.data;
  }
@@ -97,6 +104,42 @@
    else if (mainSave && element.textContent === 'Повторить сохранение') element.textContent = prefix === 'proc' ? 'Сохранить процедуру' : 'Сохранить продажу';
   });
   if (state(prefix)?.edit) { $(prefix + 'Patient').disabled = true; $(prefix + 'Nurse').disabled = true; }
+  correctionControls(prefix);
+ }
+ function correctionSelected(prefix) { return state(prefix)?.correctionV22 === true; }
+ function correctionControls(prefix) {
+  const s = state(prefix), box = $(prefix + 'PaymentCorrectionBoxV22'); if (!box) return;
+  const allowed = paymentCorrectionAllowed(s?.edit,isManager()), selected = correctionSelected(prefix);
+  box.classList.toggle('hidden',!allowed);
+  $(prefix + 'PaymentCorrectionV22').checked = selected;
+  $(prefix + 'PaymentCorrectionAmountV22').textContent = allowed ? 'Ранее отмечено как полученное: ' + rub(cents(s.edit.paid_total) / 100) + '. Исправление уберёт эту сумму из выручки и сохранит стоимость процедуры в долг. Исходная запись об оплате останется в истории исправлений.' : '';
+  if (!s) return;
+  $(prefix + 'PaymentStatusV10').disabled = selected || !!s.retry;
+  $(prefix + 'ReceivedV10').disabled = selected || !!s.retry;
+  $(prefix + 'PaymentV5').classList.toggle('payment-correction-active-v22',selected);
+  $(prefix + 'PaymentV5').querySelectorAll('[data-pay-method]').forEach(button => button.disabled = selected || !!s.retry);
+  for (const suffix of ['Cash','Terminal','OwnerCard','Tender']) $(prefix + 'Pay' + suffix).disabled = selected || !!s.retry;
+ }
+ function correctionChanged(prefix) {
+  const s = state(prefix), checkbox = $(prefix + 'PaymentCorrectionV22');
+  if (!s || clinicalBusy || s.retry) { if (checkbox) checkbox.checked = correctionSelected(prefix); return; }
+  if (!paymentCorrectionAllowed(s.edit,isManager())) { checkbox.checked = false; return; }
+  const selected = checkbox.checked, pay = financePaymentState5[prefix];
+  if (selected && !s.correctionV22) {
+   s.paymentBeforeCorrectionV22 = {status:$(prefix + 'PaymentStatusV10').value,received:$(prefix + 'ReceivedV10').value,method:pay.method,tenderEdited:pay.tenderEdited,values:Object.fromEntries(['Cash','Terminal','OwnerCard','Tender'].map(suffix => [suffix,$(prefix + 'Pay' + suffix).value]))};
+   s.correctionV22 = true; s.correctionActorV22 = actorKey(); s.previous = 0;
+   $(prefix + 'PaymentStatusV10').value = 'debt'; $(prefix + 'ReceivedV10').value = '0.00'; pay.tenderEdited = false;
+   syncPaymentV5(prefix,true); $(prefix + 'PayConfirmed').checked = true;
+  } else if (!selected && s.correctionV22) {
+   const previous = s.paymentBeforeCorrectionV22;
+   s.correctionV22 = false; delete s.correctionActorV22; s.previous = cents(s.edit.paid_total ?? 0);
+   $(prefix + 'PaymentStatusV10').value = previous?.status || 'paid'; $(prefix + 'ReceivedV10').value = previous?.received || '0.00';
+   if (previous) { pay.method = previous.method; pay.tenderEdited = previous.tenderEdited; }
+   syncPaymentV5(prefix,true);
+   if (previous) for (const [suffix,value] of Object.entries(previous.values)) $(prefix + 'Pay' + suffix).value = value;
+   clearConfirmation(prefix); syncPaymentV5(prefix);
+  }
+  correctionControls(prefix);
  }
  function servicePrice(prefix, id) {
   const snapshot = state(prefix)?.servicePrices?.get(id), service = services.find(s => s.id === id);
@@ -120,6 +163,7 @@
  }
  function paymentStatusChanged(prefix) {
   const s = state(prefix); if (!s) return;
+  if (correctionSelected(prefix)) { $(prefix + 'PaymentStatusV10').value = 'debt'; syncPaymentV5(prefix,true); return; }
   const status = $(prefix + 'PaymentStatusV10').value;
   if (status === 'free') { $(prefix + 'Paid').value = '0.00'; s.chargeEdited = true; $(prefix + 'ReceivedV10').value = '0.00'; }
   else if ($(prefix + 'Paid').value === '0.00' && !s.edit) { s.chargeEdited = false; $(prefix + 'Paid').value = amount(listCents(prefix)); }
@@ -132,7 +176,11 @@
   const paid = $(prefix + 'Paid'), host = document.createElement('div');
   host.id = prefix + 'ClinicalV10'; host.className = 'clinical-payment-v10';
   host.innerHTML = `<label for="${prefix}PaymentStatusV10">Вариант оплаты</label><select id="${prefix}PaymentStatusV10"><option value="paid">Полностью оплачено</option><option value="debt">В долг / частично оплачено</option><option value="free">Бесплатно</option></select><div id="${prefix}ReceivedBoxV10" class="hidden"><label for="${prefix}ReceivedV10">Оплачено сейчас, ₽</label><input id="${prefix}ReceivedV10" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div id="${prefix}DebtSummaryV10" class="small" role="status" aria-live="polite"></div><div id="${prefix}EditReasonBoxV10" class="hidden"><label for="${prefix}EditReasonV10">Что изменили и почему *</label><textarea id="${prefix}EditReasonV10"></textarea></div>`;
+  const correction = document.createElement('div'); correction.id = prefix + 'PaymentCorrectionBoxV22'; correction.className = 'clinical-payment-correction-v22 hidden';
+  correction.innerHTML = `<label class="payment-confirm-v5"><input id="${prefix}PaymentCorrectionV22" type="checkbox"><span><strong>Исправить ошибочную оплату</strong><br>Подтверждаю: деньги по этой записи не получены.</span></label><p id="${prefix}PaymentCorrectionAmountV22" class="small"></p>`;
+  host.prepend(correction);
   paid.after(host); paid.previousElementSibling.textContent = 'Стоимость с учётом скидки, ₽'; paid.removeAttribute('oninput');
+  $(prefix + 'PaymentCorrectionV22').addEventListener('change',() => correctionChanged(prefix));
   $(prefix + 'PaymentStatusV10').add(new Option('Оплатит после процедуры','pending'),1);
   const debtHint = document.createElement('p'); debtHint.id = prefix + 'DebtHintV13'; debtHint.className = 'notice hidden';
   debtHint.textContent = 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
@@ -198,10 +246,15 @@
  }
  function receivedCents(prefix) {
   const s = state(prefix), status = $(prefix + 'PaymentStatusV10').value, charge = cents($(prefix + 'Paid').value || '0');
+  if (correctionSelected(prefix)) return 0;
   return status === 'free' ? 0 : status === 'debt' || status === 'pending' ? cents($(prefix + 'ReceivedV10').value,'Оплата сейчас') : Math.max(0,charge - (s?.previous || 0));
  }
  function currentModel(prefix) {
   const s = state(prefix); if (!s) throw Error('Откройте форму заново');
+  if (correctionSelected(prefix)) {
+   if (!paymentCorrectionAllowed(s.edit,isManager()) || s.correctionActorV22 !== actorKey() || !$(prefix + 'PaymentCorrectionV22').checked) throw Error('Исправить ошибочную оплату может только администратор после подтверждения, что деньги не получены');
+   if (cents($(prefix + 'Paid').value || '0') === 0) throw Error('Для сохранения в долг укажите стоимость больше нуля');
+  }
   return paymentModel({list:amount(listCents(prefix)),charge:$(prefix + 'Paid').value,previous:amount(s.previous || 0),received:amount(receivedCents(prefix)),status:$(prefix + 'PaymentStatusV10').value,reason:$(prefix + 'DiscountComment').value,patient:$(prefix + 'Patient').value});
  }
  function shortCashDiscount(prefix) {
@@ -249,6 +302,7 @@
   financePaymentState5[prefix] = {method:'cash',total:null,tenderEdited:false};
   for (const suffix of ['Cash','Terminal','OwnerCard']) $(prefix + 'Pay' + suffix).value = '0.00';
   $(prefix + 'PaymentStatusV10').value = 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonV10').value = '';
+  s.correctionV22 = false; delete s.correctionActorV22; delete s.paymentBeforeCorrectionV22;
   $(prefix + 'EditReasonBoxV10').classList.add('hidden'); clearConfirmation(prefix); $(prefix + 'Paid').readOnly = false;
   if (prefix === 'sale') { $('saleReserveV5').checked = false; $('reserveSaleOptionV5').classList.toggle('hidden',!isManager() || isPaymentOnlyV5('sale')); }
   calculate(prefix);
@@ -256,19 +310,24 @@
  syncPaymentV5 = function(prefix, force = false) {
   const s = state(prefix), pay = financePaymentState5[prefix]; if (!s || !pay || !$(prefix + 'ClinicalV10')) return;
   let total = null; try { total = receivedCents(prefix); } catch {}
+  const correcting = correctionSelected(prefix);
+  if (correcting) {
+   $(prefix + 'PaymentStatusV10').value = 'debt'; $(prefix + 'ReceivedV10').value = '0.00'; total = 0;
+   for (const suffix of ['Cash','Terminal','OwnerCard','Tender']) $(prefix + 'Pay' + suffix).value = '0.00';
+  }
   if (pay.total !== total || force) {
    clearConfirmation(prefix);
    if (pay.method !== 'mixed' || force) for (const [suffix,method] of [['Cash','cash'],['Terminal','terminal'],['OwnerCard','owner_card']]) $(prefix + 'Pay' + suffix).value = amount(pay.method === method || (pay.method === 'mixed' && method === 'cash') ? total || 0 : 0);
    pay.total = total;
   }
-  $(prefix + 'PayAllocation').classList.toggle('hidden',pay.method !== 'mixed');
+  $(prefix + 'PayAllocation').classList.toggle('hidden',correcting || pay.method !== 'mixed');
   $(prefix + 'PaymentV5').querySelectorAll('[data-pay-method]').forEach(button => { const selected = button.dataset.payMethod === pay.method; button.setAttribute('aria-pressed',String(selected)); button.classList.toggle('primary',selected); button.classList.toggle('secondary',!selected); });
   let cash = 0; try { cash = cents($(prefix + 'PayCash').value); } catch {}
   if (!pay.tenderEdited) $(prefix + 'PayTender').value = amount(cash);
   $(prefix + 'PayTenderBox').classList.toggle('hidden',total === 0 || (cash === 0 && pay.method !== 'cash' && pay.method !== 'mixed'));
   const paymentStatus = $(prefix + 'PaymentStatusV10').value,pendingSelected = paymentStatus === 'pending';
-  $(prefix + 'EditReasonBoxV10').classList.toggle('hidden',!s.edit || editWithoutReason(s.edit,{status:paymentStatus,previous:s.previous || 0,received:total}));
-  $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',paymentStatus !== 'debt' && !pendingSelected);
+  $(prefix + 'EditReasonBoxV10').classList.toggle('hidden',correcting || !s.edit || editWithoutReason(s.edit,{status:paymentStatus,previous:s.previous || 0,received:total}));
+  $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',correcting || (paymentStatus !== 'debt' && !pendingSelected));
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
   $(prefix + 'DebtHintV13').textContent = pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
@@ -276,13 +335,13 @@
   $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
   const saveButton = document.querySelector('#' + kind + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]');
-  if (saveButton) saveButton.textContent = pendingSelected && total === 0 ? 'Сохранить без оплаты' : prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
+  if (saveButton) saveButton.textContent = correcting ? 'Исправить оплату и сохранить в долг' : pendingSelected && total === 0 ? 'Сохранить без оплаты' : prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
   let unpaidBalance = 0; try { unpaidBalance = cents($(prefix + 'Paid').value || '0') - (s.previous || 0); } catch {}
-  $(prefix + 'SavePendingV14').classList.toggle('hidden',pendingSelected || paymentStatus === 'free' || unpaidBalance <= 0);
+  $(prefix + 'SavePendingV14').classList.toggle('hidden',correcting || pendingSelected || paymentStatus === 'free' || unpaidBalance <= 0);
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
   try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `По прайсу: ${rub(m.list / 100)}. Скидка: ${rub(Math.max(0,m.list - m.charge) / 100)}. К оплате с учётом скидки: ${rub(m.charge / 100)}. ${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. ${m.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
-  inlinePayment(prefix); renderPaymentSummaryV5(prefix);
+  correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
   const model = currentModel(prefix), cash = cents($(prefix + 'PayCash').value,'Наличные'), terminal = cents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = cents($(prefix + 'PayOwnerCard').value,'Перевод');
@@ -300,6 +359,7 @@
   const actor = currentStaff?.id;
   if (!quickNavigationCurrent4(navigation,actor)) return false;
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
+  if (forms[prefix]?.correctionSavingV22) { message('homeMessage','Исправление оплаты ещё сохраняется. Дождитесь ответа перед открытием новой записи.'); return false; }
   if (forms[prefix]?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Предыдущее сохранение ещё не подтверждено. Нажмите «Повторить сохранение» — отправим первоначальные данные без дубля.'); return false; }
   forms[prefix] = {chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map()};
   install(prefix);
@@ -311,7 +371,8 @@
  };
  saveTreatment = async function(kind) {
   if (clinicalBusy) return;
-  const prefix = kind === 'procedure' ? 'proc' : 'sale', actor = actorKey();
+  const prefix = kind === 'procedure' ? 'proc' : 'sale', actor = actorKey(), navigation = quickNavigation4;
+  if (state(prefix)?.correctionActorV22 && state(prefix).correctionActorV22 !== actor) { message(kind + 'Message','Учётная запись изменилась. Выйдите и откройте процедуру заново перед исправлением оплаты.'); return; }
   let saved = false, s, model, payload;
   try {
    s = state(prefix); if (!s) throw Error('Откройте форму заново');
@@ -339,32 +400,38 @@
    if (s.edit && model.received > 0 && shift?.id && shift.id !== s.edit.shift_id) { payload.payment_shift_id=shift.id; payload.payment_nurse_id=[shift.aId,shift.bId].includes(currentStaff.id)?currentStaff.id:shift.aId; }
    if (s.edit) {
     payload.kind = kind; payload.id = s.edit.id; payload.expected_version = s.edit.version;
-    payload.edit_reason = $(prefix + 'EditReasonV10').value.trim() || null;
+    payload.edit_reason = correctionSelected(prefix) ? correctionReasonV22 : $(prefix + 'EditReasonV10').value.trim() || null;
     if (!payload.edit_reason && !editWithoutReason(s.edit,model)) throw Error('Укажите, что изменили в процедуре и почему');
+    if (correctionSelected(prefix)) Object.assign(payload,{confirm_no_money_received:true,correction_reason:correctionReasonV22,expected_received_total:cents(s.edit.paid_total ?? 0) / 100});
    }
    payload = JSON.parse(JSON.stringify(payload));
    }
    clinicalBusy = true;
    document.querySelectorAll('#' + kind + ' button,#' + kind + ' input,#' + kind + ' select,#' + kind + ' textarea').forEach(element => element.disabled = true);
    message(kind + 'Message','Сохраняем…');
-   const receipt = s.edit ? await clinicalRpc('treatment_edit',payload,true) : await treatmentRpc(kind,payload);
-   assertActor(actor); saved = true; forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = '';
-   show('workspace');
-   message('homeMessage',`${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`,true);
-   try { await refreshDashboard(); } catch (error) { message('homeMessage','Запись сохранена. Не удалось обновить экран: ' + error.message); }
+   const correcting = payload.confirm_no_money_received === true;
+   s.correctionSavingV22 = correcting;
+   const receipt = s.edit ? await clinicalRpc(correcting ? 'payment_correction' : 'treatment_edit',payload,true) : await treatmentRpc(kind,payload);
+   assertActor(actor); saved = true;
+   if (!correcting || state(prefix) === s) { forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = ''; }
+   if (!correcting || quickNavigationCurrent4(navigation,currentStaff?.id)) show('workspace');
+   const success = correcting ? `Оплата исправлена. В долг: ${rub(receipt?.debt_total ?? model.debt / 100)}. Ошибочно отмеченная оплата убрана из выручки.` : `${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`;
+   message('homeMessage',success,true);
+   try { await refreshDashboard(); } catch (error) { if (actorKey() === actor) message('homeMessage',success + ' Не удалось обновить экран: ' + error.message,true); }
   } catch (error) {
    if (actorKey() === actor) {
     if (!saved && s && payload && (s.retry || financeRetryableErrorV16(error,error.status))) { s.retry = {payload,model}; error = saveError({...error,uncertain:true,message:error.message},error.status); }
     message(saved ? 'homeMessage' : kind + 'Message',error.message);
    }
   }
-  finally { clinicalBusy = false; if (actorKey() === actor) lockRetryForm(prefix); }
+  finally { if (s) delete s.correctionSavingV22; clinicalBusy = false; if (actorKey() === actor) lockRetryForm(prefix); }
  };
  const treatmentBase = treatmentRpc;
  async function saveWithoutPayment(kind) {
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
   if (clinicalBusy || !state(prefix)) return;
   if (state(prefix).retry) { await saveTreatment(kind); return; }
+  if (correctionSelected(prefix)) { await saveTreatment(kind); return; }
   $(prefix + 'PaymentStatusV10').value = 'pending'; $(prefix + 'ReceivedV10').value = '0.00';
   syncPaymentV5(prefix,true); $(prefix + 'PayConfirmed').checked = true;
   await saveTreatment(kind);
