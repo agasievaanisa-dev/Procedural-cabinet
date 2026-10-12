@@ -1,0 +1,31 @@
+.patient-card-toolbar-v20 { flex-wrap:wrap; margin:12px 0; }
+.patient-card-toolbar-v20 .btn { flex:1 1 210px; }
+#patientMedicalCardBodyV20 header > h1 { margin-top:0; }
+.patient-card-fields-v20 { margin:16px 0; }
+.patient-card-fields-v20 > div { display:grid; grid-template-columns:minmax(100px,180px) 1fr; gap:12px; margin:8px 0; }
+.patient-card-fields-v20 dt { font-weight:600; }
+.patient-card-fields-v20 dd { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.patient-card-events-v20 { list-style:none; padding:0; }
+.patient-card-event-v20 { border-top:1px solid #dbe3e3; padding:18px 0; }
+.patient-card-event-v20 h2 { font-size:1.15rem; margin:0 0 8px; }
+.patient-card-event-v20 h3 { font-size:1rem; margin:12px 0 4px; }
+.patient-card-event-v20 ul { padding-left:22px; }
+.patient-card-event-v20 li { margin:6px 0; overflow-wrap:anywhere; }
+.patient-card-event-v20 p { margin:8px 0; }
+.patient-card-payment-v20 { display:grid; gap:4px; margin-top:14px; }
+.patient-card-note-v20 { white-space:pre-wrap; overflow-wrap:anywhere; }
+.patient-card-actions-v20 { flex-wrap:wrap; margin-top:12px; }
+.patient-card-totals-v20 { border-top:2px solid #226963; padding-top:12px; }
+#patientCardPrintV20 { display:none; }
+@media(max-width:520px) { .patient-card-fields-v20 > div { grid-template-columns:1fr; gap:2px; } }
+@media print {
+ body.crm-patient-printing-v20 { background:#fff!important; color:#111!important; }
+ body.crm-patient-printing-v20 > :not(#patientCardPrintV20) { display:none!important; }
+ body.crm-patient-printing-v20 #patientCardPrintV20 { display:block!important; font:11pt/1.4 Arial,sans-serif; color:#111; margin:0; padding:0; }
+ #patientCardPrintV20 h1 { font-size:20pt; }
+ #patientCardPrintV20 h2 { font-size:14pt; }
+ #patientCardPrintV20 h3 { font-size:11pt; }
+ #patientCardPrintV20 .patient-card-event-v20 { break-inside:avoid; page-break-inside:avoid; }
+ #patientCardPrintV20 .patient-card-fields-v20 > div { grid-template-columns:160px 1fr; }
+ #patientCardPrintV20 .patient-card-totals-v20 { break-inside:avoid; }
+}

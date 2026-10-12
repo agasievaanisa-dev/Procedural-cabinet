@@ -1,12 +1,84 @@
 /* Owner management and editable procedure templates. Authorization is enforced by RPCs. */
 let managementStaffV5=[],managementTemplatesV5=[],managementAuditV5=[],managementBusyV5=false,managementLoadV5=0;
 let managementSettingsLoadedV5=false;
+let managementSessionV16=0;
+let managementTemplatesLoadV16=0,managementSettingsLoadV16=0;
+const managementDraftsV16={staff:null,template:null,settings:null,account:null};
+const managementScreensV16={staff:'staffV5',template:'templatesV5',settings:'settingsV5',account:'staffV5'};
+const managementMessagesV16={staff:'staffMessageV5',template:'templatesMessageV5',settings:'settingsMessageV5',account:'staffMessageV5'};
+const managementSaveNamesV16={staff:'saveStaffV5()',template:'saveTemplateV5()',settings:'saveSettingsV5()',account:'createStaffAccountV5()'};
+const managementSaveLabelsV16={staff:'Сохранить сотрудника',template:'Сохранить шаблон',settings:'Сохранить настройки',account:'Создать доступ медсестре'};
+function managementActorV16(){return JSON.stringify([currentStaff?.id,currentStaff?.role,managementSessionV16])}
+function managementStillActorV16(actor){return isManager()&&actor===managementActorV16()}
+function managementFailureV16(error,status){
+  const failure=Error(error?.message||'Не удалось выполнить действие. Проверьте соединение.');
+  for(const key of ['code','details','hint','uncertain','retryable','network'])if(error?.[key]!==undefined)failure[key]=error[key];
+  if(serviceNetworkFailureV11(error,status)){failure.retryable=true;failure.uncertain=true}
+  return failure;
+}
+function managementListV16(data,label){
+  if(!Array.isArray(data)||data.some(row=>!row||typeof row!=='object'||typeof row.id!=='string'))throw Error(label+' не загрузился. Сохранённые данные не изменены.');
+  return data;
+}
+function managementDraftV16(kind,payload){
+  let draft=managementDraftsV16[kind];
+  if(draft&&!managementStillActorV16(draft.actor))throw Error('Учётная запись изменилась. Откройте форму заново.');
+  if(!draft){
+    const copy=JSON.parse(JSON.stringify(payload));
+    function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
+    draft={actor:managementActorV16(),payload:freeze(copy),requestId:kind==='account'?null:crypto.randomUUID(),uncertain:false,result:null};managementDraftsV16[kind]=draft;
+  }
+  return draft;
+}
+function managementDraftControlsV16(kind){
+  const screen=$(managementScreensV16[kind]);if(!screen)return;
+  const draft=managementDraftsV16[kind],button=screen.querySelector?.(`button[onclick="${managementSaveNamesV16[kind]}"]`);
+  if(!draft){if(button)button.textContent=managementSaveLabelsV16[kind];return}
+  if(!managementStillActorV16(draft.actor))return;
+  const section=kind==='staff'?$('staffEditV5'):kind==='template'?$('templateEditV5'):kind==='account'?$('staffCreatePasswordV5')?.closest?.('.card'):screen;
+  section?.querySelectorAll('input,select,textarea,button').forEach(el=>el.disabled=true);
+  if(kind==='account')for(const id of ['staffCreateNameV5','staffCreateEmailV5','staffCreatePasswordV5'])if($(id))$(id).disabled=true;
+  if(button){button.disabled=managementBusyV5;button.textContent=draft.result?'Завершить сохранение':kind==='account'?'Проверить создание доступа':'Повторить сохранение'}
+  if(kind==='template'){
+    screen.querySelector?.('button[onclick="editTemplateV5(-1)"]')?.setAttribute('disabled','');
+    $('templatesListV5')?.querySelectorAll('button').forEach(el=>el.disabled=true);
+  }
+  if(kind==='staff')$('staffListV5')?.querySelectorAll('button').forEach(el=>el.disabled=true);
+}
+function managementResumeV16(kind){
+  const draft=managementDraftsV16[kind];if(!draft||!managementStillActorV16(draft.actor)||!$(managementScreensV16[kind]))return false;
+  show(managementScreensV16[kind]);managementDraftControlsV16(kind);
+  message(managementMessagesV16[kind],draft.result?'Изменение уже сохранено. Нажмите «Завершить сохранение».':kind==='account'?'Ответ о создании доступа не получен. Нажмите «Проверить создание доступа».':'Ответ о сохранении не получен. Данные остались в форме. Нажмите «Повторить сохранение».',!!draft.result);
+  return true;
+}
+function managementSaveFailedV16(kind,error,draft){
+  if(!managementStillActorV16(draft?.actor||managementActorV16()))return;
+  if(draft&&(error.uncertain||error.retryable||error.network||serviceNetworkFailureV11(error)))draft.uncertain=true;
+  if(draft&&!draft.result&&!draft.uncertain)managementDraftsV16[kind]=null;
+  message(managementMessagesV16[kind],error.message+(managementDraftsV16[kind]?.uncertain?' Данные остались в форме. Повторное сохранение проверит ту же запись.':''));
+}
+async function managementRefreshV16(jobs){
+  const results=await Promise.allSettled(jobs.map(job=>Promise.resolve().then(job)));
+  return results.some(result=>result.status==='rejected'||result.value===false);
+}
+function renderStaffV16(){
+  $('staffListV5').innerHTML=managementStaffV5.map((s,index)=>`<button class="item management-list-button" onclick="editStaffV5(${index})"><div class="row between"><strong>${esc(s.full_name)}</strong><span class="pill">${esc(roleLabelV5(s.role))}</span></div><div class="small">${esc(s.email||'Email не привязан')} · ${s.active!==false?'Доступ активен':'Доступ отключён'}</div><div class="small">${s.auth_user_id?'Есть личная учётная запись':'Учётная запись для входа не привязана'}</div></button>`).join('')||'<p>Сотрудников пока нет.</p>';
+}
+function managementCacheV16(kind,saved){
+  if(kind==='staff'){
+    const old=managementStaffV5.find(row=>row.id===saved.id)||{};
+    managementStaffV5=[{...old,...saved},...managementStaffV5.filter(row=>row.id!==saved.id)];++managementLoadV5;renderStaffV16();
+  }else if(kind==='template'){
+    ++managementTemplatesLoadV16;managementTemplatesV5=[saved,...managementTemplatesV5.filter(row=>row.id!==saved.id)];renderTemplatesV5();
+  }
+}
 let serviceSessionV11=0,serviceFormV11=0,serviceListV11=0,serviceDraftV11=null,serviceOperationV11=null;
 const serviceActorV11=()=>JSON.stringify([currentStaff?.id,currentStaff?.role,serviceSessionV11]);
 function requireServiceActorV11(actor){
   if(!isManager()||actor!==serviceActorV11())throw Error('Учётная запись изменилась. Откройте прайс заново.');
 }
 function serviceNetworkFailureV11(error,status){
+  if(typeof SaveRecoveryV16!=='undefined'&&typeof SaveRecoveryV16.isRetryable==='function')return SaveRecoveryV16.isRetryable(error,status);
   if(error?.code||(status!=null&&status!==0))return false;
   return /^(?:(?:TypeError|NetworkError):\s*)?(?:Load failed|Failed to fetch|Network request failed|NetworkError when attempting to fetch resource)\.?$/i.test(String(error?.message||'').trim());
 }
@@ -18,16 +90,19 @@ async function serviceRequestV11(name,args,onAmbiguous=null){
     requireServiceActorV11(actor);
     if(response&&!response.error)return response.data;
     const error=response?.error||{message:'Load failed'},network=serviceNetworkFailureV11(error,response?.status);
-    if(network)onAmbiguous?.();
-    if(network&&attempt===0){await new Promise(resolve=>setTimeout(resolve,350));continue}
-    const failure=Error(network?'Не удалось получить ответ от сервера. Проверьте интернет и повторите действие.':error.message||'Не удалось выполнить действие.');
+    if(network||error.uncertain)onAmbiguous?.();
+    if(network&&attempt===0&&!error.recoveryAttemptedV16){await new Promise(resolve=>setTimeout(resolve,350));continue}
+    const failure=managementFailureV16(error,response?.status);
+    if(network)failure.message='Не удалось получить ответ от сервера. Проверьте интернет и повторите действие.';
     failure.network=network;throw failure;
   }
 }
 
-async function crmManagementRpcV5(action,payload={}){
-  const {data,error}=await db.rpc('crm_management_v5',{p_action:action,p_payload:payload});
-  if(error)throw new Error(error.message||'Не удалось выполнить действие. Проверьте соединение.');
+async function crmManagementRpcV5(action,payload={},requestId=null){
+  const response=await db.rpc('crm_management_v5',{p_action:action,p_payload:payload},requestId?{saveRequestIdV16:requestId}:undefined);
+  if(!response||typeof response!=='object')throw Object.assign(Error('Ответ от сервера не получен.'),{uncertain:!!requestId});
+  const {data,error,status}=response;
+  if(error)throw managementFailureV16(error,status);
   return data;
 }
 function ownerManagementV5(){
@@ -49,62 +124,112 @@ function roleLabelV5(role){return ({owner:'Владелец',admin:'Админи
 function managementSetBusyV5(id,value){
   managementBusyV5=value;$(id)?.querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=value);
   if(id==='settingsV5'&&!value&&!managementSettingsLoadedV5){if($('settingsPaymentOnlyV5'))$('settingsPaymentOnlyV5').disabled=true;if($('settingsSaveV5'))$('settingsSaveV5').disabled=true}
+  if(!value)for(const kind of Object.keys(managementDraftsV16))if(managementScreensV16[kind]===id)managementDraftControlsV16(kind);
 }
 
 async function openStaffV5(){
   if(!ownerManagementV5())return;
+  if(managementResumeV16('staff')||managementResumeV16('account'))return;
   managementScreenV5('staffV5','Сотрудники',`<p class="sub">Каждая медсестра входит по своему email и паролю.</p><div class="card"><h2>Новая учётная запись</h2><label for="staffCreateNameV5">Имя *</label><input id="staffCreateNameV5" autocomplete="off"><label for="staffCreateEmailV5">Email для входа *</label><input id="staffCreateEmailV5" type="email" autocomplete="off"><label for="staffCreatePasswordV5">Первый пароль *</label><input id="staffCreatePasswordV5" type="password" minlength="12" maxlength="128" autocomplete="new-password"><div class="small">От 12 до 128 символов.</div><button class="btn primary wide" onclick="createStaffAccountV5()">Создать доступ медсестре</button></div><div id="staffMessageV5" role="status" aria-live="polite"></div><div id="staffListV5" class="list"></div><div id="staffEditV5" class="card hidden"><h2>Данные сотрудника</h2><input id="staffEditIdV5" type="hidden"><label for="staffEditNameV5">Имя *</label><input id="staffEditNameV5"><label for="staffEditRoleV5">Доступ</label><select id="staffEditRoleV5"><option value="nurse">Медсестра</option><option value="owner">Владелец</option><option value="admin">Администратор</option></select><label class="management-check"><input id="staffEditActiveV5" type="checkbox"> Доступ активен</label><button class="btn primary wide" onclick="saveStaffV5()">Сохранить сотрудника</button><button class="btn secondary wide" onclick="$('staffEditV5').classList.add('hidden')">Отмена</button></div><div class="card"><h2>Оплата смены</h2><p>Стандартная зарплата: <strong>2 000 ₽ каждому сотруднику за смену.</strong></p><p class="small">Владелец может изменить сумму в отчёте смены с указанием причины.</p><button class="btn secondary wide" onclick="openReportsV5()">Открыть отчёты смен</button></div>`);
   show('staffV5');await loadStaffV5();
 }
 async function loadStaffV5(){
-  if(!isManager())return;
+  if(!isManager())return false;
+  const actor=managementActorV16();
   const version=++managementLoadV5;message('staffMessageV5','Загружаем сотрудников…');
-  try{const data=await crmManagementRpcV5('staff_list');if(version!==managementLoadV5||!isManager())return;managementStaffV5=data||[];
-    $('staffListV5').innerHTML=managementStaffV5.map((s,index)=>`<button class="item management-list-button" onclick="editStaffV5(${index})"><div class="row between"><strong>${esc(s.full_name)}</strong><span class="pill">${esc(roleLabelV5(s.role))}</span></div><div class="small">${esc(s.email||'Email не привязан')} · ${s.active!==false?'Доступ активен':'Доступ отключён'}</div><div class="small">${s.auth_user_id?'Есть личная учётная запись':'Учётная запись для входа не привязана'}</div></button>`).join('')||'<p>Сотрудников пока нет.</p>';message('staffMessageV5','');
-  }catch(e){message('staffMessageV5',e.message)}
+  try{const data=await crmManagementRpcV5('staff_list');if(version!==managementLoadV5||!managementStillActorV16(actor))return false;managementStaffV5=managementListV16(data,'Список сотрудников');
+    renderStaffV16();message('staffMessageV5','');return true;
+  }catch(e){if(version===managementLoadV5&&managementStillActorV16(actor))message('staffMessageV5',e.message);return false}
 }
 function editStaffV5(index){
-  if(!ownerManagementV5())return;const s=managementStaffV5[index];if(!s)return;
+  if(!ownerManagementV5())return;if(managementResumeV16('staff'))return;const s=managementStaffV5[index];if(!s)return;
   $('staffEditIdV5').value=s.id;$('staffEditNameV5').value=s.full_name||'';$('staffEditRoleV5').value=s.role;$('staffEditActiveV5').checked=s.active!==false;
   $('staffEditV5').classList.remove('hidden');$('staffEditV5').scrollIntoView({behavior:'smooth',block:'start'});
 }
 async function saveStaffV5(){
   if(!ownerManagementV5()||managementBusyV5)return;
-  try{const full_name=$('staffEditNameV5').value.trim();if(!full_name)throw Error('Укажите имя сотрудника');
-    const payload={id:$('staffEditIdV5').value,full_name,role:$('staffEditRoleV5').value,active:$('staffEditActiveV5').checked};
-    if(payload.id===currentStaff.id&&(!payload.active||payload.role!==currentStaff.role))throw Error('Для изменения своего доступа используйте другую учётную запись владельца');
-    managementSetBusyV5('staffV5',true);await crmManagementRpcV5('staff_save',payload);$('staffEditV5').classList.add('hidden');await Promise.all([loadStaffV5(),loadNurses()]);message('staffMessageV5','Данные сотрудника сохранены.',true);
-  }catch(e){message('staffMessageV5',e.message)}finally{managementSetBusyV5('staffV5',false)}
+  const actor=managementActorV16();let draft;
+  try{
+    if(!managementDraftsV16.staff){
+      const full_name=$('staffEditNameV5').value.trim();if(!full_name)throw Error('Укажите имя сотрудника');
+      const payload={id:$('staffEditIdV5').value,full_name,role:$('staffEditRoleV5').value,active:$('staffEditActiveV5').checked};
+      if(payload.id===currentStaff.id&&(!payload.active||payload.role!==currentStaff.role))throw Error('Для изменения своего доступа используйте другую учётную запись владельца');
+      draft=managementDraftV16('staff',payload);
+    }else draft=managementDraftV16('staff');
+    managementSetBusyV5('staffV5',true);const saved=draft.result||await crmManagementRpcV5('staff_save',draft.payload,draft.requestId);
+    if(!managementStillActorV16(actor))return;
+    if(!saved?.id||typeof saved.id!=='string'||typeof saved.full_name!=='string')throw Object.assign(Error('Ответ о сохранении сотрудника не получен.'),{uncertain:true});
+    draft.result=saved;draft.uncertain=false;managementCacheV16('staff',saved);
+    if(!$('staffV5').classList.contains('active'))return;
+    managementDraftsV16.staff=null;$('staffEditV5').classList.add('hidden');message('staffMessageV5','Данные сотрудника сохранены.',true);
+    const stale=await managementRefreshV16([()=>loadStaffV5(),()=>loadNurses()]);
+    if(managementStillActorV16(actor)&&$('staffV5').classList.contains('active'))message('staffMessageV5',stale?'Данные сотрудника сохранены. Список пока не обновился. Повторять сохранение не нужно.':'Данные сотрудника сохранены.',true);
+  }catch(e){managementSaveFailedV16('staff',e,draft)}finally{if(managementStillActorV16(actor))managementSetBusyV5('staffV5',false)}
 }
 async function createStaffAccountV5(){
   if(!ownerManagementV5()||managementBusyV5)return;
-  try{const full_name=$('staffCreateNameV5').value.trim(),email=$('staffCreateEmailV5').value.trim(),password=$('staffCreatePasswordV5').value;
-    if(!full_name)throw Error('Укажите имя сотрудника');
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Укажите email для входа');
-    if(password.length<12||password.length>128)throw Error('Первый пароль должен содержать от 12 до 128 символов');
+  const actor=managementActorV16();let draft;
+  try{
+    if(!managementDraftsV16.account){
+      const full_name=$('staffCreateNameV5').value.trim(),email=$('staffCreateEmailV5').value.trim(),password=$('staffCreatePasswordV5').value;
+      if(!full_name)throw Error('Укажите имя сотрудника');
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw Error('Укажите email для входа');
+      if(password.length<12||password.length>128)throw Error('Первый пароль должен содержать от 12 до 128 символов');
+      draft=managementDraftV16('account',{full_name,email,password,role:'nurse'});
+    }else draft=managementDraftV16('account');
     managementSetBusyV5('staffV5',true);message('staffMessageV5','Создаём личный доступ…');
-    const {data,error}=await db.functions.invoke('crm-admin',{body:{action:'create_staff',full_name,email,password,role:'nurse'}});
-    if(error){let explanation=error.message;try{const detail=await error.context?.json();explanation=detail?.error||detail?.message||explanation}catch(_e){}throw Error(explanation||'Не удалось создать учётную запись')}
-    if(data?.error)throw Error(data.error);
-    $('staffCreatePasswordV5').value='';$('staffCreateNameV5').value='';$('staffCreateEmailV5').value='';await Promise.all([loadStaffV5(),loadNurses()]);message('staffMessageV5','Учётная запись создана. Медсестра может войти со своим email и паролем.',true);
-  }catch(e){message('staffMessageV5',e.message)}finally{managementSetBusyV5('staffV5',false)}
+    let saved=draft.result;
+    if(!saved&&draft.uncertain){
+      const rows=managementListV16(await crmManagementRpcV5('staff_list'),'Список сотрудников');
+      if(!managementStillActorV16(actor))return;
+      saved=rows.find(row=>row.auth_user_id&&row.role==='nurse'&&row.active!==false&&String(row.full_name||'').trim()===draft.payload.full_name&&String(row.email||'').toLowerCase()===draft.payload.email.toLowerCase());
+      if(!saved)throw Object.assign(Error('Подтверждение создания доступа пока не получено. Проверьте список сотрудников позже. Повторно создавать доступ не нужно.'),{uncertain:true});
+    }
+    if(!saved){
+      const {data,error}=await db.functions.invoke('crm-admin',{body:{action:'create_staff',...draft.payload}});
+      if(!managementStillActorV16(actor))return;
+      if(error){let explanation=error.message;try{const detail=await error.context?.json();explanation=detail?.error||detail?.message||explanation}catch(_e){}const failure=managementFailureV16(error,error.context?.status);if(error.name==='FunctionsFetchError')failure.uncertain=true;failure.message=explanation||'Не удалось создать учётную запись';throw failure}
+      if(data?.error)throw Error(data.error);
+      saved=data?.staff;
+      if(!saved?.id||typeof saved.id!=='string')throw Object.assign(Error('Ответ о создании доступа не получен.'),{uncertain:true});
+    }
+    draft.result=saved;draft.uncertain=false;
+    $('staffCreatePasswordV5').value='';managementCacheV16('staff',{...saved,email:saved.email||draft.payload.email});
+    if(!$('staffV5').classList.contains('active'))return;
+    managementDraftsV16.account=null;$('staffCreateNameV5').value='';$('staffCreateEmailV5').value='';message('staffMessageV5','Учётная запись создана. Медсестра может войти со своим email и паролем.',true);
+    const stale=await managementRefreshV16([()=>loadStaffV5(),()=>loadNurses()]);
+    if(managementStillActorV16(actor)&&$('staffV5').classList.contains('active'))message('staffMessageV5',stale?'Учётная запись создана. Список пока не обновился. Повторно создавать доступ не нужно.':'Учётная запись создана. Медсестра может войти со своим email и паролем.',true);
+  }catch(e){managementSaveFailedV16('account',e,draft)}finally{if(managementStillActorV16(actor))managementSetBusyV5('staffV5',false)}
 }
 
 async function openSettingsV5(){
   if(!ownerManagementV5())return;
+  if(managementResumeV16('settings'))return;
+  const actor=managementActorV16(),version=++managementSettingsLoadV16;
   managementSettingsLoadedV5=false;
   managementScreenV5('settingsV5','Настройки',`<div class="card"><h2>Учёт оплаты и склада</h2><label class="management-check"><input id="settingsPaymentOnlyV5" type="checkbox" disabled><span>Учитывать оплату без списания препаратов со склада</span></label><p class="small">Медсёстры оформляют процедуры и продажи по прайсу. Оплата попадает в кассу и отчёт смены, а остатки не меняются.</p><p class="small">Когда склад будет готов, снимите отметку и сохраните настройки. Списания начнутся только для новых операций. Прошлые записи автоматически списываться не будут.</p></div><div class="card"><h2>Касса и время</h2><label for="settingsFloatV5">Разменный фонд, ₽</label><input id="settingsFloatV5" type="number" inputmode="decimal" min="0" step="0.01"><p class="small">Разменный фонд используется для сдачи и не входит в выручку.</p><p>Время кабинета: <strong>Москва (UTC+3)</strong></p><p class="small">Смены, дневные отчёты и сроки годности рассчитываются по времени кабинета на всех устройствах.</p><button id="settingsSaveV5" class="btn primary wide" onclick="saveSettingsV5()" disabled>Сохранить настройки</button><div id="settingsMessageV5" role="status" aria-live="polite"></div></div><div class="card"><h2>Услуги и назначения</h2><button class="btn secondary wide" onclick="goServicesV5()">Прайс услуг</button><button class="btn secondary wide" onclick="openTemplatesV5()">Шаблоны процедур</button></div><div class="card"><h2>История и резервная копия</h2><button class="btn secondary wide" onclick="openAuditV5()">Журнал действий</button><button class="btn secondary wide" onclick="downloadDataExportV5()">Скачать данные учёта</button><p class="small">JSON содержит данные учёта и ссылки на документы. Файлы документов и фотографии хранятся отдельно.</p><div id="backupMessageV5" role="status" aria-live="polite"></div></div>`);
   show('settingsV5');message('settingsMessageV5','Загружаем настройки…');
-  try{const s=await crmFinanceRpcV5('settings_get');if(!isManager())return;if(typeof s.payment_only!=='boolean')throw Error('Режим учёта не загрузился. Откройте настройки заново.');$('settingsFloatV5').value=s.float_amount??0;$('settingsPaymentOnlyV5').checked=s.payment_only;managementSettingsLoadedV5=true;$('settingsPaymentOnlyV5').disabled=false;$('settingsSaveV5').disabled=false;if(typeof setAccountingModeV5==='function')setAccountingModeV5(s);message('settingsMessageV5','')}
-  catch(e){message('settingsMessageV5',e.message)}
+  try{const s=await crmFinanceRpcV5('settings_get');if(!managementStillActorV16(actor)||version!==managementSettingsLoadV16)return;if(typeof s?.payment_only!=='boolean')throw Error('Режим учёта не загрузился. Откройте настройки заново.');$('settingsFloatV5').value=s.float_amount??0;$('settingsPaymentOnlyV5').checked=s.payment_only;managementSettingsLoadedV5=true;$('settingsPaymentOnlyV5').disabled=false;$('settingsSaveV5').disabled=false;if(typeof setAccountingModeV5==='function')setAccountingModeV5(s);message('settingsMessageV5','')}
+  catch(e){if(managementStillActorV16(actor)&&version===managementSettingsLoadV16)message('settingsMessageV5',e.message)}
 }
 async function saveSettingsV5(){
   if(!ownerManagementV5()||managementBusyV5||!managementSettingsLoadedV5||$('settingsSaveV5')?.disabled)return;
-  try{const float_amount=managementMoneyV5($('settingsFloatV5').value,'Разменный фонд'),time_zone='Europe/Moscow';
-    const payment_only=$('settingsPaymentOnlyV5').checked;
-    managementSetBusyV5('settingsV5',true);const result=await crmFinanceRpcV5('settings_save',{float_amount,time_zone,payment_only});if(typeof setAccountingModeV5==='function')setAccountingModeV5(result);message('settingsMessageV5','Настройки сохранены. '+(payment_only?'Оплата учитывается без складского списания.':'Препараты будут списываться при новых процедурах и продажах.'),true);
-    if(typeof refreshOwnerDashboardV5==='function')await refreshOwnerDashboardV5();
-  }catch(e){message('settingsMessageV5',e.message)}finally{managementSetBusyV5('settingsV5',false)}
+  const actor=managementActorV16();let draft;
+  try{
+    draft=managementDraftsV16.settings?managementDraftV16('settings'):managementDraftV16('settings',{float_amount:managementMoneyV5($('settingsFloatV5').value,'Разменный фонд'),time_zone:'Europe/Moscow',payment_only:$('settingsPaymentOnlyV5').checked});
+    managementSetBusyV5('settingsV5',true);let result=draft.result;
+    if(!result){const response=await db.rpc('crm_finance_v5',{p_action:'settings_save',p_payload:draft.payload},{saveRequestIdV16:draft.requestId});if(!response||typeof response!=='object')throw Object.assign(Error('Ответ о сохранении настроек не получен.'),{uncertain:true});if(response.error)throw managementFailureV16(response.error,response.status);result=response.data}
+    if(!managementStillActorV16(actor))return;
+    if(typeof result?.payment_only!=='boolean')throw Object.assign(Error('Ответ о сохранении настроек не получен.'),{uncertain:true});
+    draft.result=result;draft.uncertain=false;
+    ++managementSettingsLoadV16;
+    if(typeof setAccountingModeV5==='function')setAccountingModeV5(result);
+    if(!$('settingsV5').classList.contains('active'))return;
+    managementDraftsV16.settings=null;
+    const success='Настройки сохранены. '+(draft.payload.payment_only?'Оплата учитывается без складского списания.':'Препараты будут списываться при новых процедурах и продажах.');message('settingsMessageV5',success,true);
+    const stale=await managementRefreshV16(typeof refreshOwnerDashboardV5==='function'?[()=>refreshOwnerDashboardV5()]:[]);
+    if(managementStillActorV16(actor)&&$('settingsV5').classList.contains('active'))message('settingsMessageV5',success+(stale?' Главный экран пока не обновился. Повторять сохранение не нужно.':''),true);
+  }catch(e){managementSaveFailedV16('settings',e,draft)}finally{if(managementStillActorV16(actor))managementSetBusyV5('settingsV5',false)}
 }
 
 function ensureServicesV5(){
@@ -152,7 +277,7 @@ loadServicesAdmin=async function(){
   try{
     const rows=await serviceRequestV11('crm_management_v5',{p_action:'services_list',p_payload:{}});
     if(actor!==serviceActorV11()||version!==serviceListV11||!$('services').classList.contains('active'))return false;
-    serviceRows=rows||[];renderServicesV11();if(!serviceDraftV11)message('serviceMessage','');return true;
+    serviceRows=managementListV16(rows,'Прайс услуг');renderServicesV11();if(!serviceDraftV11)message('serviceMessage','');return true;
   }catch(e){if(actor===serviceActorV11()&&version===serviceListV11&&$('services').classList.contains('active')&&!serviceDraftV11)message('serviceMessage',e.message);return false}
 };
 editService=function(s){
@@ -191,12 +316,15 @@ saveService=async function(){
       serviceRequestV11('nurse_service_catalog',{})
     ]);
     if(actor!==serviceActorV11()||clearedVersion!==serviceFormV11||clearedList!==serviceListV11||!$('services').classList.contains('active')||(navigation!==null&&navigation!==quickNavigation4))return;
-    if(refresh[0].status==='fulfilled'){serviceRows=refresh[0].value||[];renderServicesV11()}
-    if(refresh[1].status==='fulfilled')services=refresh[1].value||[];
+    for(const [index,label] of ['Прайс услуг','Прайс для медсестры'].entries())if(refresh[index].status==='fulfilled'){
+      try{refresh[index].value=managementListV16(refresh[index].value,label)}catch(error){refresh[index]={status:'rejected',reason:error}}
+    }
+    if(refresh[0].status==='fulfilled'){serviceRows=refresh[0].value;renderServicesV11()}
+    if(refresh[1].status==='fulfilled')services=refresh[1].value;
     message('serviceMessage',refresh.some(r=>r.status==='rejected')?'Услуга сохранена. Список пока не обновился. Повторно создавать услугу не нужно.':'Услуга сохранена. Изменение записано в журнал.',true);
   }catch(e){
     if(actor!==serviceActorV11())return;
-    if(serviceDraftV11&&e.network)serviceDraftV11.uncertain=true;
+    if(serviceDraftV11&&(e.network||e.uncertain))serviceDraftV11.uncertain=true;
     else if(!serviceDraftV11?.result&&!serviceDraftV11?.uncertain)serviceDraftV11=null;
     if(stillCurrent())message('serviceMessage',e.message+(serviceDraftV11?.uncertain?' Данные остались в форме. Нажмите «Повторить сохранение».':''));
   }finally{
@@ -208,16 +336,18 @@ function templateMedicationV5(id){return meds.find(m=>m.id===id)||(isManager()?i
 function templateItemsTextV5(t){return (t.items||[]).map(x=>{const m=templateMedicationV5(x.medication_id)||x;return `${esc(m.name||'Препарат недоступен')} × ${qty(x.quantity)} ${esc(unit(m))}`}).join('<br>')||'Без препаратов'}
 async function openTemplatesV5(){
   if(!ownerManagementV5())return;
+  if(managementResumeV16('template'))return;
+  const actor=managementActorV16(),version=++managementTemplatesLoadV16;
   managementScreenV5('templatesV5','Шаблоны процедур',`<p class="sub">Шаблон заполняет черновик процедуры. Перед сохранением можно изменить препараты и дозировку.</p><button class="btn primary wide" onclick="editTemplateV5(-1)">＋ Новый шаблон</button><div id="templatesMessageV5" role="status" aria-live="polite"></div><div id="templatesListV5" class="list" style="margin-top:14px"></div><div id="templateEditV5" class="card hidden"><h2>Состав шаблона</h2><input id="templateIdV5" type="hidden"><label for="templateNameV5">Название *</label><input id="templateNameV5" placeholder="Капельница №1"><label for="templateServiceV5">Услуга</label><select id="templateServiceV5"></select><h3>Препараты</h3><div id="templateItemsV5"></div><button class="btn secondary wide" onclick="addTemplateItemV5()">＋ Добавить препарат</button><label for="templateNotesV5">Комментарий</label><textarea id="templateNotesV5"></textarea><label class="management-check"><input id="templateActiveV5" type="checkbox" checked> Использовать шаблон</label><button class="btn primary wide" onclick="saveTemplateV5()">Сохранить шаблон</button><button class="btn secondary wide" onclick="$('templateEditV5').classList.add('hidden')">Отмена</button></div>`);
   show('templatesV5');message('templatesMessageV5','Загружаем шаблоны…');
-  try{const results=await Promise.all([crmManagementRpcV5('templates_list'),loadServices(),loadMeds(),loadInventory()]);if(!isManager())return;managementTemplatesV5=results[0]||[];renderTemplatesV5();message('templatesMessageV5','')}
-  catch(e){message('templatesMessageV5',e.message)}
+  try{const results=await Promise.all([crmManagementRpcV5('templates_list'),loadServices(),loadMeds(),loadInventory()]);if(!managementStillActorV16(actor)||version!==managementTemplatesLoadV16)return;managementTemplatesV5=managementListV16(results[0],'Список шаблонов');renderTemplatesV5();message('templatesMessageV5','')}
+  catch(e){if(managementStillActorV16(actor)&&version===managementTemplatesLoadV16)message('templatesMessageV5',e.message)}
 }
 function renderTemplatesV5(){
   $('templatesListV5').innerHTML=managementTemplatesV5.map((t,i)=>`<button class="item management-list-button" onclick="editTemplateV5(${i})"><div class="row between"><strong>${esc(t.name)}</strong><span class="pill">${t.active!==false?'Активен':'В архиве'}</span></div><p class="small">${templateItemsTextV5(t)}</p>${t.notes?`<div class="small">${esc(t.notes)}</div>`:''}</button>`).join('')||'<p>Шаблонов пока нет.</p>';
 }
 function editTemplateV5(index){
-  if(!ownerManagementV5())return;const t=managementTemplatesV5[index]||{};
+  if(!ownerManagementV5())return;if(managementResumeV16('template'))return;const t=managementTemplatesV5[index]||{};
   $('templateIdV5').value=t.id||'';$('templateNameV5').value=t.name||'';$('templateNotesV5').value=t.notes||'';$('templateActiveV5').checked=t.active!==false;
   $('templateServiceV5').innerHTML='<option value="">Выбрать при процедуре</option>'+services.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
   if(t.service_id&&!services.some(s=>s.id===t.service_id))$('templateServiceV5').insertAdjacentHTML('beforeend',`<option value="${esc(t.service_id)}">Прежняя услуга недоступна — выберите другую</option>`);
@@ -225,7 +355,7 @@ function editTemplateV5(index){
   $('templateEditV5').classList.remove('hidden');$('templateEditV5').scrollIntoView({behavior:'smooth',block:'start'});
 }
 function addTemplateItemV5(id='',quantity=1){
-  if(!isManager())return;const all=(inventory.length?inventory:meds).filter(m=>m.active!==false),row=document.createElement('div');row.className='template-item-v5';
+  if(!isManager()||managementDraftsV16.template)return;const all=(inventory.length?inventory:meds).filter(m=>m.active!==false),row=document.createElement('div');row.className='template-item-v5';
   const options=all.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}${m.dosage?' · '+esc(m.dosage):''} · ${esc(unit(m))}</option>`).join('');
   row.innerHTML=`<div><label>Препарат</label><select class="template-med-v5" aria-label="Препарат шаблона"><option value="">Выберите препарат</option>${options}${id&&!all.some(m=>m.id===id)?`<option value="${esc(id)}">Препарат недоступен — замените или уберите</option>`:''}</select></div><div><label>Количество</label><input class="template-quantity-v5" aria-label="Количество препарата" type="number" inputmode="numeric" min="1" step="1" value="${esc(quantity)}"></div><button class="btn danger" aria-label="Убрать препарат" onclick="this.parentElement.remove()">×</button>`;
   row.querySelector('select').value=id;$('templateItemsV5').appendChild(row);
@@ -243,8 +373,23 @@ function templatePayloadV5(){
 }
 async function saveTemplateV5(){
   if(!ownerManagementV5()||managementBusyV5)return;
-  try{const payload=templatePayloadV5();managementSetBusyV5('templatesV5',true);await crmManagementRpcV5('template_save',payload);managementTemplatesV5=await crmManagementRpcV5('templates_list')||[];renderTemplatesV5();$('templateEditV5').classList.add('hidden');message('templatesMessageV5','Шаблон сохранён.',true)}
-  catch(e){message('templatesMessageV5',e.message)}finally{managementSetBusyV5('templatesV5',false)}
+  const actor=managementActorV16();let draft;
+  try{
+    draft=managementDraftsV16.template?managementDraftV16('template'):managementDraftV16('template',templatePayloadV5());
+    managementSetBusyV5('templatesV5',true);const saved=draft.result||await crmManagementRpcV5('template_save',draft.payload,draft.requestId);
+    if(!managementStillActorV16(actor))return;
+    if(!saved?.id||typeof saved.id!=='string'||typeof saved.name!=='string'||!Array.isArray(saved.items))throw Object.assign(Error('Ответ о сохранении шаблона не получен.'),{uncertain:true});
+    draft.result=saved;draft.uncertain=false;managementCacheV16('template',saved);
+    if(!$('templatesV5').classList.contains('active'))return;
+    managementDraftsV16.template=null;$('templateEditV5').classList.add('hidden');message('templatesMessageV5','Шаблон сохранён.',true);
+    const version=++managementTemplatesLoadV16;
+    const stale=await managementRefreshV16([async()=>{
+      const rows=managementListV16(await crmManagementRpcV5('templates_list'),'Список шаблонов');
+      if(!managementStillActorV16(actor)||version!==managementTemplatesLoadV16)return false;
+      managementTemplatesV5=rows;if($('templatesV5').classList.contains('active'))renderTemplatesV5();return true;
+    }]);
+    if(managementStillActorV16(actor)&&$('templatesV5').classList.contains('active'))message('templatesMessageV5',stale?'Шаблон сохранён. Список пока не обновился. Повторно создавать шаблон не нужно.':'Шаблон сохранён.',true);
+  }catch(e){managementSaveFailedV16('template',e,draft)}finally{if(managementStillActorV16(actor))managementSetBusyV5('templatesV5',false)}
 }
 
 function ensureTemplatePickerV5(){
@@ -282,7 +427,8 @@ function ensureMedicationExtrasV5(){
 }
 const managementOpenMedFormV5=openMedForm;
 openMedForm=function(id='',focus=''){
-  if(!isManager()||warehouseBusy)return;ensureMedicationExtrasV5();managementOpenMedFormV5(id,focus);
+  if(typeof warehouseResumeV16==='function'&&warehouseResumeV16())return false;
+  if(!isManager()||warehouseBusy)return;ensureMedicationExtrasV5();if(managementOpenMedFormV5(id,focus)===false)return;
   if($('medId').value!==id)return;const m=inventory.find(x=>x.id===id);
   $('medManufacturerV5').value=m?.manufacturer||'';$('medReleaseFormV5').value=m?.release_form||'';$('medCommentV5').value=m?.comment||'';
   for(const prefix of ['receive','opening']){$(prefix+'BatchNumberV5').value='';$(prefix+'SupplierV5').value='';$(prefix+'ReceivedDateV5').value=localDateValue();$(prefix+'ReceivedDateV5').max=localDateValue()}
@@ -301,7 +447,8 @@ function warehouseExtraPayloadV5(action,payload,write){
 }
 const managementWarehouseRpcV5=warehouseRpc;
 warehouseRpc=async function(action,payload={},write=false){
-  const data=await managementWarehouseRpcV5(action,warehouseExtraPayloadV5(action,payload,write),write);
+  const frozen=typeof warehouseFrozenPayloadV16==='function'?warehouseFrozenPayloadV16(action,payload):payload;
+  const data=await managementWarehouseRpcV5(action,frozen!==payload?frozen:warehouseExtraPayloadV5(action,payload,write),write);
   if(action==='batches'&&payload.id)medicationBatchesExtraV5.set(payload.id,data||[]);
   return data;
 };
@@ -347,6 +494,8 @@ async function downloadDataExportV5(){
 
 const managementSignOutV5=signOut;
 signOut=async function(){
+  ++managementSessionV16;++managementTemplatesLoadV16;++managementSettingsLoadV16;
+  for(const kind of Object.keys(managementDraftsV16))managementDraftsV16[kind]=null;managementBusyV5=false;
   managementSettingsLoadedV5=false;
   ++serviceSessionV11;++serviceListV11;serviceDraftV11=null;serviceOperationV11=null;serviceSaving=false;fillServiceV11();serviceRows=[];$('serviceList').innerHTML='';message('serviceMessage','');
   ++managementLoadV5;managementStaffV5=[];managementTemplatesV5=[];managementAuditV5=[];medicationBatchesExtraV5.clear();

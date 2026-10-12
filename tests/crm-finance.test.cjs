@@ -66,12 +66,13 @@ function payment(prefix,total){
   stock:[{name:'Препарат',work:2,reserve:99999}],used:[]};
  c.renderShiftReportV5(report);const nurseHtml=el('reportBody').innerHTML;
  for(const receipt of ['9999','10054','777'])assert.ok(nurseHtml.includes(receipt),'Nurse own-shift report omits '+receipt);
- for(const secret of ['2000','8054','99999','Зарплата','В работе:','запас:'])assert.ok(!nurseHtml.includes(secret),'Nurse report leaks private field '+secret);
+ for(const allowed of ['2000','8054','Зарплаты'])assert.ok(nurseHtml.includes(allowed),'Nurse own-shift payroll missing '+allowed);
+ for(const secret of ['99999','В работе:','запас:'])assert.ok(!nurseHtml.includes(secret),'Nurse report leaks private field '+secret);
  assert.ok(nurseHtml.includes('&lt;img'));assert.ok(!nurseHtml.includes('<script>'));
  const ownerCallCount=calls.length;await c.openReportsV5();assert.equal(calls.length,ownerCallCount,'Nurse cannot request owner summary');
- c.currentStaff.role='owner';c.renderShiftReportV5(report);assert.ok(el('reportBody').innerHTML.includes('2000'));assert.ok(el('reportBody').innerHTML.includes('Денежный остаток после выплаты зарплаты'));
+ c.currentStaff.role='owner';c.renderShiftReportV5(report);assert.ok(el('reportBody').innerHTML.includes('2000'));assert.ok(el('reportBody').innerHTML.includes('Выручка после зарплаты'));
  const unknown={...report,cash_after_salary:null,payroll_unknown:1,payroll_complete:false,staff:[{id:'n1',full_name:'Наталья',amount:null}]};
- c.renderShiftReportV5(unknown);assert.ok(el('reportBody').innerHTML.includes('Не задана'));assert.ok(el('reportBody').innerHTML.includes('Не рассчитан: укажите зарплату за прошлые смены'));
+ c.renderShiftReportV5(unknown);assert.ok(el('reportBody').innerHTML.includes('Не задана'));assert.ok(el('reportBody').innerHTML.includes('Не рассчитана: зарплата не задана полностью'));
  assert.ok(c.renderFinanceSummaryV5({...unknown,rows:[],shifts:[]},'reportsV5').includes('Не рассчитан: укажите зарплату за прошлые смены'));
  assert.ok(c.buildFinanceCsvV5(unknown).includes('Не рассчитан: укажите зарплату за прошлые смены'));
  const csv=c.buildFinanceCsvV5({from:'2026-10-01',to:'2026-10-06',revenue:{total:10},rows:[{label:'=IMPORTXML("x")',revenue:{total:10}}]});

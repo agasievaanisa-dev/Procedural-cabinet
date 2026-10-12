@@ -1,7 +1,9 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,{innerHTML:'',value:'',querySelectorAll(){throw Error('Search must never mutate chosen rows')}});return elements.get(id)};
 const c={console,Set,Map,Date,JSON,Number,Math,String,Error,Promise,window:{scrollTo(){}},$:el,meds:[],patients:[],esc:s=>String(s??'').replaceAll('<','&lt;').replaceAll('"','&quot;'),num:v=>Number(v||0),qty:v=>String(v),unit:m=>m.consumption_unit||'ед.',medPhotoHtml:()=>'<span>Фото</span>',medPhotoUrls:new Map()};
+c.medicationOriginClassV21=()=>'';c.medicationOriginBadgeV21=()=>'';
 c.document={addEventListener(){}};
+c.loadInventory=async()=>true;
 for(const n of ['enterApp','signOut','show','addPatient','recalc','saveTreatment','openPatient','renderInventory','openMedForm','stockCells','signMedicationPhotos','filterMedicationRows','renderMedVisualCatalog','addMedRow','chooseMedication','startShift','openProcedure','openSale','openReport','closeShift','renderPatients','staffOptions'])c[n]=()=>{};
 vm.createContext(c);vm.runInContext(fs.readFileSync(__dirname+'/../quick-v4.js','utf8'),c);
 c.meds=[{id:'a',name:'Самыр',search_name:'Samyr',dosage:'400 мг',category:'Гепатопротекторы',work_qty:13},{id:'b',name:'Раствор',dosage:'200 мл',work_qty:2}];

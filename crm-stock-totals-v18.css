@@ -1,0 +1,15 @@
+.stock-total-button-v18{position:relative;display:flex;flex-direction:column;align-items:flex-start;text-align:left;font:inherit;cursor:pointer;border:1px solid transparent;color:inherit;min-width:0;gap:5px}
+.stock-total-button-v18:hover{border-color:#2b7e77}
+.stock-total-button-v18:focus-visible{outline:3px solid #2b7e77;outline-offset:2px}
+.stock-total-edit-v18{font-size:12px;font-weight:600;color:#286c65;margin-top:3px}
+.stock-totals-panel-v18{margin-top:14px;border:1px solid #c4dedb}
+.stock-totals-panel-v18 h2{margin:0}
+.stock-totals-panel-v18 input{width:100%;min-width:0}
+.stock-totals-panel-v18 .grid2>div{min-width:0}
+.stock-totals-total-v18{font-size:20px;font-weight:700;margin:12px 0}
+.stock-totals-success-v18{color:#286c65}
+#stockTotalsMessageV18{white-space:pre-wrap;margin:12px 0;min-height:1.5em}
+#stockTotalsExtraV18,.stock-optional-v18{margin:12px 0}
+.stock-optional-v18>div{width:100%;margin-top:10px}
+.stock-optional-v18 summary,#stockTotalsExtraV18 summary{font-size:14px;font-weight:600;cursor:pointer}
+@media(max-width:600px){.stock-total-button-v18{padding:12px 10px}.stock-totals-panel-v18 .row.between{align-items:flex-start;gap:10px}.stock-totals-panel-v18 h2{font-size:20px}}

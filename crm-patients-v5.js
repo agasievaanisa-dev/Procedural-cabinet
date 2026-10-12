@@ -48,7 +48,9 @@
 
   let directory = [], editId = null, saving = false, archiveBusy = false, cardVersion = 0, listVersion = 0, documentSaving = false;
   let patientSession = 0, formVersion = 0, saveDraft = null, saveOperation = null;
+  let archiveOperation = null, documentOperation = null;
   const documentDrafts = new Map();
+  const archiveDrafts = new Map();
   const deletionRequests = new Map();
   let deletionBusy = false;
   let recognition = null, voicePlan = null, voiceVersion = 0, voiceBusy = false, voiceReturnFocus = null;
@@ -60,27 +62,44 @@
   const patientActor = () => JSON.stringify([currentStaff?.id, currentStaff?.role, patientSession]);
   function requirePatientActor(actor) { requireAccess(); if (actor !== patientActor()) throw new Error('Учётная запись изменилась. Откройте форму заново.'); }
   function networkFailure(error, status) {
+    if (typeof global.SaveRecoveryV16?.isRetryable === 'function') return global.SaveRecoveryV16.isRetryable(error, status);
+    if (error?.retryable || error?.uncertain) return true;
     if (error?.code || (status != null && status !== 0)) return false;
     return /^(?:(?:TypeError|NetworkError):\s*)?(?:Load failed|Failed to fetch|Network request failed|NetworkError when attempting to fetch resource)\.?$/i.test(String(error?.message || '').trim());
   }
-  async function patientRequest(name, args, retrySafe = false, onAmbiguous = null) {
+  function patientResponseValid(name, args, data) {
+    if (name === 'crm_patient_save_v11') { const patient = data?.patient || data; return typeof patient?.id === 'string' && typeof patient?.full_name === 'string'; }
+    if (name === 'crm_management_v5' && args.p_action === 'patient_list') return Array.isArray(data) || Array.isArray(data?.patients);
+    if (name === 'crm_management_v5' && args.p_action === 'patient_archive') return !!data?.id;
+    if (name === 'register_patient_file_v8') return typeof data === 'string' && !!data;
+    return true;
+  }
+  async function patientRequest(name, args, retrySafe = false, onAmbiguous = null, options = undefined) {
     requireAccess(); const actor = patientActor();
     for (let attempt = 0; attempt < 2; attempt++) {
       requirePatientActor(actor); let response;
-      try { response = await db.rpc(name, args); } catch (error) { response = {error}; }
+      try { response = await db.rpc(name, args, options); } catch (error) { response = {error}; }
       requirePatientActor(actor);
-      if (response && !response.error) return response.data;
+      if (response && !response.error && patientResponseValid(name, args, response.data)) return response.data;
+      if (response && !response.error) response = { error: { message: 'Ответ о сохранении пока не получен.', uncertain: true, retryable: true }, status: 0 };
       const error = response?.error || {message:'Load failed'}, network = networkFailure(error, response?.status);
-      if (network) onAmbiguous?.();
-      if (network && retrySafe && attempt === 0) { await new Promise(resolve => setTimeout(resolve,350)); continue; }
+      if (network || error.uncertain) onAmbiguous?.();
+      if (network && retrySafe && attempt === 0 && !error.recoveryAttemptedV16) { await new Promise(resolve => setTimeout(resolve,350)); continue; }
       const failure = new Error(network ? 'Не удалось получить ответ от сервера. Проверьте интернет и повторите действие.' : error.message || 'Не удалось выполнить действие.');
-      failure.network = network; throw failure;
+      failure.network = network || !!error.uncertain; failure.uncertain = !!error.uncertain; failure.code = error.code; throw failure;
     }
   }
   async function patientRpc(action, payload = {}) {
     return patientRequest('crm_management_v5', {p_action:action,p_payload:payload}, action === 'patient_list');
   }
   function patientById(id) { return directory.find(patient => patient.id === id) || patients.find(patient => patient.id === id); }
+  // The printable card uses the same authorized directory as the patient screen.
+  // Export only card fields, never the directory or internal database attributes.
+  global.patientCardRecordV20 = function (id) {
+    requireAccess(); const patient = patientById(id);
+    if (!patient || isDeleted(patient) || (isArchived(patient) && !owner())) throw new Error('Пациент не найден. Откройте его карточку заново.');
+    return Object.fromEntries(['id', 'full_name', 'birth_date', 'sex', 'phone', 'complaints', 'request', 'prescriptions', 'notes'].map(key => [key, patient[key] ?? null]));
+  };
   loadPatients = async function () {
     requireAccess();
     const version = ++listVersion, staffId = currentStaff.id;
@@ -184,15 +203,29 @@
   global.archivePatientV5 = async function () {
     if (!owner() || archiveBusy) return;
     const patient = patientById(currentPatientId); if (!patient) return;
-    const archived = !isArchived(patient);
-    if (!global.confirm(archived ? `Архивировать пациента «${patient.full_name}»? История и документы сохранятся.` : `Восстановить пациента «${patient.full_name}» из архива?`)) return;
-    archiveBusy = true;
+    const actor = patientActor(), key = JSON.stringify([actor, patient.id]);
+    let draft = archiveDrafts.get(key);
+    const archived = draft ? draft.payload.archived : !isArchived(patient);
+    if (!draft && !global.confirm(archived ? `Архивировать пациента «${patient.full_name}»? История и документы сохранятся.` : `Восстановить пациента «${patient.full_name}» из архива?`)) return;
+    if (!draft) { draft = { payload: { id: patient.id, archived }, requestId: crypto.randomUUID() }; archiveDrafts.set(key, draft); }
+    const version = cardVersion, navigation = typeof quickNavigation4 === 'undefined' ? null : quickNavigation4;
+    const stillCurrent = () => actor === patientActor() && currentPatientId === patient.id && version === cardVersion && $('patientCard').classList.contains('active') && (navigation === null || navigation === quickNavigation4);
+    const operation = {}; archiveOperation = operation; archiveBusy = true;
     try {
-      await patientRpc('patient_archive', { id: patient.id, archived });
-      await loadPatients(); await openPatient(patient.id);
-      message('patientCardMessageV5', archived ? 'Пациент в архиве. История и документы сохранены.' : 'Пациент восстановлен.', true);
-    } catch (error) { message('patientCardMessageV5', error.message); }
-    finally { archiveBusy = false; }
+      const saved = await patientRequest('crm_management_v5', { p_action: 'patient_archive', p_payload: draft.payload }, false, null, { saveRequestIdV16: draft.requestId });
+      archiveDrafts.delete(key); requirePatientActor(actor);
+      directory = directory.filter(item => item.id !== saved.id).concat(saved);
+      patients = patients.filter(item => item.id !== saved.id).concat(isArchived(saved) || isDeleted(saved) ? [] : saved);
+      if (!stillCurrent()) return;
+      const resultText = archived ? 'Пациент в архиве. История и документы сохранены.' : 'Пациент восстановлен.';
+      message('patientCardMessageV5', resultText, true);
+      const refresh = await Promise.allSettled([loadPatients(), openPatient(patient.id)]);
+      if (actor === patientActor() && currentPatientId === patient.id && $('patientCard').classList.contains('active') && (navigation === null || navigation === quickNavigation4)) message('patientCardMessageV5', resultText + (refresh.some(result => result.status === 'rejected') ? ' Часть данных пока не обновилась. Повторно сохранять не нужно.' : ''), true);
+    } catch (error) {
+      if (!error.network && !error.uncertain) archiveDrafts.delete(key);
+      if (stillCurrent()) message('patientCardMessageV5', error.message + (error.network || error.uncertain ? ' Повторите действие: запрос сохранён и не создаст повторную запись.' : ''));
+    }
+    finally { if (archiveOperation === operation) { archiveBusy = false; archiveOperation = null; } }
   };
   global.deletePatientV10 = async function () {
     if (!owner() || deletionBusy) return;
@@ -232,18 +265,20 @@
     const staffId = currentStaff?.id;
     const { data, error } = await db.rpc('patient_files_v8', { p_patient_id: patientId });
     if (currentPatientId !== patientId || currentStaff?.id !== staffId) return;
-    if (error) { $('patientDocuments').innerHTML = `<div class="notice">${esc(error.message)}</div>`; return; }
-    const documents = data || [];
+    if (error) { $('patientDocuments').innerHTML = `<div class="notice">${esc(error.message)}</div>`; return false; }
+    if (!Array.isArray(data)) { $('patientDocuments').innerHTML = '<div class="notice">Список документов пока не получен. Откройте карточку снова.</div>'; return false; }
+    const documents = data;
     $('patientDocuments').innerHTML = documents.map(doc => `<button type="button" class="item click patient-list-item-v5" data-document-path="${esc(doc.storage_path)}"><div class="row between"><strong>${esc(doc.title)}</strong><span class="small">${esc(doc.document_date || '')}</span></div><div class="small">${esc(doc.original_name || 'Файл')} · ${doc.mime_type === 'application/pdf' ? 'PDF' : 'Фото'}</div></button>`).join('') || '<div class="notice">Пока нет прикреплённых анализов или документов.</div>';
+    return true;
   };
   uploadPatientDocument = async function () {
     if (documentSaving) return;
-    const patientId = currentPatientId, staffId = currentStaff?.id;
+    const patientId = currentPatientId, staffId = currentStaff?.id, actor = patientActor();
     const file = $('docFile').files[0], title = $('docTitle').value.trim(), date = $('docDate').value || null;
     const button = $('patientCard').querySelector('button[onclick="uploadPatientDocument()"]');
-    const stillCurrent = () => currentPatientId === patientId && currentStaff?.id === staffId;
+    const stillCurrent = () => currentPatientId === patientId && currentStaff?.id === staffId && actor === patientActor() && $('patientCard').classList.contains('active');
     const status = text => { if (stillCurrent()) $('docMessage').textContent = text; };
-    let draft, key;
+    let draft, key, operation;
     try {
       requireAccess();
       if (!patientId || !patientById(patientId)) throw new Error('Выберите пациента.');
@@ -259,7 +294,7 @@
         draft = { path: `${patientId}/${Date.now()}_${crypto.randomUUID()}_${safeName}`, uploaded: false, attempted: false };
         documentDrafts.set(key, draft);
       }
-      documentSaving = true; button.disabled = true; status(draft.uploaded ? 'Сохраняем карточку документа…' : 'Загружаем файл…');
+      operation = {}; documentOperation = operation; documentSaving = true; button.disabled = true; status(draft.uploaded ? 'Сохраняем карточку документа…' : 'Загружаем файл…');
       if (!draft.uploaded) {
         const retried = draft.attempted; draft.attempted = true;
         const { error } = await db.storage.from('patient-documents').upload(draft.path, file, { contentType: file.type, upsert: false });
@@ -267,23 +302,26 @@
         if (error && !(retried && (String(error.statusCode) === '409' || error.error === 'Duplicate'))) throw new Error('Не удалось загрузить файл: ' + error.message + '. Повторите с тем же файлом и названием.');
         draft.uploaded = true;
       }
-      if (currentStaff?.id !== staffId) throw new Error('Пользователь изменился. Документ не зарегистрирован.');
-      const { error } = await db.rpc('register_patient_file_v8', { p_patient_id: patientId, p_title: title, p_document_date: date, p_storage_path: draft.path, p_original_name: file.name, p_mime_type: file.type });
-      if (error) {
+      requirePatientActor(actor);
+      let registrationError = null;
+      try { await patientRequest('register_patient_file_v8', { p_patient_id: patientId, p_title: title, p_document_date: date, p_storage_path: draft.path, p_original_name: file.name, p_mime_type: file.type }, true); }
+      catch (error) { registrationError = error; }
+      if (registrationError) {
         // Only a confirmed database rollback permits cleanup. The policy rejects registered paths.
-        if (/^[0-9A-Z]{5}$/.test(error.code || '')) {
+        if (!registrationError.network && !registrationError.uncertain && /^[0-9A-Z]{5}$/.test(registrationError.code || '')) {
           const removed = await db.storage.from('patient-documents').remove([draft.path]);
           if (!removed.error) documentDrafts.delete(key);
         }
-        throw new Error('Не удалось сохранить карточку документа: ' + error.message + '. Повторите с тем же файлом и названием.');
+        throw new Error('Не удалось сохранить карточку документа: ' + registrationError.message + '. Повторите с тем же файлом и названием.');
       }
       documentDrafts.delete(key); status('Документ прикреплён.');
       if (stillCurrent()) {
         if ($('docTitle').value.trim() === title && $('docDate').value === (date || '') && $('docFile').files[0] === file) { $('docTitle').value = ''; $('docFile').value = ''; }
-        await loadPatientDocuments(patientId);
+        try { if (await loadPatientDocuments(patientId) === false) status('Документ прикреплён. Список пока не обновился. Повторно загружать файл не нужно.'); }
+        catch (error) { status('Документ прикреплён. Список пока не обновился. Повторно загружать файл не нужно.'); }
       }
     } catch (error) { status(error.message); }
-    finally { documentSaving = false; button.disabled = isArchived(patientById(currentPatientId)); }
+    finally { if (operation && documentOperation === operation) { documentSaving = false; documentOperation = null; button.disabled = isArchived(patientById(currentPatientId)); } }
   };
   loadCourses = async function (patientId) {
     const staffId = currentStaff?.id;
@@ -492,7 +530,7 @@
     document.body.append(dialog); $('voiceCloseV5').onclick = global.closeVoiceV5; $('voiceListenV5').onclick = global.listenVoiceV5; $('voicePreviewButtonV5').onclick = global.previewVoiceV5; $('voiceApplyV5').onclick = global.applyVoiceV5; $('voiceTextV5').oninput = invalidateVoice;
     dialog.addEventListener('cancel', event => { event.preventDefault(); global.closeVoiceV5(); });
     const originalSignOut = signOut;
-    signOut = async function () { ++patientSession; ++cardVersion; ++listVersion; saveDraft = null; saveOperation = null; saving = false; voiceBusy = false; global.closeVoiceV5(); directory = []; documentDrafts.clear(); editId = null; fillPatientForm(); currentPatientId = null; $('patientIncludeArchivedV5').checked = false; for (const id of ['patientHistory', 'patientDocuments', 'patientCourses', 'patientCardInfo', 'lastProcedure']) $(id).textContent = ''; await originalSignOut(); };
+    signOut = async function () { ++patientSession; ++cardVersion; ++listVersion; saveDraft = null; saveOperation = null; archiveOperation = null; documentOperation = null; archiveBusy = false; documentSaving = false; saving = false; voiceBusy = false; global.closeVoiceV5(); directory = []; documentDrafts.clear(); archiveDrafts.clear(); editId = null; fillPatientForm(); currentPatientId = null; $('patientIncludeArchivedV5').checked = false; for (const id of ['patientHistory', 'patientDocuments', 'patientCourses', 'patientCardInfo', 'lastProcedure']) $(id).textContent = ''; await originalSignOut(); };
   }
   install();
 })(typeof window !== 'undefined' ? window : globalThis);

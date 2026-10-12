@@ -1,5 +1,6 @@
 /* Payment allocations are confirmed before an atomic, replay-safe save. */
 const financeRequests5 = new Map();
+const financePendingTreatment16 = {proc:null,sale:null};
 let financeReportId5 = null, financeBusy5 = false, financeView5 = 0;
 const financeSnapshots5 = new Map();
 const financeSnapshotFilters5 = new Map();
@@ -90,6 +91,18 @@ function financeNetworkErrorV5(error, status) {
  if (error?.code || (status != null && status !== 0)) return false;
  return /^(?:(?:TypeError|NetworkError):\s*)?(?:Load failed|Failed to fetch|Network request failed|NetworkError when attempting to fetch resource)\.?$/i.test(String(error?.message || '').trim());
 }
+function financeRetryableErrorV16(error, status) {
+ if (error?.uncertain === true || /^08/.test(error?.code || '')) return true;
+ if (globalThis.SaveRecoveryV16?.isRetryable) return globalThis.SaveRecoveryV16.isRetryable(error,status);
+ return financeNetworkErrorV5(error,status) || (!error?.code && /fetch|network|timeout|connection|load failed/i.test(error?.message || ''));
+}
+function financeSaveErrorV16(error, status, fallback = 'Не удалось выполнить действие') {
+ const result = new Error(error?.message || fallback);
+ for (const field of ['code','details','hint','uncertain','recoveryAttemptedV16']) if (error?.[field] !== undefined) result[field] = error[field];
+ if (status !== undefined || error?.status !== undefined) result.status = status ?? error.status;
+ if (financeRetryableErrorV16(error,status)) result.uncertain = true;
+ return result;
+}
 async function crmFinanceRpcV5(action, payload = {}) {
  const actor = currentStaff?.id, role = currentStaff?.role, session = financeSession5;
  const requireActor = () => {
@@ -105,8 +118,8 @@ async function crmFinanceRpcV5(action, payload = {}) {
   const {data,error,status} = response || {};
   if (!response) throw Error('Нет ответа от сервера');
   if (!error) return data;
-  if (!financeNetworkErrorV5(error,status)) throw Error(error.message || 'Нет ответа от сервера');
-  if (!readOnly || attempt === 1) throw Error('Не удалось связаться с сервером. Проверьте интернет и повторите действие.');
+  if (!financeNetworkErrorV5(error,status)) throw financeSaveErrorV16(error,status,'Нет ответа от сервера');
+  if (!readOnly || attempt === 1 || error.recoveryAttemptedV16) throw financeSaveErrorV16({...error,message:'Не удалось связаться с сервером. Проверьте интернет и повторите действие.'},status);
   await new Promise(resolve => setTimeout(resolve,350));
  }
 }
@@ -226,22 +239,41 @@ calcSale = function(...args) { financeCalcSaleBase5(...args); syncPaymentV5('sal
 
 treatmentRpc = async function(kind, payload) {
  const prefix = kind === 'procedure' ? 'proc' : 'sale';
- const full = {...payload, payments:readPaymentsV5(prefix)};
- const mode = financeTreatmentMode5[prefix];
- if (!mode) throw Error('Режим учёта не проверен. Откройте форму заново.');
- full.expected_stock_deducted = mode.stock_deducted;
- if (!mode.payment_only && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) full.reserve_sale = true;
- const key = JSON.stringify([kind, full]);
+ const actor = JSON.stringify([currentStaff?.id,currentStaff?.role,financeSession5]);
+ const requireActor = () => { if (!currentStaff?.id || actor !== JSON.stringify([currentStaff?.id,currentStaff?.role,financeSession5])) throw Error('Учётная запись изменилась. Откройте форму заново.'); };
+ requireActor();
+ const pending = financePendingTreatment16[prefix]?.actor === actor ? financePendingTreatment16[prefix] : null;
+ let full;
+ if (pending) full = pending.payload;
+ else {
+  full = {...payload, payments:payload.payments || readPaymentsV5(prefix)};
+  const mode = financeTreatmentMode5[prefix];
+  if (!mode) throw Error('Режим учёта не проверен. Откройте форму заново.');
+  full.expected_stock_deducted = mode.stock_deducted;
+  if (!mode.payment_only && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) full.reserve_sale = true;
+  full = JSON.parse(JSON.stringify(full));
+ }
+ const key = pending?.key || JSON.stringify([actor,kind,full]);
  if (!financeRequests5.has(key)) financeRequests5.set(key, crypto.randomUUID());
+ const requestId = financeRequests5.get(key);
+ const forget = () => { if (financeRequests5.get(key) === requestId) financeRequests5.delete(key); };
  financeAccountingMismatch5[prefix] = false;
- const {data,error} = await db.rpc('record_treatment_v5', {p_kind:kind,p_payload:full,p_request_id:financeRequests5.get(key)});
+ let response;
+ try { response = await db.rpc('record_treatment_v5', {p_kind:kind,p_payload:full,p_request_id:requestId}); }
+ catch (error) { response = {error}; }
+ requireActor();
+ const {data,error,status} = response || {error:{uncertain:true,message:'Нет ответа от сервера. Повторите сохранение.'}};
  if (error) {
-  if (/^[0-9A-Z]{5}$/.test(error.code || '')) financeRequests5.delete(key);
+  const failure = financeSaveErrorV16(error,status,'Нет ответа от сервера. Повторите сохранение.');
+  if (pending || failure.uncertain) {
+   failure.uncertain = true;
+   financePendingTreatment16[prefix] = {actor,payload:full,key};
+  } else if (/^[0-9A-Z]{5}$/.test(error.code || '')) forget();
   financeAccountingMismatch5[prefix] = /^[0-9A-Z]{5}$/.test(error.code || '') && /^Режим уч[её]та (?:измен[её]н|изменился)/i.test(error.message || '');
   renderAccountingModeV5();
-  throw Error(error.message || 'Нет ответа от сервера. Повторите сохранение.');
+  throw failure;
  }
- financeRequests5.delete(key); financeTreatmentReceipt5[prefix] = data; return data;
+ forget(); financePendingTreatment16[prefix] = null; financeTreatmentReceipt5[prefix] = data; return data;
 };
 // The workflow-v3 save still supplies the single-flight lock and preserves failed forms.
 saveTreatment = async function(kind) {
@@ -329,6 +361,46 @@ function financeShiftBalanceHtmlV5(data) {
  const amounts = financeShiftTotalsV5(data);
  return `<div class="finance-totals-v5"><div class="stat"><span>Стоимость процедур и продаж</span><b>${esc(rub(amounts.charge))}</b></div><div class="stat"><span>В долг</span><b>${esc(rub(amounts.debt))}</b></div></div><p class="small">Долг показан на момент формирования отчёта. Выручка — деньги, полученные в этой смене.</p>`;
 }
+// Shift income follows the date money was actually received. Lifetime receipts
+// on a treatment belong to later shifts and must not be counted a second time.
+function financeShiftSummaryAmountsV16(data = {}) {
+ const cents = value => Math.round(num(value) * 100);
+ const procedures = data.procedures || [],sales = data.sales || [],receipts = data.receipts || [];
+ const initial = event => cents(event.initial_paid_total ?? event.paid_total ?? event.paid);
+ const procedureIncome = procedures.reduce((total,event) => total + initial(event),0);
+ const saleIncome = sales.reduce((total,event) => total + initial(event),0);
+ const laterIncome = receipts.reduce((total,receipt) => total + cents(receipt.paid_total ?? receipt.amount),0);
+ const revenue = data.revenue || {},categorized = procedureIncome + saleIncome + laterIncome;
+ const total = cents(revenue.total ?? data.cash_total ?? categorized / 100);
+ const events = [...procedures,...sales],totals = financeShiftTotalsV5(data);
+ const pending = events.reduce((value,event) => value + (event.payment_pending ? cents(financeEventAmountsV5(event).debt) : 0),0);
+ const debt = cents(totals.debt),staff = data.staff || [];
+ const payrollUnknown = num(data.payroll_unknown ?? staff.filter(person => person.amount == null).length);
+ const payrollComplete = data.payroll_complete ?? (staff.length > 0 && payrollUnknown === 0);
+ const payroll = cents(data.payroll_total ?? staff.reduce((value,person) => value + num(person.amount),0));
+ return {total:total / 100,procedures:procedureIncome / 100,sales:saleIncome / 100,receipts:laterIncome / 100,
+  other:Math.max(0,total - categorized) / 100,categoriesMatch:categorized <= total,
+  cash:num(revenue.cash),terminal:num(revenue.terminal),ownerCard:num(revenue.owner_card),unclassified:num(revenue.unclassified),
+  charge:totals.charge,debt:debt / 100,pending:pending / 100,loan:Math.max(0,debt - pending) / 100,
+  payroll:payroll / 100,payrollUnknown,payrollComplete,
+  afterSalary:payrollComplete ? num(data.cash_after_salary ?? (total - payroll) / 100) : null};
+}
+function financeShiftSummaryHtmlV16(data) {
+ const amounts = financeShiftSummaryAmountsV16(data);
+ const row = (key,label,value,plain = false) => `<div class="shift-summary-row-v16" data-summary-key="${key}"><span>${label}</span><b>${esc(plain ? value : rub(value))}</b></div>`;
+ const section = (key,title,content) => `<section class="shift-summary-section-v16" data-summary-section="${key}"><h3>${title}</h3>${content}</section>`;
+ return `<section class="shift-financial-summary-v16" aria-label="Итоги смены"><div class="shift-revenue-total-v16" data-summary-key="revenue"><h2>Общая выручка</h2><div class="money">${esc(rub(amounts.total))}</div><p class="small">Деньги, полученные в этой смене. Долги в выручку не входят.</p></div>${section('income','За что получены деньги',
+  row('procedures','Процедуры и использованные препараты',amounts.procedures) + row('sales','Продажа препаратов',amounts.sales) + row('receipts','Доплаты и погашение долга',amounts.receipts) +
+  (amounts.other ? row('other','Прочие оплаты смены',amounts.other) : '') + (!amounts.categoriesMatch ? '<p class="notice">Не удалось сопоставить все оплаты с записями смены. Обновите отчёт.</p>' : ''))}${section('methods','Способы оплаты',
+  row('cash','Наличные',amounts.cash) + row('terminal','Терминал',amounts.terminal) + row('owner-card','Переводы владельцу',amounts.ownerCard) +
+  (amounts.unclassified ? row('unclassified','Способ оплаты не указан',amounts.unclassified) : ''))}${section('debts','Долги и ожидаемая оплата',
+  row('loan','В долг',amounts.loan) + row('pending','Ожидает оплаты',amounts.pending) + row('debt-total','Всего не оплачено',amounts.debt) +
+  row('charge','Стоимость процедур и продаж',amounts.charge) + '<p class="small">Остаток по записям этой смены на момент формирования отчёта.</p>')}${section('salary','Зарплаты за смену',
+  (data.staff || []).map(person => row('salary-' + esc(person.id || ''),esc(person.full_name || 'Сотрудник'),person.amount == null ? 'Не задана' : rub(person.amount),true)).join('') +
+  row('payroll-total','Всего зарплата',amounts.payrollComplete ? rub(amounts.payroll) : 'Не задана полностью',true) +
+  (!amounts.payrollComplete && amounts.payroll > 0 ? row('payroll-known','Указано',amounts.payroll) : '') +
+  row('after-salary','Выручка после зарплаты',amounts.afterSalary === null ? 'Не рассчитана: зарплата не задана полностью' : rub(amounts.afterSalary),true))}</section>`;
+}
 function financePeriodDebtHtmlV5(data, note = true) {
  if (data.charge_total === undefined && data.debt_total === undefined && data.debt_payments_total === undefined) return '';
  return `<div class="finance-totals-v5"><div class="stat"><span>Начислено за период</span><b>${esc(rub(data.charge_total))}</b></div><div class="stat"><span>Остаток долга по записям периода</span><b>${esc(rub(data.debt_total))}</b></div><div class="stat"><span>Первоначально в долг</span><b>${esc(rub(data.debt_created_total))}</b></div><div class="stat"><span>Доплаты и погашение долга</span><b>${esc(rub(data.debt_payments_total))}</b></div></div>${note ? '<p class="small">Выручка — деньги, полученные в выбранный период. Начислено — стоимость процедур и продаж этого периода. Остаток долга показан на момент формирования отчёта. Доплаты и погашение долга входят в выручку по дате получения денег, даже если процедура была раньше.</p>' : ''}`;
@@ -342,7 +414,7 @@ function buildShiftPrintV5(data) {
   const first = Date.parse(a.at),second = Date.parse(b.at);
   return (Number.isFinite(first) ? first : Infinity) - (Number.isFinite(second) ? second : Infinity) || String(a.id || '').localeCompare(String(b.id || ''));
  });
- return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(shiftData.date || '')} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)} · доплат ${num((data.receipts || []).length)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))} · Москва${event.nurse ? ' · ' + esc(event.nurse) : ''}</p>${event.print_receipt ? financeReceiptHtmlV5(event) : financeEventDetailsHtmlV5(event) + financeEventPaymentHtmlV5(event)}${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol><footer><h2>Итоги смены</h2>${financeShiftBalanceHtmlV5(data)}${financeRevenueHtmlV5(data.revenue)}${(data.receipts || []).length ? `<p>Доплаты и погашение долга, включённые в полученную выручку: ${esc(rub((data.receipts || []).reduce((total,receipt) => total + num(receipt.paid_total),0)))}</p>` : ''}</footer>`;
+ return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(shiftData.date || '')} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)} · доплат ${num((data.receipts || []).length)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))} · Москва${event.nurse ? ' · ' + esc(event.nurse) : ''}</p>${event.print_receipt ? financeReceiptHtmlV5(event) : financeEventDetailsHtmlV5(event) + financeEventPaymentHtmlV5(event)}${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol><footer><h2>Итоги смены</h2>${financeShiftSummaryHtmlV16(data)}</footer>`;
 }
 function clearShiftPrintV5() {
  if (document.body?.classList) document.body.classList.remove('crm-shift-printing-v5');
@@ -382,8 +454,8 @@ function renderShiftReportV5(data, closed = false) {
  <div class="row">${(data.staff || []).map(s => `<span class="pill">${esc(s.full_name)}</span>`).join('')}</div>
  <div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>
  ${owner ? '<div class="no-print">' + financePaymentOnlyNoteV5(data) + '</div>' : ''}
- ${financeShiftBalanceHtmlV5(data)}${financeRevenueHtmlV5(data.revenue)}
- ${owner ? `<div class="card no-print"><div>Заработная плата: <b>${financePayrollTextV5(data)}</b></div><h2>Денежный остаток после выплаты зарплаты</h2><div class="money">${financeRemainingTextV5(data)}</div><p class="small">Выручка за вычетом зарплаты. Этот показатель не является прибылью.</p>${financePayrollNoteV5(data)}</div><h2>Зарплата сотрудников</h2>${(data.staff || []).map(s => `<details class="card salary-v5"><summary>${esc(s.full_name)} · ${s.amount == null ? 'Не задана' : rub(s.amount)}</summary><label for="salaryAmount5-${esc(s.id)}">Оплата за смену, ₽</label><input id="salaryAmount5-${esc(s.id)}" type="number" inputmode="decimal" min="0" step="0.01" value="${s.amount == null ? '' : num(s.amount)}"><label for="salaryReason5-${esc(s.id)}">Причина изменения *</label><input id="salaryReason5-${esc(s.id)}" value=""><p class="small">${s.amount == null ? 'Зарплата для этой смены не задана. Укажите сумму и причину.' : s.reason ? 'Последняя причина: ' + esc(s.reason) : 'Стандартная оплата: 2 000 ₽ за смену'}</p><button class="btn primary wide" onclick="saveSalaryV5('${esc(s.id)}')">Сохранить с указанием причины</button></details>`).join('')}` : ''}
+ ${financeShiftSummaryHtmlV16(data)}
+ ${owner ? `<h2 class="no-print">Изменить зарплату сотрудников</h2>${(data.staff || []).map(s => `<details class="card salary-v5"><summary>${esc(s.full_name)} · ${s.amount == null ? 'Не задана' : rub(s.amount)}</summary><label for="salaryAmount5-${esc(s.id)}">Оплата за смену, ₽</label><input id="salaryAmount5-${esc(s.id)}" type="number" inputmode="decimal" min="0" step="0.01" value="${s.amount == null ? '' : num(s.amount)}"><label for="salaryReason5-${esc(s.id)}">Причина изменения *</label><input id="salaryReason5-${esc(s.id)}" value=""><p class="small">${s.amount == null ? 'Зарплата для этой смены не задана. Укажите сумму и причину.' : s.reason ? 'Последняя причина: ' + esc(s.reason) : 'Стандартная оплата: 2 000 ₽ за смену'}</p><button class="btn primary wide" onclick="saveSalaryV5('${esc(s.id)}')">Сохранить с указанием причины</button></details>`).join('')}` : ''}
  ${owner ? `<div class="no-print report-warehouse-v5"><h2>Списано со склада</h2><div class="report-used">${financeMedicationUsageHtmlV5(used) || '<p class="small">Списаний нет.</p>'}</div>
  ${(data.untracked || []).length ? `<h2>Учтено без складского списания</h2><p class="small">Количество препаратов в процедурах и продажах по прайсу. Эти операции включены в выручку и не меняли остатки склада.</p><div class="report-untracked-v5">${financeMedicationUsageHtmlV5(data.untracked)}</div>` : ''}
  <details><summary>Остатки ${owner ? 'склада и рабочего шкафа' : 'рабочего шкафа'}</summary>${(data.stock || []).map(m => `<div class="item"><strong>${esc(m.name)}</strong><div>В работе: ${qty(m.work)} ${esc(m.unit)}${owner ? ' · запас: ' + qty(m.reserve) + ' ' + esc(m.unit) : ''}</div></div>`).join('') || '<p>Нет препаратов.</p>'}</details>
@@ -409,14 +481,17 @@ openReport = async function() { if (!shift?.id) { await openShiftMenu(); return;
 closeShift = async function() {
  if (financeBusy5 || !financeReportId5) return;
  financeBusy5 = true;
+ let committed = false;
+ const actor = currentStaff?.id;
  const button = $('report').querySelector('button[onclick="closeShift()"]'); if (button) button.disabled = true;
  try {
-  const actor = currentStaff?.id, id = financeReportId5, data = await crmFinanceRpcV5('close', {shift_id:id});
+  const id = financeReportId5, data = await crmFinanceRpcV5('close', {shift_id:id});
   if (currentStaff?.id !== actor) return;
+  committed = true;
   if (shift?.id === id) shift = null;
   renderShiftReportV5(data, true); await loadQuickContext();
   if (isManager()) await refreshOwnerDashboardV5();
- } catch (e) { $('reportBody').insertAdjacentHTML('afterbegin', `<div class="notice">${esc(e.message)}</div>`); }
+ } catch (e) { if (currentStaff?.id === actor) $('reportBody').insertAdjacentHTML('afterbegin', `<div class="notice">${esc(committed ? 'Смена закрыта. Не удалось обновить экран: ' + e.message : e.message)}</div>`); }
  finally { financeBusy5 = false; if (button) button.disabled = false; }
 };
 async function saveSalaryV5(staffId) {
@@ -588,6 +663,7 @@ signOut = async function() {
  financeAccountingMismatch5.proc = false; financeAccountingMismatch5.sale = false;
  for (const id of ['accountingModeBannerV5','procAccountingModeV5','saleAccountingModeV5']) if ($(id)) $(id).innerHTML = '';
  financeView5++; financeRequests5.clear(); financeSnapshots5.clear(); financeSnapshotFilters5.clear(); financeReportId5 = null;
+ financePendingTreatment16.proc = null; financePendingTreatment16.sale = null;
  for (const id of ['cashV5','reportsV5','analyticsV5']) setFinanceExportStateV5(id,false);
  for (const id of ['cashV5Body','reportsV5Body','analyticsV5Body','ownerDashboardV5','reportBody']) if ($(id)) $(id).innerHTML = '';
  financePaymentState5.proc = null; financePaymentState5.sale = null;

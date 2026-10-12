@@ -46,10 +46,11 @@ test('stale mode rejection and mode lookup failure preserve form and block unsaf
  c.modeError={message:'Нет ответа при проверке режима'};await assert.rejects(c.prepareTreatment4('sale','p1'),/проверке режима/);assert.equal(calls.filter(x=>x.name==='record_treatment_v5').length,1);
 });
 
-test('nurse own-shift report exposes receipts while payroll and warehouse remain private',()=>{
+test('nurse own-shift report exposes receipts and assigned-shift payroll while warehouse remains private',()=>{
  const {c,el}=harness();const r={shift:{date:'2026-10-09',status:'open'},staff:[{id:'n1',full_name:'Медсестра',amount:2000}],patients_count:1,procedures_count:1,sales_count:0,revenue:{total:7777,cash:7777},payroll_total:2000,cash_after_salary:5777,
   used:[],untracked:[{id:'m1',name:'Складская пометка',quantity:2,procedure_qty:2,sale_qty:0,unit:'амп.'}],warnings:[{type:'payment_only',count:1}],payment_only_procedures_count:1,payment_only_sales_count:0,stock:[{name:'Препарат',work:0,reserve:9999}],
   procedures:[{id:'p1',at:'2026-10-09T10:00:00Z',patient:'Пациент',type:'Услуга',stock_deducted:false,paid_total:7777,items:[{name:'<script>Препарат',quantity:2,line_total:7777}]}],sales:[]};
  c.renderShiftReportV5(r);const html=el('reportBody').innerHTML;assert.ok(!html.includes('Без списания со склада'));assert.ok(!html.includes('Складская пометка'));assert.ok(html.includes('7777'));assert.ok(html.includes('&lt;script&gt;'));assert.ok(!html.includes('<script>'));
- for(const secret of ['2000','5777','9999','Зарплата','запас:','В работе:'])assert.ok(!html.includes(secret),'Nurse report leaked '+secret);
+ for(const allowed of ['2000','5777','Зарплаты'])assert.ok(html.includes(allowed),'Assigned-shift payroll omitted '+allowed);
+ for(const secret of ['9999','запас:','В работе:'])assert.ok(!html.includes(secret),'Nurse report leaked '+secret);
 });

@@ -4,7 +4,7 @@ const root=path.resolve(__dirname,'..');
 async function boot(page){
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
-  window.requests=[];window.savedRequests={};window.transportAfterCommit=false;window.listFailures=0;window.staleNext=false;window.batchDelays={};window.deferCorrection=false;window.deletedData=[];window.deleteAfterCommit=false;window.staleDelete=false;window.deferDelete=false;
+  window.requests=[];window.savedRequests={};window.transportAfterCommit=0;window.listFailures=0;window.staleNext=false;window.batchDelays={};window.deferCorrection=false;window.deletedData=[];window.deleteAfterCommit=0;window.staleDelete=false;window.deferDelete=false;
   window.medData=[{id:'m1',name:'Самыр <img src=x onerror=alert(1)>',consumption_unit:'амп.',units_per_package:10,reserve_qty:20,work_qty:4,reserve_available:20,work_available:4,purchase_price:100,sale_price:20,manufacturer:'Производитель',release_form:'Раствор',comment:'Сохранить комментарий',dosage:'400 мг',manufacturer_country:'Италия',active:true},{id:'m2',name:'Препарат во флаконах',consumption_unit:'фл.',units_per_package:5,reserve_qty:9,work_qty:0,reserve_available:9,work_available:0,purchase_price:80,sale_price:25,active:true}];
   window.batchData={m1:[{id:'b1',batch_number:'A-1',expiry_date:'2099-01-01',received_date:'2026-10-01',quantity_remaining:14,work_quantity:4,quantity_received:14,purchase_price_per_unit:10},{id:'b2',batch_number:'A-2',expiry_date:'2099-02-01',received_date:'2026-10-01',quantity_remaining:10,work_quantity:0,quantity_received:10,purchase_price_per_unit:12}],m2:[{id:'b3',batch_number:'B-1',expiry_date:'2099-03-01',received_date:'2026-10-01',quantity_remaining:9,work_quantity:0,quantity_received:9,purchase_price_per_unit:16}]};
   const copy=value=>JSON.parse(JSON.stringify(value));
@@ -21,7 +21,7 @@ async function boot(page){
     const med=medData.find(m=>m.id===p.id);
     if(action==='preview')return {data:copy({id:med.id,name:med.name,unit:med.consumption_unit,active:med.active,reserve:med.reserve_qty,work:med.work_qty,total:med.reserve_qty+med.work_qty,expected_reserve:med.reserve_qty,expected_work:med.work_qty,history_preserved:true,restore_stock:0}),error:null};
     if(deferDelete){deferDelete=false;await new Promise(resolve=>{window.releaseDelete=resolve;});}
-    const existing=savedRequests[args.p_request_id];if(existing)return {data:copy(existing),error:null};
+    const existing=savedRequests[args.p_request_id];if(existing){if(deleteAfterCommit>0){deleteAfterCommit--;return {error:{message:'Failed to fetch'}};}return {data:copy(existing),error:null};}
     let result;
     if(action==='delete'){
      if(staleDelete){staleDelete=false;return {error:{code:'P0001',message:'Остаток уже изменился. Обновите данные и проверьте количество перед удалением'}};}
@@ -33,11 +33,11 @@ async function boot(page){
     }else if(action==='restore'){
      const entry=deletedData.find(d=>d.id===med.id);med.active=entry.previous_active;deletedData=deletedData.filter(d=>d.id!==med.id);result={id:med.id,name:med.name,restored:true,active:med.active,reserve:0,work:0,total:0};
     }
-    savedRequests[args.p_request_id]=copy(result);if(deleteAfterCommit){deleteAfterCommit=false;return {error:{message:'Failed to fetch'}};}return {data:copy(result),error:null};
+    savedRequests[args.p_request_id]=copy(result);if(deleteAfterCommit>0){deleteAfterCommit--;return {error:{message:'Failed to fetch'}};}return {data:copy(result),error:null};
    }
    if(name==='crm_stock_correction_v6'){
     if(deferCorrection){deferCorrection=false;await new Promise(resolve=>{window.releaseCorrection=resolve;});}
-    const existing=savedRequests[args.p_request_id];if(existing)return {data:copy(existing),error:null};
+    const existing=savedRequests[args.p_request_id];if(existing){if(transportAfterCommit>0){transportAfterCommit--;return {error:{message:'Failed to fetch'}};}return {data:copy(existing),error:null};}
     const med=medData.find(m=>m.id===p.id),batch=(batchData[p.id]||[]).find(b=>b.id===p.batch_id);
     if(staleNext){staleNext=false;return {error:{code:'P0001',message:'Остаток уже изменился. Обновите карточку и повторно пересчитайте препарат'}};}
     let result;
@@ -51,7 +51,7 @@ async function boot(page){
      med[p.location==='work'?'work_qty':'reserve_qty']+=difference;med[p.location==='work'?'work_available':'reserve_available']+=difference;
      result={id:p.id,batch_id:p.batch_id,before,quantity:p.actual_quantity,difference};
     }
-    savedRequests[args.p_request_id]=copy(result);if(transportAfterCommit){transportAfterCommit=false;return {error:{message:'Failed to fetch'}};}return {data:copy(result),error:null};
+    savedRequests[args.p_request_id]=copy(result);if(transportAfterCommit>0){transportAfterCommit--;return {error:{message:'Failed to fetch'}};}return {data:copy(result),error:null};
    }
    return {data:[],error:null};
   }};
@@ -91,9 +91,9 @@ test('owner can correct a batch balance including zero, or package size without 
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(errors).toEqual([]);
 });
 
-test('a response lost after commit is retried once with the same ID and unchanged draft',async({page})=>{
- const errors=await boot(page);await fillCorrection(page);await page.evaluate(()=>transportAfterCommit=true);await page.click('#stockCorrectionSaveV6');await expect(page.locator('#stockCorrectionMessageV6')).toContainText('Не получен ответ сервера');await expect(page.locator('#stockCorrectionActualV6')).toHaveValue('3');await expect(page.locator('#stockCorrectionReasonV6')).toHaveValue('Перепутала цифры');
- await page.click('#stockCorrectionSaveV6');await expect(page.locator('#stockCorrectionMessageV6')).toContainText('Исправление сохранено');const calls=await correctionCalls(page);expect(calls).toHaveLength(2);expect(calls[0].args).toEqual(calls[1].args);expect(await page.evaluate(()=>batchData.m1[0].quantity_remaining)).toBe(7);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
+test('two responses lost after commit recover manually with the same ID and unchanged draft',async({page})=>{
+ const errors=await boot(page);await fillCorrection(page);await page.evaluate(()=>transportAfterCommit=2);await page.click('#stockCorrectionSaveV6');await expect(page.locator('#stockCorrectionMessageV6')).toContainText('Ответ о сохранении не получен');await expect(page.locator('#stockCorrectionActualV6')).toHaveValue('3');await expect(page.locator('#stockCorrectionReasonV6')).toHaveValue('Перепутала цифры');
+ await page.click('#stockCorrectionSaveV6');await expect(page.locator('#stockCorrectionMessageV6')).toContainText('Исправление сохранено');const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[2].args);expect(await page.evaluate(()=>batchData.m1[0].quantity_remaining)).toBe(7);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
 });
 
 test('stale balance preserves the draft, offers a refresh, and requires recounting',async({page})=>{
@@ -195,10 +195,10 @@ test('deletion shows all counted stock and preserves history data; restoration r
  expect(errors).toEqual([]);
 });
 
-test('a lost delete response retries the original operation without removing stock twice',async({page})=>{
- const errors=await boot(page);await openDeletion(page);await page.check('#medicationDeleteConfirmV7');await page.evaluate(()=>deleteAfterCommit=true);await page.click('#medicationDeleteConfirmButtonV7');await expect(page.locator('#medicationDeleteMessageV7')).toContainText('Не получен ответ сервера');
+test('two lost delete responses retry the original operation without removing stock twice',async({page})=>{
+ const errors=await boot(page);await openDeletion(page);await page.check('#medicationDeleteConfirmV7');await page.evaluate(()=>deleteAfterCommit=2);await page.click('#medicationDeleteConfirmButtonV7');await expect(page.locator('#medicationDeleteMessageV7')).toContainText('Ответ о сохранении не получен');
  await expect(page.locator('#medicationDeleteReasonV7')).toHaveValue('Лишняя карточка / ошибка ввода');await page.click('#medicationDeleteConfirmButtonV7');await expect(page.locator('#warehouseMessage')).toContainText('удалён');
- const calls=await deletionCalls(page);expect(calls).toHaveLength(2);expect(calls[0].args).toEqual(calls[1].args);expect(await page.evaluate(()=>deletedData.length)).toBe(1);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
+ const calls=await deletionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[2].args);expect(await page.evaluate(()=>deletedData.length)).toBe(1);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
 });
 
 test('a committed deletion leaves the card hidden even if inventory refresh fails',async({page})=>{

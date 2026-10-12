@@ -1,5 +1,25 @@
 let quickContext={favorites:[],recent:[],shifts:[]},pendingAction=null,lastTemplate=null,quickBusy=false,patientView4=0,hintView4=0;
 let quickNavigation4=0;
+let quickTransferOperationV16=null,quickTransferStaleV16=false,quickTransferDraftV16=null,quickTransferWarehouseLockV16=null,quickTransferSessionV16=0;
+const quickTransferActorV16=()=>JSON.stringify([currentStaff?.id,currentStaff?.role,quickTransferSessionV16]);
+function quickTransferReleaseV16(draft){
+ if(quickTransferWarehouseLockV16!==draft)return;quickTransferWarehouseLockV16=null;
+ if(typeof setWarehouseBusy==='function'){setWarehouseBusy(false);if(typeof restoreFieldLocks==='function')restoreFieldLocks()}
+}
+function quickTransferPendingV16(){
+ if(quickTransferDraftV16&&quickTransferDraftV16.actor!==quickTransferActorV16()){
+  const old=quickTransferDraftV16;quickTransferDraftV16=null;quickTransferReleaseV16(old);
+  if(quickTransferOperationV16?.draft===old){quickTransferOperationV16=null;quickBusy=false}
+ }
+ return quickTransferDraftV16;
+}
+function quickTransferNoticeIdV16(){return $('procedure').classList.contains('active')?'procedureMessage':$('sale').classList.contains('active')?'saleMessage':'warehouseMessage'}
+function quickTransferPendingTextV16(draft){return `Ответ о переводе «${draft.name}» (${qty(draft.payload.quantity)} ${draft.unit}) не получен. Повторите исходный перевод, чтобы проверить результат. Другое пополнение будет доступно после подтверждения.`}
+function quickTransferPendingNoticeV16(draft){
+ const target=quickTransferNoticeIdV16();message(target,quickTransferPendingTextV16(draft));
+ $(target).insertAdjacentHTML('beforeend','<button type="button" class="btn secondary wide" onclick="retryQuickTransferV16()">Повторить исходный перевод</button>');
+}
+function retryQuickTransferV16(){const draft=quickTransferPendingV16();if(draft)return quickTransfer4(draft.payload.id,draft.payload.quantity)}
 function beginQuickNavigation4(){pendingAction=null;return ++quickNavigation4}
 function quickNavigationCurrent4(version,staffId=currentStaff?.id){return version===quickNavigation4&&!!staffId&&currentStaff?.id===staffId}
 document.addEventListener('click',event=>{const button=event.target.closest?.('button[onclick]');if(button&&/^show\(['"]/.test(button.getAttribute('onclick')||''))beginQuickNavigation4()},true);
@@ -20,7 +40,7 @@ enterApp=async function(user){
   const own=quickContext.shifts.find(s=>(s.staff||[]).some(n=>n.id===currentStaff.id));if(own)assignShift(own);
  }catch(e){message('homeMessage',e.message)}if(navigation===quickNavigation4)show('workspace');
 };
-signOut=async function(){beginQuickNavigation4();await originalSignOut4();quickContext={favorites:[],recent:[],shifts:[]};lastTemplate=null;pendingAction=null;patients=[];$('homeNav').classList.add('hidden');$('accountMenu').classList.add('hidden')};
+signOut=async function(){beginQuickNavigation4();++quickTransferSessionV16;if(quickTransferWarehouseLockV16)quickTransferReleaseV16(quickTransferWarehouseLockV16);quickTransferDraftV16=null;quickTransferOperationV16=null;quickTransferStaleV16=false;quickBusy=false;await originalSignOut4();quickContext={favorites:[],recent:[],shifts:[]};lastTemplate=null;pendingAction=null;patients=[];$('homeNav').classList.add('hidden');$('accountMenu').classList.add('hidden')};
 async function goPatients(){await loadPatients();show('patients')}
 function goNewPatient(){show('newPatient');$('pname').focus()}
 const originalAddPatient4=addPatient;let patientSaving4=false;
@@ -31,7 +51,7 @@ async function openStock(){const navigation=beginQuickNavigation4(),actor=curren
 function renderWorkStock(){
  const q=$('workSearch').value,paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5();
  const list=meds.filter(m=>matchesMedication(m,q));$('workStock').querySelector('h1').textContent=paymentOnly?'Прайс препаратов':'Препараты в работе';
- const cards=list.map(m=>`<div class="item inventory-heading">${medPhotoHtml(m,'stock-photo')}<div><strong>${esc(m.name)}</strong><div>${esc(m.dosage||'')}</div><b>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))}</b><div class="small">${paymentOnly?'Учёт оплаты без складского списания':num(m.work_qty)>0?'В рабочем шкафу':'Нет в рабочем шкафу — обратитесь к администратору'}</div></div></div>`).join('')||'<p>Препараты не найдены.</p>';
+ const cards=list.map(m=>`<div class="item inventory-heading ${medicationOriginClassV21(m)}">${medPhotoHtml(m,'stock-photo')}<div><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)}<div>${esc(m.dosage||'')}</div><b>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))}</b><div class="small">${paymentOnly?'Учёт оплаты без складского списания':num(m.work_qty)>0?'В рабочем шкафу':'Нет в рабочем шкафу — обратитесь к администратору'}</div></div></div>`).join('')||'<p>Препараты не найдены.</p>';
  $('workStockList').innerHTML=(paymentOnly?'<div class="notice accounting-mode-v5">Оплата учитывается по прайсу. Количество на складе не ограничивает запись и не меняется.</div>':'')+cards;
 }
 async function openShiftMenu(navigation=null,forTreatment=false){
@@ -59,15 +79,15 @@ filterMedicationRows=function(target,q){renderMedVisualCatalog(target,q)};
 renderMedVisualCatalog=function(target,q=''){
  const panel=$(target==='procMeds'?'procPhotoCatalog':'salePhotoCatalog'),favorites=new Set(quickContext.favorites||[]),paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(target==='procMeds'?'proc':'sale');const matches=sortedCatalog4(meds.filter(m=>matchesMedication(m,q)));let group='';
  panel.innerHTML=matches.slice(0,q?40:12).map(m=>{const g=favorites.has(m.id)?'⭐ Избранные':(quickContext.recent||[]).some(x=>x.id===m.id)?'Недавно использовали':'Препараты';const heading=!q&&g!==group?`<h3 class="catalog-group">${g}</h3>`:'';group=g;
- return `${heading}<div class="med-tile ${(!paymentOnly&&num(m.work_qty)<=0)||(paymentOnly&&num(m.sale_price)<=0)?'empty':''}"><button class="favorite-toggle" aria-label="${favorites.has(m.id)?'Убрать из избранного':'В избранное'}: ${esc(m.name)}" aria-pressed="${favorites.has(m.id)}" onclick="toggleFavorite4('${m.id}','${target}')">${favorites.has(m.id)?'★':'☆'}</button><button class="photo-choice" onclick="chooseMedication('${target}','${m.id}')">${medPhotoHtml(m)}<span><strong>${esc(m.name)}</strong><small>${esc(m.dosage||m.search_name||'')}</small><small>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))+' в шкафу'}</small></span></button></div>`;
+ return `${heading}<div class="med-tile ${medicationOriginClassV21(m)} ${(!paymentOnly&&num(m.work_qty)<=0)||(paymentOnly&&num(m.sale_price)<=0)?'empty':''}"><button class="favorite-toggle" aria-label="${favorites.has(m.id)?'Убрать из избранного':'В избранное'}: ${esc(m.name)}" aria-pressed="${favorites.has(m.id)}" onclick="toggleFavorite4('${m.id}','${target}')">${favorites.has(m.id)?'★':'☆'}</button><button class="photo-choice" onclick="chooseMedication('${target}','${m.id}')">${medPhotoHtml(m)}<span><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)}<small>${esc(m.dosage||m.search_name||'')}</small><small>${paymentOnly?(num(m.sale_price)>0?rub(m.sale_price)+' / '+esc(unit(m)):'Цена не задана'):qty(m.work_qty)+' '+esc(unit(m))+' в шкафу'}</small></span></button></div>`;
  }).join('')||'<p class="catalog-group">Не найдено. Попробуйте название, дозировку или категорию.</p>';
  if(!q&&matches.length>12)panel.innerHTML+='<p class="catalog-group small">Остальные препараты найдутся через поиск.</p>';
 };
 async function toggleFavorite4(id,target){if(quickBusy)return;quickBusy=true;try{const selected=!(quickContext.favorites||[]).includes(id);await quickRpc('favorite',{id,selected});quickContext.favorites=selected?[...quickContext.favorites,id]:quickContext.favorites.filter(x=>x!==id);renderMedVisualCatalog(target,$(target==='procMeds'?'procMedSearch':'saleMedSearch').value)}catch(e){message(target==='procMeds'?'procedureMessage':'saleMessage',e.message)}finally{quickBusy=false}}
 addMedRow=function(target,id='',amount=1,fallback=null){
  const m=meds.find(x=>x.id===id)||fallback;if(!m)return;
- const d=document.createElement('div');d.className='medrow';d.dataset.medicationId=id;
- d.innerHTML=`<div class="medphoto">${medPhotoHtml(m)}</div><div class="chosen-name"><strong>${esc(m.name)}</strong><small>${esc(m.dosage||'')} · ${esc(unit(m))}</small><small class="stock-hint"></small></div><select class="medsel" aria-label="Препарат"><option value="${esc(id)}" selected>${esc(m.name)}</option></select><input class="medqty" aria-label="Количество: ${esc(m.name)}" type="number" inputmode="numeric" min="1" step="1" value="${Number(amount)}" oninput="recalc()"><button class="btn danger" aria-label="Убрать: ${esc(m.name)}" onclick="this.parentElement.remove();recalc()">×</button>`;
+ const d=document.createElement('div');d.className='medrow '+medicationOriginClassV21(m);d.dataset.medicationId=id;
+ d.innerHTML=`<div class="medphoto">${medPhotoHtml(m)}</div><div class="chosen-name"><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)}<small>${esc(m.dosage||'')} · ${esc(unit(m))}</small><small class="stock-hint"></small></div><select class="medsel" aria-label="Препарат"><option value="${esc(id)}" selected>${esc(m.name)}</option></select><input class="medqty" aria-label="Количество: ${esc(m.name)}" type="number" inputmode="numeric" min="1" step="1" value="${Number(amount)}" oninput="recalc()"><button class="btn danger" aria-label="Убрать: ${esc(m.name)}" onclick="this.parentElement.remove();recalc()">×</button>`;
  $(target).appendChild(d);recalc();
 };
 chooseMedication=function(target,id){const row=[...$(target).querySelectorAll('.medrow')].find(r=>r.dataset.medicationId===id);if(row)row.querySelector('.medqty').value=num(row.querySelector('.medqty').value)+1;else addMedRow(target,id);recalc()};
@@ -121,22 +141,58 @@ async function repeatLast4(id,navigation=null){
  }catch(e){message('procedureMessage',e.message)}
 }
 async function quickTransfer4(id,quantity){
- if(quickBusy||!isManager())return;quickBusy=true;try{await warehouseRpc('transfer',{id,quantity,comment:'Быстрое пополнение рабочего шкафа'},true);await Promise.all([loadInventory(),loadMeds()]);
+ let draft=quickTransferPendingV16();
+ if(quickBusy||warehouseBusy&&!quickTransferWarehouseLockV16||typeof stockDraftV16!=='undefined'&&stockDraftV16||typeof medicationDraftV16!=='undefined'&&medicationDraftV16||!isManager())return;
+ if(draft&&(draft.payload.id!==id||draft.payload.quantity!==Number(quantity))){quickTransferPendingNoticeV16(draft);return;}
+ if(quickTransferStaleV16){message(quickTransferNoticeIdV16(),'Предыдущий перевод сохранён. Обновите остатки перед следующим переводом.');return;}
+ if(!draft){
+  const amount=Number(quantity);if(!id||!Number.isSafeInteger(amount)||amount<1){message(quickTransferNoticeIdV16(),'Укажите препарат и целое количество от 1.');return;}
+  const medication=inventory.find(item=>item.id===id)||meds.find(item=>item.id===id);
+  draft={actor:quickTransferActorV16(),requestId:crypto.randomUUID(),payload:Object.freeze({id,quantity:amount,comment:'Быстрое пополнение рабочего шкафа'}),name:medication?.name||'Препарат',unit:unit(medication),uncertain:false};quickTransferDraftV16=draft;
+ }
+ const navigation=quickNavigation4,actor=currentStaff?.id,operation={actor:draft.actor,draft};quickTransferOperationV16=operation;quickBusy=true;quickTransferWarehouseLockV16=draft;
+ if(typeof setWarehouseBusy==='function')setWarehouseBusy(true);
+ let saved=false;
+ const sameActor=()=>draft.actor===quickTransferActorV16()&&isManager(),current=()=>quickTransferOperationV16===operation&&sameActor()&&quickNavigationCurrent4(navigation,actor);
+ try{
+ // Keep this receipt even when the transport returns a malformed acknowledgement.
+ const response=await db.rpc('warehouse_v5',{p_action:'transfer',p_payload:draft.payload,p_request_id:draft.requestId});
+ if(!sameActor()||quickTransferOperationV16!==operation)return;
+ if(response?.error){const failure=Error(response.error.message||'Ответ о переводе не получен');Object.assign(failure,response.error,{status:response.status||response.error.status||0});throw failure;}
+ const result=response?.data;
+ if(!result||typeof result!=='object'||Array.isArray(result)||result.quantity===null||result.quantity===undefined||Number(result.quantity)!==draft.payload.quantity){const error=Error('Ответ о переводе не получен');error.uncertain=true;throw error;}
+ saved=true;if(quickTransferDraftV16===draft)quickTransferDraftV16=null;quickTransferReleaseV16(draft);quickTransferStaleV16=true;
+ if(!current())return;
+ const refreshed=await Promise.allSettled([loadInventory(),loadMeds()]);if(!current())return;
+ const refreshFailed=refreshed.some(result=>result.status==='rejected'||result.value===false);quickTransferStaleV16=refreshFailed;
  const prefix=$('procedure').classList.contains('active')?'proc':$('sale').classList.contains('active')?'sale':null,paid=prefix?$(prefix+'Paid').value:null;
  recalc();if(prefix){$(prefix+'Paid').value=paid;prefix==='proc'?calcProcedure(false):calcSale(false);renderMedVisualCatalog(prefix+'Meds',$(prefix+'MedSearch').value)}
- message(prefix==='proc'?'procedureMessage':prefix==='sale'?'saleMessage':'warehouseMessage','Рабочий шкаф пополнен.',true)}catch(e){const active=$('procedure').classList.contains('active')?'procedureMessage':$('sale').classList.contains('active')?'saleMessage':'warehouseMessage';message(active,e.message)}finally{quickBusy=false}
+ message(prefix==='proc'?'procedureMessage':prefix==='sale'?'saleMessage':'warehouseMessage',refreshFailed?'Перевод сохранён. Остатки пока не обновились. Обновите их перед следующим переводом.':'Рабочий шкаф пополнен.',true)
+ }catch(e){
+  if(sameActor()&&quickTransferOperationV16===operation){
+   const definitive=!draft.uncertain&&!e.uncertain&&(e.definitive===true||(typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(e,e.status):!/^08|^57P0[123]$/.test(e.code||'')&&/^[0-9A-Z]{5}$/.test(e.code||'')));
+   if(saved){quickTransferStaleV16=true;if(current())message(quickTransferNoticeIdV16(),'Перевод сохранён. Не удалось обновить экран. Обновите остатки.',true)}
+   else if(definitive){if(quickTransferDraftV16===draft)quickTransferDraftV16=null;quickTransferReleaseV16(draft);if(current())message(quickTransferNoticeIdV16(),e.message)}
+   else{draft.uncertain=true;if(current())quickTransferPendingNoticeV16(draft)}
+  }
+ }finally{
+  if(!sameActor())quickTransferPendingV16();
+  if(quickTransferOperationV16===operation){quickTransferOperationV16=null;quickBusy=false}
+ }
 }
+const quickLoadInventoryV16=loadInventory;
+loadInventory=async function(...args){const loaded=await quickLoadInventoryV16(...args);if(loaded)quickTransferStaleV16=false;return loaded};
 const originalRenderInventory4=renderInventory;
-renderInventory=function(){originalRenderInventory4();$('inventoryNudges').innerHTML=inventory.filter(m=>m.active!==false&&num(m.work_available??m.work_qty)<num(m.work_threshold)&&num(m.reserve_available??m.reserve_qty)>=packSize(m)).slice(0,5).map(m=>`<div class="quick-alert"><strong>${esc(m.name)}</strong> · в шкафу ${qty(m.work_available??m.work_qty)} ${esc(unit(m))}<button class="btn primary wide" onclick="quickTransfer4('${m.id}',${packSize(m)})">Перевести 1 упаковку (${qty(packSize(m))} ${esc(unit(m))})</button></div>`).join('')};
+renderInventory=function(){originalRenderInventory4();const draft=quickTransferPendingV16();$('inventoryNudges').innerHTML=(draft?.uncertain?`<div class="notice">${esc(quickTransferPendingTextV16(draft))}<button type="button" class="btn secondary wide" onclick="retryQuickTransferV16()">Повторить исходный перевод</button></div>`:'')+inventory.filter(m=>m.active!==false&&num(m.work_available??m.work_qty)<num(m.work_threshold)&&num(m.reserve_available??m.reserve_qty)>=packSize(m)).slice(0,5).map(m=>`<div class="quick-alert"><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)} · в шкафу ${qty(m.work_available??m.work_qty)} ${esc(unit(m))}<button class="btn primary wide" onclick="quickTransfer4('${m.id}',${packSize(m)})">Перевести 1 упаковку (${qty(packSize(m))} ${esc(unit(m))})</button></div>`).join('')};
 const originalOpenMedForm4=openMedForm;
-openMedForm=function(id='',focus=''){originalOpenMedForm4(id,focus);$('medDetails').open=!id||focus==='prices';if(id&&!focus)$('openingPanel').open=stockFacts(inventory.find(m=>m.id===id)).total===0};
+openMedForm=function(id='',focus=''){if(typeof warehouseResumeV16==='function'&&warehouseResumeV16())return false;originalOpenMedForm4(id,focus);$('medDetails').open=!id||focus==='prices';if(id&&!focus)$('openingPanel').open=stockFacts(inventory.find(m=>m.id===id)).total===0};
 const originalStockCells4=stockCells;
 stockCells=function(m){const days=expiryDays(m.nearest_expiry);return originalStockCells4(m)+(days!==null&&days<=30?`<div class="notice">${days<0?'Есть партия с истёкшим сроком. Проверьте партии и оформите списание.':`Ближайший срок годности — через ${days} дн. При расходе программа выберет эту годную партию первой.`}</div>`:'')};
 let photosLoadedAt4=0;const originalSignPhotos4=signMedicationPhotos;
 signMedicationPhotos=async function(items){if(Date.now()-photosLoadedAt4>20*60*1000){medPhotoUrls.clear();photosLoadedAt4=Date.now()}await originalSignPhotos4(items)};
 let reportId4=null;
 function renderReport4(data,closed=false){
- const used=data.used||[];$('reportBody').innerHTML=`${closed?'<div class="notice success">Смена закрыта. Итог сохранён.</div>':''}<p class="small">${esc(data.shift?.date||'')} · ${esc(shiftLabel(data.shift?.started_at,data.shift?.ended_at||data.shift?.planned_end_at))}</p><div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Оплачено<b>${rub(data.cash_total)}</b></div></div><h2>Списано препаратов</h2><div class="report-used">${used.map(m=>`<div class="item"><div><strong>${esc(m.name)}</strong><div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('')||'<p>Списаний нет.</p>'}</div><details><summary>По сотрудникам</summary>${(data.by_nurse||[]).map(n=>`<div class="item"><strong>${esc(n.nurse)}</strong> · ${num(n.procedures_count)} процедур · ${rub(n.total)}</div>`).join('')}</details><details><summary>Все операции</summary>${[...(data.procedures||[]).map(x=>({...x,kind:'Процедура'})),...(data.sales||[]).map(x=>({...x,kind:'Продажа'}))].sort((a,b)=>new Date(a.at)-new Date(b.at)).map(x=>`<div class="item"><strong>${x.kind}: ${esc(x.patient||'Без пациента')}</strong><div>${esc(x.type||'')} · ${rub(x.paid)}</div><div class="small">${esc(x.nurse||'')} · ${(x.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)}`).join(', ')}</div></div>`).join('')||'<p>Операций нет.</p>'}</details>`;
+ const used=data.used||[];$('reportBody').innerHTML=`${closed?'<div class="notice success">Смена закрыта. Итог сохранён.</div>':''}<p class="small">${esc(data.shift?.date||'')} · ${esc(shiftLabel(data.shift?.started_at,data.shift?.ended_at||data.shift?.planned_end_at))}</p><div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Оплачено<b>${rub(data.cash_total)}</b></div></div><h2>Списано препаратов</h2><div class="report-used">${used.map(m=>`<div class="item"><div><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)}<div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('')||'<p>Списаний нет.</p>'}</div><details><summary>По сотрудникам</summary>${(data.by_nurse||[]).map(n=>`<div class="item"><strong>${esc(n.nurse)}</strong> · ${num(n.procedures_count)} процедур · ${rub(n.total)}</div>`).join('')}</details><details><summary>Все операции</summary>${[...(data.procedures||[]).map(x=>({...x,kind:'Процедура'})),...(data.sales||[]).map(x=>({...x,kind:'Продажа'}))].sort((a,b)=>new Date(a.at)-new Date(b.at)).map(x=>`<div class="item"><strong>${x.kind}: ${esc(x.patient||'Без пациента')}</strong><div>${esc(x.type||'')} · ${rub(x.paid)}</div><div class="small">${esc(x.nurse||'')} · ${(x.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)}`).join(', ')}</div></div>`).join('')||'<p>Операций нет.</p>'}</details>`;
  $('report').querySelector('button[onclick="closeShift()"]').classList.toggle('hidden',closed||data.shift?.status!=='open');show('report');
 }
 openReport=async function(){try{if(!shift){await openShiftMenu();return}reportId4=shift.id;const r=await quickRpc('report',{shift_id:reportId4});renderReport4(r)}catch(e){message('homeMessage',e.message)}};

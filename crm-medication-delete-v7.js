@@ -10,9 +10,11 @@
    if(write&&!requests.has(key))requests.set(key,uuid());
    const requestId=write?requests.get(key):null;
    const forget=()=>{if(requests.get(key)===requestId)requests.delete(key);};
-   let result;try{result=await rpc('crm_medication_delete_v7',{p_action:action,p_payload:payload,p_request_id:requestId});}catch(error){throw Error(describe(error));}
-   if(result.error){if(write&&/^[0-9A-Z]{5}$/.test(result.error.code||''))forget();const error=Error(describe(result.error));error.code=result.error.code;throw error;}
-   if(write)forget();return result.data;
+   let result;try{result=await rpc('crm_medication_delete_v7',{p_action:action,p_payload:payload,p_request_id:requestId});}catch(error){const failure=Error(describe(error));Object.assign(failure,error,{message:describe(error)});throw failure;}
+   if(result?.error){if(write&&(typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(result.error,result.status):!result.error.uncertain&&!/^08/.test(result.error.code||'')&&/^[0-9A-Z]{5}$/.test(result.error.code||'')))forget();const error=Error(describe(result.error));Object.assign(error,result.error,{message:describe(result.error)});throw error;}
+   const data=result?.data,valid=action==='list_deleted'?Array.isArray(data):!!data&&typeof data==='object'&&!Array.isArray(data)&&(!write||(action==='delete'?data.deleted===true:data.restored===true));
+   if(!valid){const error=Error(write?lost:'Не удалось загрузить данные. Повторите загрузку.');error.uncertain=write;throw error;}
+   if(write)forget();return data;
   };
   send.clear=()=>requests.clear();return send;
  }
@@ -78,7 +80,7 @@
   get('medicationDeleteReloadV7').classList.add('hidden');status('');
  }
  const previousOpen=openMedForm;
- openMedForm=function(id='',focus=''){
+ openMedForm=function(id='',focus=''){if(typeof warehouseResumeV16==='function'&&warehouseResumeV16())return false;
   if(!isManager()||warehouseBusy)return;const m=inventory.find(item=>item.id===id);if(id&&!m)return;
   ++generation;ensureUi();previousOpen(id,focus);if(get('medId')?.value===id){resetCard(id);if(id&&focus==='delete')beginDelete();}
  };
@@ -115,13 +117,20 @@
   try{requireOwner();payload=deletePayload(preview,get('medicationDeleteReasonV7')?.value);if(payload.id!==get('medId')?.value)throw Error('Откройте выбранный препарат заново');if(!get('medicationDeleteConfirmV7').checked)throw Error('Проверьте количество и отметьте подтверждение');}
   catch(error){if(isManager())status(error.message);else message('homeMessage',error.message);return;}
   const operation=capture(payload.id);busyOperation=operation;setWarehouseBusy(true);get('medicationDeleteReasonV7').disabled=true;status('Удаляем препарат…');
+  let saved=false;
   try{
    const result=await request('delete',payload,true);if(!sameCard(operation))return;
+   saved=true;
    // Clear committed inputs before refreshing, so failed reads cannot repeat stock removal.
    resetCard('');inventory=inventory.filter(item=>item.id!==payload.id);meds=meds.filter(item=>item.id!==payload.id);get('medId').value='';renderInventory();show('admin');
    const loaded=await refreshInventory(operation);if(!sameOwner(operation))return;
    message('warehouseMessage',`Препарат «${result?.name||get('medFormTitle').textContent}» удалён. История сохранена. Карточку можно вернуть через «Удалённые препараты».`+(loaded?'':' Остатки на сервере не удалось обновить. Нажмите «Обновить остатки».'),true);
-  }catch(error){if(sameCard(operation)){status(error.message);if(/уже изменил|изменились|изменился|обновите/i.test(error.message))get('medicationDeleteReloadV7').classList.remove('hidden');}}
+  }catch(error){
+   if(saved&&sameOwner(operation)){
+    preview=null;if(get('medicationDeleteConfirmV7'))get('medicationDeleteConfirmV7').checked=false;if(get('medId'))get('medId').value='';
+    message('warehouseMessage','Препарат удалён. История сохранена. Не удалось обновить экран; обновите остатки.',true);
+   }else if(sameCard(operation)){status(error.message);if(/уже изменил|изменились|изменился|обновите/i.test(error.message))get('medicationDeleteReloadV7').classList.remove('hidden');}
+  }
   finally{finishBusy(operation);}
  }
  async function openDeleted(){
@@ -135,13 +144,15 @@
  async function restoreMedication(id){
   if(warehouseBusy)return;try{requireOwner();if(!list.some(item=>item.id===id))throw Error('Обновите список удалённых препаратов');}catch(error){message('homeMessage',error.message);return;}
   const operation=capture(id);busyOperation=operation;setWarehouseBusy(true);get('medicationDeletedV7').querySelectorAll('button').forEach(button=>button.disabled=true);message('medicationDeletedMessageV7','Возвращаем карточку…');
+  let saved=false;
   try{
    const result=await request('restore',{id,reason:'Восстановление удалённой карточки владельцем'},true);if(!sameOwner(operation))return;
+   saved=true;
    list=list.filter(item=>item.id!==id);get('medicationDeletedListV7').querySelectorAll('[data-restore-id]').forEach(button=>{if(button.dataset.restoreId===id)button.closest('article').remove();});
    const loaded=await refreshInventory(operation);if(!sameOwner(operation))return;finishBusy(operation);if(!sameDeletedScreen(operation))return;
    if(loaded&&inventory.some(item=>item.id===id)){openMedForm(id,'edit');medPhotoMessage.textContent='Карточка восстановлена'+(result?.active===false?' в архив':'')+'. Остаток: 0. Пересчитайте препарат перед внесением остатка.';}
    else message('medicationDeletedMessageV7','Карточка восстановлена. Остаток: 0. Обновите склад, чтобы открыть её.',true);
-  }catch(error){if(sameOwner(operation))message('medicationDeletedMessageV7',error.message);}
+  }catch(error){if(sameOwner(operation)){if(saved)list=list.filter(item=>item.id!==id);message('medicationDeletedMessageV7',saved?'Карточка восстановлена. Остаток: 0. Не удалось обновить экран; обновите склад.':error.message,saved);}}
   finally{finishBusy(operation);}
  }
  root.beginMedicationDeleteV7=beginDelete;root.confirmMedicationDeleteV7=confirmDelete;root.openDeletedMedicationsV7=openDeleted;root.restoreMedicationV7=restoreMedication;

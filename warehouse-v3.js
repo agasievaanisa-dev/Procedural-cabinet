@@ -1,6 +1,45 @@
 /* Stock quantities are always consumption units; package counts are display-only. */
 const stockRequests=new Map();
 let warehouseBusy=false, warehouseLoad=0, medView=0;
+let warehouseSessionV16=0,medicationDraftV16=null,stockDraftV16=null,warehouseOperationV16=null;
+const warehouseActorV16=()=>JSON.stringify([currentStaff?.id,currentStaff?.role,warehouseSessionV16]);
+function warehouseSameActorV16(actor){return isManager()&&actor===warehouseActorV16()}
+function warehouseCardCurrentV16(operation){return warehouseSameActorV16(operation.actor)&&operation.view===medView&&$('medForm')?.classList.contains('active')&&(operation.navigation===null||operation.navigation===quickNavigation4)}
+function warehouseCaptureV16(draft){return {draft,actor:draft.actor,view:medView,navigation:typeof quickNavigation4==='undefined'?null:quickNavigation4}}
+function warehouseFinishV16(operation){if(warehouseOperationV16!==operation)return;warehouseOperationV16=null;setWarehouseBusy(false);restoreFieldLocks()}
+function warehouseFrozenPayloadV16(action,payload){
+  const operation=warehouseOperationV16;
+  return operation?.draft.action===action&&payload.id===operation.draft.payload.id&&warehouseSameActorV16(operation.actor)?operation.draft.payload:payload;
+}
+function warehousePayloadV16(action,payload){return typeof warehouseExtraPayloadV5==='function'?warehouseExtraPayloadV5(action,payload,true):{...payload}}
+function medicationPhotoFinishControlV16(){
+  let button=$('medFinishPhotoV16');
+  if(!button&&medicationDraftV16?.result){button=document.createElement('button');button.id='medFinishPhotoV16';button.type='button';button.className='btn secondary wide';button.textContent='Завершить сохранение карточки';button.onclick=finishMedicationPhotoV16;$('medSaveButton').after(button)}
+  if(button){button.classList.toggle('hidden',!medicationDraftV16?.result||!!medicationDraftV16?.photoAttached);button.disabled=warehouseBusy}
+}
+function finishMedicationPhotoV16(){
+  if(warehouseBusy||!medicationDraftV16?.result||!warehouseSameActorV16(medicationDraftV16.actor))return;
+  const id=medicationDraftV16.result.id;medicationDraftV16=null;medPhoto.value='';
+  setWarehouseBusy(false);restoreFieldLocks();openMedForm(id);
+  medPhotoMessage.textContent='Карточка и цены сохранены. Фото можно добавить позже.';
+}
+function warehouseDraftControlsV16(){
+  medicationPhotoFinishControlV16();
+  const draft=medicationDraftV16||stockDraftV16;if(!draft||!warehouseSameActorV16(draft.actor)||warehouseBusy)return;
+  $('medForm')?.querySelectorAll('input,select,textarea,button').forEach(el=>{
+    const action=el.getAttribute?.('onclick')||'';
+    const retry=medicationDraftV16?el.id==='medSaveButton'||el.id==='medFinishPhotoV16'&&!!draft.result:action===({receive:'receiveStock()',opening:'saveOpeningStock()',transfer:'transferToWork()',return:'returnToReserve()',writeoff:'writeOffStock()',archive:'archiveMedication()',restore:'archiveMedication()'}[draft.action]);
+    el.disabled=!retry&&!/^(?:show|openStock)\(/.test(action);
+  });
+  if(medicationDraftV16)$('medSaveButton').textContent=draft.result?'Повторить сохранение фото':'Повторить сохранение карточки';
+}
+function warehouseResumeV16(){
+  const draft=medicationDraftV16||stockDraftV16;if(!draft||!warehouseSameActorV16(draft.actor))return false;
+  show('medForm');warehouseDraftControlsV16();
+  if(medicationDraftV16)medPhotoMessage.textContent=draft.result?'Карточка и цены уже сохранены. Нажмите «Повторить сохранение фото».':'Ответ о сохранении не получен. Нажмите «Повторить сохранение карточки» — новая карточка не продублируется.';
+  else message('stockOperationMessage','Ответ о сохранении не получен. Повторите ту же операцию — количество не добавится дважды.');
+  return true;
+}
 const qty=v=>new Intl.NumberFormat('ru-RU',{maximumFractionDigits:4}).format(Number(v)||0);
 const unit=m=>({ampoule:'амп.',vial:'фл.',tablet:'таб.'}[m?.consumption_unit]||m?.consumption_unit||'ед.');
 function packSize(m){const n=Number(m?.units_per_package);return Number.isFinite(n)&&n>=1?n:1}
@@ -23,30 +62,41 @@ function focusMedicationPrices(){
 function message(id,text,success=false){$(id).innerHTML=text?`<div class="notice${success?' success':''}">${esc(text)}</div>`:''}
 async function warehouseRpc(action,payload={},write=false){
   if(!isManager())throw new Error('Нет доступа к складу');
-  const key=JSON.stringify([action,payload]);
+  const actor=warehouseActorV16();payload=warehouseFrozenPayloadV16(action,payload);
+  const key=JSON.stringify([actor,action,payload]);
   if(write&&!stockRequests.has(key))stockRequests.set(key,crypto.randomUUID());
-  const {data,error}=await db.rpc('warehouse_v5',{p_action:action,p_payload:payload,p_request_id:write?stockRequests.get(key):null});
-  if(error){
-    // An explicit PostgreSQL error means rollback. Keep IDs on transport errors,
-    // where the request may have committed before the response was lost.
-    if(write&&/^[0-9A-Z]{5}$/.test(error.code||''))stockRequests.delete(key);
-    throw new Error(error.message||'Не удалось выполнить операцию. Проверьте соединение и повторите.');
+  const requestId=write?stockRequests.get(key):null;
+  let response;
+  try{response=await db.rpc('warehouse_v5',{p_action:action,p_payload:payload,p_request_id:requestId})}
+  catch(error){response={error}}
+  if(!warehouseSameActorV16(actor))throw new Error('Учётная запись изменилась. Откройте препараты заново.');
+  const {data,error}=response||{};
+  if(error||!response){
+    const definitive=typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(error,response?.status):!error?.uncertain&&!/^08/.test(error?.code||'')&&/^[0-9A-Z]{5}$/.test(error?.code||'');
+    if(write&&definitive&&stockRequests.get(key)===requestId)stockRequests.delete(key);
+    const failure=new Error(definitive?(error?.message||'Не удалось выполнить операцию.'):'Ответ сервера не получен. Повторите сохранение — операция не продублируется.');
+    failure.code=error?.code;failure.status=error?.status||response?.status;failure.uncertain=error?.uncertain;failure.definitive=definitive;throw failure;
   }
-  if(write)stockRequests.delete(key);
+  if(write&&(!data||typeof data!=='object'||action==='save'&&!data.id)){const failure=Error('Ответ о сохранении не получен. Повторите сохранение — операция не продублируется.');failure.uncertain=true;throw failure}
+  if(write&&stockRequests.get(key)===requestId)stockRequests.delete(key);
   return data;
 }
 async function loadInventory(){
   if(!isManager())return false;
-  const version=++warehouseLoad;
+  const version=++warehouseLoad,actor=warehouseActorV16();
   message('warehouseMessage','Загружаем остатки…');
   try{
     const data=await warehouseRpc('list');
-    if(version!==warehouseLoad||!isManager())return false;
-    inventory=data||[];await signMedicationPhotos(inventory);
-    if(version!==warehouseLoad||!isManager())return false;
-    renderInventory();message('warehouseMessage','');return true;
-  }catch(e){if(version===warehouseLoad)message('warehouseMessage','Не удалось обновить остатки: '+e.message);return false}
+    if(version!==warehouseLoad||!warehouseSameActorV16(actor))return false;
+    const rows=data||[];
+    // A missing photo is optional; it must not turn a confirmed card save into a failure.
+    try{await signMedicationPhotos(rows)}catch(error){console.warn('Не удалось обновить фото упаковок',error.message)}
+    if(version!==warehouseLoad||!warehouseSameActorV16(actor))return false;
+    inventory=rows;renderInventory();message('warehouseMessage','');return true;
+  }catch(e){if(version===warehouseLoad&&warehouseSameActorV16(actor))message('warehouseMessage','Не удалось обновить остатки: '+e.message);return false}
 }
+function medicationOriginClassV21(m){return globalThis.CrmMedicationOriginV21?.className(m)||''}
+function medicationOriginBadgeV21(m){return globalThis.CrmMedicationOriginV21?.badge(m)||''}
 function renderInventory(){
   if(!isManager())return;
   const active=inventory.filter(m=>m.active!==false);
@@ -64,12 +114,13 @@ function renderInventory(){
   inventoryCount.textContent=`Найдено препаратов: ${visible.length}`;
   inventoryList.innerHTML=visible.map(m=>{
     const f=stockFacts(m),bad=m.active===false?'В архиве':f.order?'Нужно заказать':f.refill?'Пополнить шкаф':'Остатки в норме';
-    return `<article class="inventory-card"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button><button class="btn secondary" onclick="openMedForm('${m.id}','prices')">Изменить цены</button><button class="btn danger" onclick="openMedForm('${m.id}','delete')">Удалить препарат</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
+    return `<article class="inventory-card ${medicationOriginClassV21(m)}"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)} ${medicationOriginBadgeV21(m)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button><button class="btn secondary" onclick="openMedForm('${m.id}','prices')">Изменить цены</button><button class="btn danger" onclick="openMedForm('${m.id}','delete')">Удалить препарат</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
   }).join('')||'<div class="notice">Препараты не найдены. Измените поиск или добавьте новую карточку.</div>';
 }
 function openMedForm(id='',focus=''){
-  if(!isManager()||warehouseBusy)return;
-  const m=inventory.find(x=>x.id===id);if(id&&!m)return;
+  if(!isManager()||warehouseBusy)return false;
+  if(warehouseResumeV16())return false;
+  const m=inventory.find(x=>x.id===id);if(id&&!m)return false;
   ++medView;medFormTitle.textContent=m?m.name:'Новый препарат';medId.value=m?.id||'';
   const fields={medName:'name',medSearchName:'search_name',medDosage:'dosage',medCountry:'manufacturer_country',medGeneric:'generic_name',medCategory:'category'};
   Object.entries(fields).forEach(([input,key])=>$(input).value=m?.[key]||'');
@@ -92,7 +143,7 @@ function openMedForm(id='',focus=''){
   batchList.innerHTML='';movementList.innerHTML='';show('medForm');updateStockPreview();
   if(m)loadStockDetails(id,medView);
   $('openingPanel').open=!!m&&stockFacts(m).total===0;$('receivePanel').open=focus==='receive';$('transferPanel').open=focus==='transfer';$('returnQty').value='';$('writeoffQty').value='';$('writeoffReason').value='';$('writeoffBatch').innerHTML='';if(focus==='receive')receivePackages.focus();else if(focus==='transfer')transferQty.focus();
-  if(focus==='prices')focusMedicationPrices();
+  if(focus==='prices')focusMedicationPrices();return true;
 }
 function positiveWhole(value,label){const n=Number(value);if(!Number.isSafeInteger(n)||n<=0)throw new Error(label+': введите целое число больше нуля');return n}
 function nonnegative(value,label){const n=Number(value);if(value===''||!Number.isFinite(n)||n<0)throw new Error(label+': введите число от нуля');return n}
@@ -109,48 +160,91 @@ function previewMedPhoto(){
   medPhotoObjectUrl=URL.createObjectURL(file);medPhotoPreview.innerHTML=`<img src="${medPhotoObjectUrl}" alt="Предпросмотр упаковки">`;
   medPhotoMessage.textContent='Фото загрузится при сохранении карточки.';
 }
-function setWarehouseBusy(value){warehouseBusy=value;document.querySelectorAll('#medForm button,#medForm input,#medForm select').forEach(el=>el.disabled=value)}
-async function saveMedication(){
-  if(warehouseBusy||!isManager())return;
-  const existing=!!medId.value;
-  let payload,file;
-  try{
-    const name=medName.value.trim();if(!name)throw new Error('Введите название препарата');
-    payload={id:medId.value||null,name,search_name:medSearchName.value.trim(),dosage:medDosage.value.trim(),country:medCountry.value.trim(),generic_name:medGeneric.value.trim(),category:medCategory.value.trim(),unit:medUnit.value.trim(),
-      units_per_package:positiveWhole(medUnitsPerPack.value,'Размер упаковки'),purchase_price:nonnegative(medPurchasePrice.value,'Закупка'),sale_price:nonnegative(medSalePrice.value,'Продажа'),min_total_stock:nonnegative(medMin.value,'Минимальный остаток'),work_threshold:nonnegative(medWorkMin.value,'Минимум в работе'),lead_time_days:nonnegative(medLeadDays.value,'Срок поставки')};
-    if(!Number.isSafeInteger(payload.lead_time_days))throw new Error('Срок поставки указывается в целых днях');
-    file=medPhoto.files?.[0];if(file&&(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024))throw new Error('Только JPG, PNG или WEBP до 5 МБ');
-  }catch(e){medPhotoMessage.textContent=e.message;return}
-  setWarehouseBusy(true);medPhotoMessage.textContent='Сохраняем карточку…';
-  try{
-    const result=await warehouseRpc('save',payload,true);medId.value=result.id;
-    if(file){
-      const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[file.type],path=`${result.id}/${crypto.randomUUID()}.${ext}`;
-      const upload=await db.storage.from('medication-photos').upload(path,file,{contentType:file.type,upsert:false});
-      if(upload.error)throw new Error('Карточка сохранена. Фото не загрузилось: '+upload.error.message);
-      const meta=await db.rpc('manager_medication_details_photo_v1',{p_id:result.id,p_search_name:payload.search_name||null,p_dosage:payload.dosage||null,p_photo_path:path});
-      if(meta.error)throw new Error('Карточка сохранена. Не удалось прикрепить фото: '+meta.error.message);
-    }
-    const loaded=await loadInventory();setWarehouseBusy(false);
-    if(loaded){inventorySearch.value='';inventoryFilter.value='active';renderInventory();openMedForm(result.id);}
-    medPhotoMessage.textContent=loaded?(existing?'Карточка и цены сохранены. Можно вернуться к списку препаратов.':'Карточка сохранена. Теперь внесите имеющийся остаток ниже или вернитесь к списку препаратов.'):'Карточка сохранена, но остатки не обновились. Нажмите «Обновить остатки».';
-  }catch(e){medPhotoMessage.textContent=e.message}
-  finally{setWarehouseBusy(false);restoreFieldLocks()}
+function setWarehouseBusy(value){warehouseBusy=value;document.querySelectorAll('#medForm button,#medForm input,#medForm select,#medForm textarea').forEach(el=>el.disabled=value);if(!value)warehouseDraftControlsV16()}
+function cacheMedicationV16(draft){
+  if(!warehouseSameActorV16(draft.actor)||!draft.result?.id)return;
+  const p=draft.payload,id=draft.result.id,previous=inventory.find(m=>m.id===id)||{};
+  const saved={work_qty:0,reserve_qty:0,active:true,...previous,...p,id,consumption_unit:p.unit,manufacturer_country:p.country};
+  if(draft.photoAttached)saved.photo_path=draft.photoPath;
+  inventory=[saved,...inventory.filter(m=>m.id!==id)];
+  if(typeof meds!=='undefined'){meds=meds.filter(m=>m.id!==id);if(saved.active!==false)meds.push(saved)}
 }
-function restoreFieldLocks(){const m=inventory.find(x=>x.id===medId.value);medUnitsPerPack.disabled=!!m&&stockFacts(m).total>0;medUnit.disabled=medUnitsPerPack.disabled;archiveButton.disabled=!!m&&m.active!==false&&stockFacts(m).total!==0}
-async function stockMutation(action,payload,success){
-  if(warehouseBusy)return;setWarehouseBusy(true);message('stockOperationMessage','Сохраняем операцию…');
+async function saveMedication(){
+  if(warehouseBusy||!isManager()||stockDraftV16)return;
+  let operation;
   try{
-    await warehouseRpc(action,payload,true);
-    // Clear committed input before reloading, so a failed reload cannot repeat it.
-    if(action==='return')$('returnQty').value='';if(action==='writeoff')$('writeoffQty').value='';if(action==='opening')openingQty.value='';if(action==='receive')receivePackages.value='';if(action==='transfer')transferQty.value='';
-    const loaded=await loadInventory();setWarehouseBusy(false);
-    if(loaded)openMedForm(payload.id);
-    message('stockOperationMessage',success+(loaded?'':' Остатки не обновились. Обновите список склада.'),true);
-  }catch(e){message('stockOperationMessage',e.message)}
-  finally{setWarehouseBusy(false);restoreFieldLocks()}
+    if(!medicationDraftV16){
+      const name=medName.value.trim();if(!name)throw new Error('Введите название препарата');
+      let payload={id:medId.value||null,name,search_name:medSearchName.value.trim(),dosage:medDosage.value.trim(),country:medCountry.value.trim(),generic_name:medGeneric.value.trim(),category:medCategory.value.trim(),unit:medUnit.value.trim(),
+        units_per_package:positiveWhole(medUnitsPerPack.value,'Размер упаковки'),purchase_price:nonnegative(medPurchasePrice.value,'Закупка'),sale_price:nonnegative(medSalePrice.value,'Продажа'),min_total_stock:nonnegative(medMin.value,'Минимальный остаток'),work_threshold:nonnegative(medWorkMin.value,'Минимум в работе'),lead_time_days:nonnegative(medLeadDays.value,'Срок поставки')};
+      if(!Number.isSafeInteger(payload.lead_time_days))throw new Error('Срок поставки указывается в целых днях');
+      const file=medPhoto.files?.[0];if(file&&(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>5*1024*1024))throw new Error('Только JPG, PNG или WEBP до 5 МБ');
+      payload=warehousePayloadV16('save',payload);
+      medicationDraftV16={action:'save',actor:warehouseActorV16(),payload,file,result:null,photoPath:null,photoUploaded:false,photoAttached:false};
+    }
+    const draft=medicationDraftV16;if(!warehouseSameActorV16(draft.actor))return;
+    operation=warehouseCaptureV16(draft);warehouseOperationV16=operation;setWarehouseBusy(true);medPhotoMessage.textContent=draft.result?'Сохраняем фото…':'Сохраняем карточку…';
+    if(!draft.result){
+      const result=await warehouseRpc('save',draft.payload,true);
+      if(!result?.id){const failure=Error('Ответ о сохранении не получен. Повторите сохранение карточки.');throw failure}
+      draft.result=result;cacheMedicationV16(draft);
+    }
+    if(!warehouseSameActorV16(operation.actor))return;
+    if(warehouseCardCurrentV16(operation))medId.value=draft.result.id;
+    if(draft.file&&!draft.photoAttached){
+      if(!draft.photoPath){const ext={'image/jpeg':'jpg','image/png':'png','image/webp':'webp'}[draft.file.type];draft.photoPath=`${draft.result.id}/${crypto.randomUUID()}.${ext}`}
+      if(!draft.photoUploaded){
+        const upload=await db.storage.from('medication-photos').upload(draft.photoPath,draft.file,{contentType:draft.file.type,upsert:false});
+        if(!warehouseSameActorV16(operation.actor))return;
+        // The same unique path is reused when an uploaded response was lost.
+        if(upload.error&&!(Number(upload.error.statusCode||upload.error.status||upload.status)===409||upload.error.error==='Duplicate'||upload.error.code==='Duplicate'))throw Error('Фото не загрузилось: '+upload.error.message);
+        draft.photoUploaded=true;
+      }
+      const meta=await db.rpc('manager_medication_details_photo_v1',{p_id:draft.result.id,p_search_name:draft.payload.search_name||null,p_dosage:draft.payload.dosage||null,p_photo_path:draft.photoPath});
+      if(!warehouseSameActorV16(operation.actor))return;
+      if(meta.error)throw Error('Не удалось прикрепить фото: '+meta.error.message);
+      draft.photoAttached=true;cacheMedicationV16(draft);if(warehouseCardCurrentV16(operation))medPhoto.value='';
+    }
+    if(!warehouseSameActorV16(operation.actor))return;
+    medicationDraftV16=null;
+    // The write is confirmed. Refresh errors must never suggest resubmitting it.
+    let loaded=false;try{loaded=await loadInventory()}catch(_error){}
+    if(!warehouseCardCurrentV16(operation))return;
+    warehouseFinishV16(operation);
+    if(loaded){inventorySearch.value='';inventoryFilter.value='active';renderInventory();openMedForm(draft.result.id)}
+    medPhotoMessage.textContent=loaded?(draft.payload.id?'Карточка и цены сохранены. Можно вернуться к списку препаратов.':'Карточка сохранена. Теперь внесите имеющийся остаток ниже или вернитесь к списку препаратов.'):'Карточка и цены сохранены. Список не обновился. Нажмите «Обновить остатки»; сохранять карточку повторно не нужно.';
+  }catch(error){
+    if(operation&&!warehouseSameActorV16(operation.actor))return;
+    const draft=medicationDraftV16;
+    if(draft&&!draft.result&&error.definitive)medicationDraftV16=null;
+    if(!operation||warehouseCardCurrentV16(operation))medPhotoMessage.textContent=draft?.result?'Карточка и цены уже сохранены. '+error.message+' Нажмите «Повторить сохранение фото».':error.message;
+  }finally{if(operation)warehouseFinishV16(operation)}
+}
+function restoreFieldLocks(){const m=inventory.find(x=>x.id===medId.value);medUnitsPerPack.disabled=!!m&&stockFacts(m).total>0;medUnit.disabled=medUnitsPerPack.disabled;archiveButton.disabled=!!m&&m.active!==false&&stockFacts(m).total!==0;warehouseDraftControlsV16()}
+async function stockMutation(action,payload,success){
+  if(warehouseBusy||!isManager()||medicationDraftV16)return;
+  let operation;
+  try{
+    if(!stockDraftV16)stockDraftV16={action,actor:warehouseActorV16(),payload:warehousePayloadV16(action,payload),success};
+    const draft=stockDraftV16;if(!warehouseSameActorV16(draft.actor)||action!==draft.action)return;
+    operation=warehouseCaptureV16(draft);warehouseOperationV16=operation;setWarehouseBusy(true);message('stockOperationMessage','Сохраняем операцию…');
+    await warehouseRpc(action,draft.payload,true);stockDraftV16=null;
+    // Clear only this view's committed input; a late reply cannot clear another card.
+    if(warehouseCardCurrentV16(operation)){
+      if(action==='return')$('returnQty').value='';if(action==='writeoff')$('writeoffQty').value='';if(action==='opening')openingQty.value='';if(action==='receive')receivePackages.value='';if(action==='transfer')transferQty.value='';
+    }
+    let loaded=false;try{loaded=await loadInventory()}catch(_error){}
+    if(!warehouseCardCurrentV16(operation))return;
+    warehouseFinishV16(operation);if(loaded)openMedForm(draft.payload.id);
+    message('stockOperationMessage',draft.success+(loaded?'':' Остатки не обновились. Обновите список склада; повторять операцию не нужно.'),true);
+  }catch(error){
+    if(operation&&!warehouseSameActorV16(operation.actor))return;
+    if(error.definitive)stockDraftV16=null;
+    if(!operation||warehouseCardCurrentV16(operation))message('stockOperationMessage',error.message);
+  }finally{if(operation)warehouseFinishV16(operation)}
 }
 async function receiveStock(){
+  if(stockDraftV16?.action==='receive')return stockMutation('receive',stockDraftV16.payload,stockDraftV16.success);
   try{
     const packs=positiveWhole(receivePackages.value,'Упаковки'),price=nonnegative(receivePrice.value,'Цена');
     if(!receiveExpiry.value||receiveExpiry.value<localDateValue())throw new Error('Укажите действующий срок годности партии');
@@ -158,6 +252,7 @@ async function receiveStock(){
   }catch(e){message('stockOperationMessage',e.message)}
 }
 async function transferToWork(){
+  if(stockDraftV16?.action==='transfer')return stockMutation('transfer',stockDraftV16.payload,stockDraftV16.success);
   try{
     const m=inventory.find(x=>x.id===medId.value);if(!m)throw new Error('Выберите препарат');
     const amount=positiveWhole(transferQty.value,'Количество'),n=amount*(transferMode.value==='packs'?packSize(m):1);
@@ -166,6 +261,7 @@ async function transferToWork(){
   }catch(e){message('stockOperationMessage',e.message)}
 }
 async function archiveMedication(){
+  if(['archive','restore'].includes(stockDraftV16?.action))return stockMutation(stockDraftV16.action,stockDraftV16.payload,stockDraftV16.success);
   const m=inventory.find(x=>x.id===medId.value);if(!m||warehouseBusy)return;
   const action=m.active===false?'restore':'archive';
   if(action==='archive'&&prompt(`Карточка исчезнет из активного списка. Чтобы отправить её в архив, введите название полностью: ${m.name}`)!==m.name)return;
@@ -186,6 +282,7 @@ async function loadStockDetails(id,view){
 }
 
 async function saveOpeningStock(){
+  if(stockDraftV16?.action==='opening')return stockMutation('opening',stockDraftV16.payload,stockDraftV16.success);
   try{
     const quantity=positiveWhole(openingQty.value,'Количество'),price=nonnegative(openingPrice.value,'Цена');
     if(!openingExpiry.value||openingExpiry.value<localDateValue())throw new Error('Укажите действующий срок годности');
@@ -194,11 +291,21 @@ async function saveOpeningStock(){
 }
 
 async function returnToReserve(){
+ if(stockDraftV16?.action==='return')return stockMutation('return',stockDraftV16.payload,stockDraftV16.success);
  try{await stockMutation('return',{id:medId.value,quantity:positiveWhole($('returnQty').value,'Количество')},'Препарат возвращён в запас. Общий остаток не изменился.')}catch(e){message('stockOperationMessage',e.message)}
 }
 async function writeOffStock(){
+ if(stockDraftV16?.action==='writeoff')return stockMutation('writeoff',stockDraftV16.payload,stockDraftV16.success);
  try{const reason=$('writeoffReason').value.trim(),batch=$('writeoffBatch').value;
  if(!batch||!reason)throw new Error('Выберите партию и укажите причину списания');
  await stockMutation('writeoff',{id:medId.value,quantity:positiveWhole($('writeoffQty').value,'Количество'),batch_id:batch,location:$('writeoffLocation').value,comment:reason},'Списание сохранено в истории. Остаток уменьшен.');
  }catch(e){message('stockOperationMessage',e.message)}
 }
+
+// Invalidate pending callbacks and actor-bound write IDs before another login.
+const warehouseSignOutV16=signOut;
+signOut=async function(){
+  ++warehouseSessionV16;++warehouseLoad;++medView;stockRequests.clear();medicationDraftV16=null;stockDraftV16=null;
+  if(warehouseOperationV16){warehouseOperationV16=null;setWarehouseBusy(false);restoreFieldLocks()}
+  return warehouseSignOutV16();
+};

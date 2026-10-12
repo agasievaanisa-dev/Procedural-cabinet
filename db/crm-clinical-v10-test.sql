@@ -79,7 +79,8 @@ begin
  if not failed then raise exception 'Free visit without reason accepted';end if;
  b:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.shift')));
  if(b->'revenue'->>'cash')::numeric<>150 then raise exception 'Own-shift cash excludes extra receipt: %',b;end if;
- if b ? 'stock' or b ? 'used' or b ? 'untracked' or b ? 'warnings' or b ? 'payroll_total' or b->'staff'->0 ? 'amount' then raise exception 'Nurse saw warehouse or payroll';end if;
+ if b ? 'stock' or b ? 'used' or b ? 'untracked' or b ? 'warnings' then raise exception 'Nurse saw warehouse';end if;
+ if not(b ? 'payroll_total') or not(b->'staff'->0 ? 'amount') then raise exception 'Assigned-shift payroll missing';end if;
  b:=public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.shift')));
  failed:=false;begin perform public.crm_clinical_v10('treatment_edit',p||jsonb_build_object('kind','procedure','id',current_setting('test.procedure'),'expected_version',3,'expected_stock_deducted',true,'edit_reason','После закрытия'),gen_random_uuid());exception when raise_exception then failed:=true;end;
  if not failed then raise exception 'Nurse edited closed shift';end if;

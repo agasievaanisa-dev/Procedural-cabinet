@@ -172,7 +172,7 @@
  }
  async function saveInlineStockV8(id,batchId,location,scope='list'){
   if(warehouseBusy)return;
-  let state,editor,data,operation;
+  let state,editor,data,operation,saved=false;
   try{
    requireOwner();state=scope==='card'?cardState:states.get(id);if(!state||state.id!==id||!current(state)||!state.loaded||state.loading)throw Error('Откройте строку препарата и дождитесь загрузки партии');
    editor=state.editors.get(key(batchId,location));if(!editor||!editor.node?.isConnected||editor.stale)throw Error('Обновите количество выбранной партии');
@@ -181,7 +181,7 @@
    if(data.actual_quantity===data.expected_quantity)return;
    if(!editor.retryData)editor.requestSnapshot={medication:medication(id),quantity:Number(medication(id)[location==='work'?'work_qty':'reserve_qty']||0)};
    operation=capture(state,editor);busyOperation=operation;setWarehouseBusy(true);editor.status='Сохраняем количество…';editor.success=false;syncControls();
-   const replay=!!editor.retryData,result=await state.request('inventory',data);if(!matches(operation,false))return;
+   const replay=!!editor.retryData,result=await state.request('inventory',data);if(!matches(operation,false))return;saved=true;
    const difference=Number(result?.difference??data.actual_quantity-data.expected_quantity),m=medication(id),batch=state.batches.find(item=>item.id===batchId);
    const stockKey=location==='work'?'work_qty':'reserve_qty',availableKey=location==='work'?'work_available':'reserve_available';
    // A catalogue refresh may already include an uncertain earlier commit.
@@ -197,9 +197,16 @@
    if(scope==='card'&&current(state)){const fresh=medication(id);get('medStockSummary').innerHTML=stockCells(fresh);installCardEntry(id);updateStockPreview();}
   }catch(error){
    if(state&&editor&&operation&&matches(operation,false)){
-    editor.status=error.message;editor.success=false;
-    if(/уже изменил|уже изменился|уже изменились|обновите карточку|обновите остатки/i.test(error.message)){editor.stale=true;editor.refresh=true;}
-    else if(!error.code){editor.retryData=data;editor.refresh=true;}
+    if(saved){
+     editor.retryData=null;editor.requestSnapshot=null;editor.before=data.actual_quantity;editor.draft=String(data.actual_quantity);
+     if(editor.node?.isConnected)editor.node.querySelector('[data-inline-stock-quantity-v8]').value=editor.draft;
+     editor.status='Количество сохранено. Не удалось обновить экран. Нажмите «Обновить количество».';editor.success=true;editor.refresh=true;
+    }else{
+     editor.status=error.message;editor.success=false;
+     const definitive=typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(error,error.status):!error.uncertain&&!/^08/.test(error.code||'')&&/^[0-9A-Z]{5}$/.test(error.code||'');
+     if(!definitive){editor.retryData=data;editor.refresh=true;}
+     else if(/уже изменил|уже изменился|уже изменились|обновите карточку|обновите остатки/i.test(error.message)){editor.stale=true;editor.refresh=true;}
+    }
     syncControls();
    }else if(owner()&&!operation)message('homeMessage',error.message);
   }finally{if(operation)finishBusy(operation);}
@@ -218,7 +225,7 @@
  const previousBusy=setWarehouseBusy;
  setWarehouseBusy=function(value){previousBusy(value);syncControls();};
  const previousOpen=openMedForm;
- openMedForm=function(id='',focus=''){
+ openMedForm=function(id='',focus=''){if(typeof warehouseResumeV16==='function'&&warehouseResumeV16())return false;
   if(!owner()||warehouseBusy)return;++cardGeneration;cardState?.request.clear();cardState=id&&medication(id)?newState(id,'card',get('batchList')):null;
   previousOpen(id,focus);if(get('medId')?.value===id){if(cardState)cardState.view=medView;installCardEntry(id);}
  };

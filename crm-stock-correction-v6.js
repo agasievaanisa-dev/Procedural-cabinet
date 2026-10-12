@@ -36,12 +36,16 @@
    authorize();const key=JSON.stringify([action,data]);
    if(!requests.has(key))requests.set(key,uuid());
    const requestId=requests.get(key),forget=()=>{if(requests.get(key)===requestId)requests.delete(key);};
-   let result;try{result=await rpc('crm_stock_correction_v6',{p_action:action,p_payload:data,p_request_id:requestId});}catch(error){throw Error(errorText(error));}
-   if(result.error){
-    if(/^[0-9A-Z]{5}$/.test(result.error.code||''))forget();
-    const error=Error(errorText(result.error));error.code=result.error.code;throw error;
+   let result;try{result=await rpc('crm_stock_correction_v6',{p_action:action,p_payload:data,p_request_id:requestId});}catch(error){const failure=Error(errorText(error));Object.assign(failure,error,{message:errorText(error)});throw failure;}
+   if(result?.error){
+    if(typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(result.error,result.status):!result.error.uncertain&&!/^08/.test(result.error.code||'')&&/^[0-9A-Z]{5}$/.test(result.error.code||''))forget();
+    const error=Error(errorText(result.error));Object.assign(error,result.error,{message:errorText(result.error)});throw error;
    }
-   forget();return result.data;
+   const value=result?.data,field=action==='package'?'units_per_package':'quantity';
+   if(!value||typeof value!=='object'||Array.isArray(value)||value[field]===null||value[field]===undefined||!Number.isSafeInteger(Number(value[field]))||Number(value[field])<(action==='package'?1:0)){
+    const error=Error(connectionMessage);error.uncertain=true;throw error;
+   }
+   forget();return value;
   };
   send.clear=()=>requests.clear();return send;
  }
@@ -128,7 +132,7 @@
   get('stockCorrectionSaveV6').disabled=warehouseBusy;
  }
  const previousOpen=openMedForm;
- openMedForm=function(id='',focus=''){
+ openMedForm=function(id='',focus=''){if(typeof warehouseResumeV16==='function'&&warehouseResumeV16())return false;
   if(!isManager()||warehouseBusy)return;
   const m=inventory.find(x=>x.id===id);if(id&&!m)return;
   ++generation;state={id,view:medView+1,batches:[],loaded:false};ensurePanel();previousOpen(id,focus);reset(m,focus);
@@ -177,17 +181,22 @@
    if(!get('stockCorrectionConfirmV6').checked)throw Error('Проверьте числа и отметьте подтверждение перед сохранением');
   }catch(error){if(isManager())status(error.message);else message('homeMessage',error.message);return;}
   const operation=capture(data.id),choice=choices();busyOperation=operation;setWarehouseBusy(true);get('stockCorrectionReasonV6').disabled=true;status('Сохраняем исправление…');get('stockCorrectionReloadV6').classList.add('hidden');
+  let saved=false;
   try{
    const result=await request(mode,data);if(!matches(operation))return;
-   applyCommitted(m,mode,data,result);
+   saved=true;
    // Clear only committed drafts BEFORE refreshing, even if the refresh fails.
    get('stockCorrectionActualV6').value='';get('stockCorrectionReasonV6').value='';get('stockCorrectionConfirmV6').checked=false;
+   applyCommitted(m,mode,data,result);
    const loaded=await loadInventory();if(!matches(operation))return;finishBusy(operation);
    if(loaded)reopenCorrection(operation,choice);
    status('Исправление сохранено.'+(loaded?'':' Остатки на сервере не удалось обновить. Нажмите «Обновить остатки». '),true);
    if(!loaded)get('stockCorrectionReloadV6').classList.remove('hidden');
   }catch(error){
-   if(matches(operation)){status(error.message);if(/уже изменил|уже изменился|уже изменились|обновите карточку|обновите остатки/i.test(error.message))get('stockCorrectionReloadV6').classList.remove('hidden');}
+   if(matches(operation)){
+    status(saved?'Исправление сохранено. Не удалось обновить экран. Нажмите «Обновить остатки».':error.message,saved);
+    if(saved||/уже изменил|уже изменился|уже изменились|обновите карточку|обновите остатки/i.test(error.message))get('stockCorrectionReloadV6').classList.remove('hidden');
+   }
   }finally{finishBusy(operation);}
  }
  async function reloadCorrection(){
@@ -198,7 +207,8 @@
    if(!loaded){status('Не удалось обновить остатки. Попробуйте ещё раз.');return;}
    if(!reopenCorrection(operation,choice)){status('Препарат больше недоступен для исправления.');return;}
    get('stockCorrectionReasonV6').value=reason||'Исправление ошибки ввода';status('Остатки обновлены. Проверьте новое количество и повторите исправление.');
-  }finally{finishBusy(operation);}
+  }catch(error){if(matches(operation)){status('Не удалось обновить остатки. Попробуйте ещё раз.');get('stockCorrectionReloadV6').classList.remove('hidden');}}
+  finally{finishBusy(operation);}
  }
  root.saveStockCorrectionV6=saveCorrection;root.reloadStockCorrectionV6=reloadCorrection;
  saveInventoryV5=function(){if(!isManager()){message('homeMessage','Корректировка доступна только владельцу');return;}if(!warehouseBusy)openMedForm(get('medId').value,'correct');};

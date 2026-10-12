@@ -7,7 +7,7 @@ async function boot(page){
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
   window.loginAttempts=[];window.loginOutcomes=[];window.enteredUsers=[];
-  window.dbStub={auth:{
+  window.dbStub={rpc:async()=>({data:[],error:null}),auth:{
    getSession:async()=>({data:{session:null},error:null}),
    signOut:async()=>({error:null}),
    signInWithPassword:async credentials=>{

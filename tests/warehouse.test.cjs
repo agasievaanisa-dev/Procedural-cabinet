@@ -4,7 +4,7 @@ function element(id){if(!elements.has(id))elements.set(id,{value:'',innerHTML:''
 const context={console,Intl,Date,Number,Map,Set,JSON,Error,Promise,crypto:require('node:crypto').webcrypto,
  document:{querySelectorAll(){return[]}},localDateValue:()=> '2026-09-29',num:v=>Number(v||0),$:element,
  rub:v=>String(v)+' ₽',esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
- currentStaff:{role:'admin'},inventory:[],signMedicationPhotos:async()=>{},medPhotoHtml:()=>'',medPhotoUrls:new Map()};
+ currentStaff:{id:'admin-1',role:'admin'},inventory:[],signMedicationPhotos:async()=>{},medPhotoHtml:()=>'',medPhotoUrls:new Map(),signOut:async()=>{}};
 ['inventorySearch','inventoryFilter','inventorySummary','inventoryList','inventoryCount','medId','receivePackages','receivePrice','receivePreview','transferPreview','transferQty','transferMode'].forEach(id=>context[id]=element(id));
 vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/../warehouse.js','utf8'),context);
 const evalIn=code=>vm.runInContext(code,context);

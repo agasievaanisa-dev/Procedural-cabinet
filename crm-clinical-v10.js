@@ -12,6 +12,7 @@
   const list = cents(input.list, 'Стоимость по прайсу'), charge = cents(input.charge, 'Стоимость для пациента');
   const previous = cents(input.previous ?? 0, 'Ранее оплачено'), received = cents(input.received, 'Оплата сейчас');
   const reason = String(input.reason || '').trim(), status = input.status || 'paid';
+  if (charge > list) throw Error('Стоимость для пациента превышает стоимость выбранных процедур и препаратов по прайсу. Исправьте сумму к оплате или состав процедуры');
   if (!['paid','pending','debt','free'].includes(status)) throw Error('Выберите вариант оплаты');
   if (charge !== list && !reason) throw Error('Укажите комментарий, почему стоимость отличается от прайса');
   if (charge === 0 && status !== 'free') throw Error('Для нулевой стоимости выберите «Бесплатно» и укажите комментарий');
@@ -32,30 +33,70 @@
    return {name,quantity,unit,source:item.source};
   });
  }
- const helpers = {cents,paymentModel,ownedItems};
+ function mergeServices(items) {
+  const quantities = new Map();
+  for (const item of items) {
+   if (!item.service_id) continue;
+   const quantity = Number(item.quantity), total = (quantities.get(item.service_id) || 0) + quantity;
+   if (!Number.isSafeInteger(quantity) || quantity < 1 || !Number.isSafeInteger(total)) throw Error('Количество процедур должно быть целым и больше нуля');
+   quantities.set(item.service_id,total);
+  }
+  return [...quantities].map(([service_id,quantity]) => ({service_id,quantity}));
+ }
+ function pendingUnpaidRecord(record) {
+  if (record?.payment_pending !== true || record.paid_total == null) return false;
+  return ['paid_total','received_total','initial_paid_total'].every(key => {
+   try { return cents(record[key] ?? 0) === 0; } catch { return false; }
+  });
+ }
+ function editWithoutReason(record, model) {
+  return pendingUnpaidRecord(record) && model?.status === 'pending' && model.previous === 0 && model.received === 0;
+ }
+ function automaticUnpaidCharge(record) {
+  if (!pendingUnpaidRecord(record)) return false;
+  try { return cents(record.charge_total) === cents(record.list_total); } catch { return false; }
+ }
+ const helpers = {cents,paymentModel,ownedItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge};
  if (typeof module === 'object' && module.exports) module.exports = helpers;
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
- const forms = {proc:null,sale:null}, requests = new Map();
+ const forms = {proc:null,sale:null}, requests = new Map(), ambiguousRequests16 = new Set(), pendingPayments16 = new Map();
  let session = 0, patientView = 0, editorView = 0, debtBusy = false;
  const amount = value => (value / 100).toFixed(2);
  const state = prefix => forms[prefix];
  function actorKey() { return JSON.stringify([currentStaff?.id,currentStaff?.role,session]); }
  function assertActor(actor) { if (!currentStaff?.id || actorKey() !== actor) throw Error('Учётная запись изменилась. Откройте форму заново'); }
+ function saveError(error, status, write = true) {
+  const result = financeSaveErrorV16(error,status,'Не удалось выполнить действие');
+  if (write && result.uncertain) result.message = 'Не удалось получить ответ. Черновик сохранён; повторите сохранение. Будут отправлены первоначальные данные, без повторного начисления.';
+  return result;
+ }
  async function clinicalRpc(action, payload = {}, mutate = false) {
   const actor = actorKey(), key = JSON.stringify([actor,action,payload]);
   if (mutate && !requests.has(key)) requests.set(key, crypto.randomUUID());
   let response;
   try { response = await db.rpc('crm_clinical_v10', {p_action:action,p_payload:payload,p_request_id:mutate ? requests.get(key) : null}); }
-  catch (error) { throw Error(financeNetworkErrorV5(error) ? 'Не удалось получить ответ. Черновик сохранён; повторите с теми же данными.' : error.message); }
+  catch (error) { assertActor(actor); const failure = saveError(error,undefined,mutate); if (mutate && (failure.uncertain || ambiguousRequests16.has(key))) { failure.uncertain = true; ambiguousRequests16.add(key); } throw failure; }
   assertActor(actor);
   if (response?.error) {
-   if (mutate && /^[0-9A-Z]{5}$/.test(response.error.code || '')) requests.delete(key);
-   throw Error(financeNetworkErrorV5(response.error,response.status) ? 'Не удалось получить ответ. Черновик сохранён; повторите с теми же данными.' : response.error.message || 'Не удалось выполнить действие');
+   const error = saveError(response.error,response.status,mutate);
+   if (mutate && (error.uncertain || ambiguousRequests16.has(key))) { error.uncertain = true; ambiguousRequests16.add(key); }
+   if (mutate && !error.uncertain && /^[0-9A-Z]{5}$/.test(response.error.code || '')) requests.delete(key);
+   throw error;
   }
-  if (!response) throw Error('Не удалось получить ответ. Повторите действие');
-  if (mutate) requests.delete(key);
+  if (!response || (mutate && response.data == null)) { if (mutate) ambiguousRequests16.add(key); throw saveError({uncertain:true,message:'Не удалось получить ответ. Повторите действие'},undefined,mutate); }
+  if (mutate) { requests.delete(key); ambiguousRequests16.delete(key); }
   return response.data;
+ }
+ function lockRetryForm(prefix) {
+  const kind = prefix === 'proc' ? 'procedure' : 'sale', retry = !!state(prefix)?.retry;
+  document.querySelectorAll('#' + kind + ' button,#' + kind + ' input,#' + kind + ' select,#' + kind + ' textarea').forEach(element => {
+   const mainSave = element.getAttribute?.('onclick') === (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()');
+   element.disabled = retry && !mainSave;
+   if (mainSave && retry) element.textContent = 'Повторить сохранение';
+   else if (mainSave && element.textContent === 'Повторить сохранение') element.textContent = prefix === 'proc' ? 'Сохранить процедуру' : 'Сохранить продажу';
+  });
+  if (state(prefix)?.edit) { $(prefix + 'Patient').disabled = true; $(prefix + 'Nurse').disabled = true; }
  }
  function servicePrice(prefix, id) {
   const snapshot = state(prefix)?.servicePrices?.get(id), service = services.find(s => s.id === id);
@@ -63,7 +104,7 @@
  }
  function selectedServices() {
   const primary = $('procService')?.value;
-  return (primary ? [{service_id:primary,quantity:1}] : []).concat([...$('procAdditionalServicesV10').querySelectorAll('.clinical-service-v10')].map(row => ({service_id:row.querySelector('select').value,quantity:Number(row.querySelector('input').value)})).filter(item => item.service_id));
+  return mergeServices((primary ? [{service_id:primary,quantity:1}] : []).concat([...$('procAdditionalServicesV10').querySelectorAll('.clinical-service-v10')].map(row => ({service_id:row.querySelector('select').value,quantity:Number(row.querySelector('input').value)}))));
  }
  function listCents(prefix) {
   const medicines = rows(prefix + 'Meds').reduce((sum,item) => {
@@ -147,7 +188,10 @@
  function readOwn() { return ownedItems([...$('procOwnMedsV10').querySelectorAll('.clinical-own-v10')].map(row => ({name:row.querySelector('.own-name-v10').value,quantity:row.querySelector('.own-quantity-v10').value,unit:row.querySelector('.own-unit-v10').value,source:row.querySelector('.own-source-v10').value}))); }
  function calculate(prefix, update = true) {
   const s = state(prefix); if (!s) return;
-  const total = listCents(prefix); $(prefix + 'List').textContent = rub(total / 100);
+  let total;
+  try { total = listCents(prefix); }
+  catch (error) { message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',error.message); return; }
+  $(prefix + 'List').textContent = rub(total / 100);
   if ((!s.chargeEdited && update) || $(prefix + 'Paid').value === '') $(prefix + 'Paid').value = amount(total);
   if (prefix === 'proc') $('servicePriceInfo').textContent = 'Работа и расходники выбранных процедур: ' + rub(selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) / 100);
   discountVisibility(prefix); syncPaymentV5(prefix);
@@ -223,6 +267,7 @@
   if (!pay.tenderEdited) $(prefix + 'PayTender').value = amount(cash);
   $(prefix + 'PayTenderBox').classList.toggle('hidden',total === 0 || (cash === 0 && pay.method !== 'cash' && pay.method !== 'mixed'));
   const paymentStatus = $(prefix + 'PaymentStatusV10').value,pendingSelected = paymentStatus === 'pending';
+  $(prefix + 'EditReasonBoxV10').classList.toggle('hidden',!s.edit || editWithoutReason(s.edit,{status:paymentStatus,previous:s.previous || 0,received:total}));
   $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',paymentStatus !== 'debt' && !pendingSelected);
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
@@ -255,6 +300,7 @@
   const actor = currentStaff?.id;
   if (!quickNavigationCurrent4(navigation,actor)) return false;
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
+  if (forms[prefix]?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Предыдущее сохранение ещё не подтверждено. Нажмите «Повторить сохранение» — отправим первоначальные данные без дубля.'); return false; }
   forms[prefix] = {chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map()};
   install(prefix);
   if (prefix === 'proc') { $('procAdditionalServicesV10').innerHTML = ''; $('procOwnMedsV10').innerHTML = ''; }
@@ -266,9 +312,11 @@
  saveTreatment = async function(kind) {
   if (clinicalBusy) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale', actor = actorKey();
-  let saved = false;
+  let saved = false, s, model, payload;
   try {
-   const s = state(prefix); if (!s) throw Error('Откройте форму заново');
+   s = state(prefix); if (!s) throw Error('Откройте форму заново');
+   if (s.retry) { model = s.retry.model; payload = s.retry.payload; }
+   else {
    if (!s.edit && !shift?.id) throw Error('Сначала откройте смену');
    if (kind === 'procedure' && (!$('procPatient').value || !$('procService').value)) throw Error('Выберите пациента и услугу');
    const selected = rows(prefix + 'Meds');
@@ -282,14 +330,20 @@
     const reserve = kind === 'sale' && isManager() && $('saleReserveV5')?.checked;
     if (!paymentOnly && !reserve && quantity > num(med?.work_qty) + previous) throw Error('Недостаточно препарата в рабочем шкафу. Пополните шкаф или исправьте количество');
    }
-   const model = currentModel(prefix), payments = readPaymentsV5(prefix,!(model.status === 'pending' && model.received === 0));
+   model = currentModel(prefix); const payments = readPaymentsV5(prefix,!(model.status === 'pending' && model.received === 0));
    if (model.status === 'pending' && model.received === 0) $(prefix + 'PayConfirmed').checked = true;
    const allServices = kind === 'procedure' ? selectedServices() : [];
    allServices.forEach(item => positiveWhole(item.quantity,'Количество процедур'));
-   const payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly};
+   payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly};
    if (!paymentOnly && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) payload.reserve_sale = true;
    if (s.edit && model.received > 0 && shift?.id && shift.id !== s.edit.shift_id) { payload.payment_shift_id=shift.id; payload.payment_nurse_id=[shift.aId,shift.bId].includes(currentStaff.id)?currentStaff.id:shift.aId; }
-   if (s.edit) { payload.kind = kind; payload.id = s.edit.id; payload.expected_version = s.edit.version; payload.edit_reason = $(prefix + 'EditReasonV10').value.trim(); if (!payload.edit_reason) throw Error('Укажите, что изменили в процедуре и почему'); }
+   if (s.edit) {
+    payload.kind = kind; payload.id = s.edit.id; payload.expected_version = s.edit.version;
+    payload.edit_reason = $(prefix + 'EditReasonV10').value.trim() || null;
+    if (!payload.edit_reason && !editWithoutReason(s.edit,model)) throw Error('Укажите, что изменили в процедуре и почему');
+   }
+   payload = JSON.parse(JSON.stringify(payload));
+   }
    clinicalBusy = true;
    document.querySelectorAll('#' + kind + ' button,#' + kind + ' input,#' + kind + ' select,#' + kind + ' textarea').forEach(element => element.disabled = true);
    message(kind + 'Message','Сохраняем…');
@@ -298,22 +352,30 @@
    show('workspace');
    message('homeMessage',`${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`,true);
    try { await refreshDashboard(); } catch (error) { message('homeMessage','Запись сохранена. Не удалось обновить экран: ' + error.message); }
-  } catch (error) { if (actorKey() === actor) message(saved ? 'homeMessage' : kind + 'Message',error.message); }
-  finally { clinicalBusy = false; document.querySelectorAll('#' + kind + ' button,#' + kind + ' input,#' + kind + ' select,#' + kind + ' textarea').forEach(element => element.disabled = false); if (state(prefix)?.edit) { $(prefix + 'Patient').disabled = true; $(prefix + 'Nurse').disabled = true; } }
+  } catch (error) {
+   if (actorKey() === actor) {
+    if (!saved && s && payload && (s.retry || financeRetryableErrorV16(error,error.status))) { s.retry = {payload,model}; error = saveError({...error,uncertain:true,message:error.message},error.status); }
+    message(saved ? 'homeMessage' : kind + 'Message',error.message);
+   }
+  }
+  finally { clinicalBusy = false; if (actorKey() === actor) lockRetryForm(prefix); }
  };
  const treatmentBase = treatmentRpc;
  async function saveWithoutPayment(kind) {
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
   if (clinicalBusy || !state(prefix)) return;
+  if (state(prefix).retry) { await saveTreatment(kind); return; }
   $(prefix + 'PaymentStatusV10').value = 'pending'; $(prefix + 'ReceivedV10').value = '0.00';
   syncPaymentV5(prefix,true); $(prefix + 'PayConfirmed').checked = true;
   await saveTreatment(kind);
  }
  global.saveProcedureWithoutPaymentV14 = () => saveWithoutPayment('procedure');
  global.saveSaleWithoutPaymentV14 = () => saveWithoutPayment('sale');
- treatmentRpc = async function(kind,payload) { try { return await treatmentBase(kind,payload); } catch (error) { if (financeNetworkErrorV5(error)) throw Error('Не удалось получить ответ. Черновик сохранён; повторите с теми же данными.'); throw error; } };
+ treatmentRpc = async function(kind,payload) { try { return await treatmentBase(kind,payload); } catch (error) { throw saveError(error,error.status); } };
  global.editTreatmentV10 = async function(kind,id) {
   if (clinicalBusy) return;
+  const prefix = kind === 'procedure' ? 'proc' : 'sale';
+  if (state(prefix)?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Сначала повторите предыдущее сохранение. Его результат ещё не подтверждён.'); return; }
   const navigation=beginQuickNavigation4(), actor = actorKey(), version = ++editorView;
   try {
    const record = await clinicalRpc('treatment_get',{kind,id});
@@ -338,9 +400,10 @@
    (record.items || []).forEach(item => addMedRow(prefix + 'Meds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name,consumption_unit:item.unit}));
    $(prefix + 'Notes').value = record.notes || ''; $(prefix + 'DiscountReason').value = record.discount_reason || ''; $(prefix + 'DiscountComment').value = record.discount_comment || '';
    $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0)); resetPaymentV5(prefix); $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0));
-   $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonBoxV10').classList.remove('hidden');
+   forms[prefix].chargeEdited = !automaticUnpaidCharge(record);
+   $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00';
    $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Редактирование процедуры' : 'Редактирование продажи'; show(kind); calculate(prefix,false); renderAccountingModeV5();
-   message(kind + 'Message','Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
+   message(kind + 'Message',pendingUnpaidRecord(record) ? 'Добавьте или измените процедуру и препараты. До оплаты можно сохранять изменения без комментария. При скидке укажите её причину.' : 'Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
   } catch (error) { if (actorKey() === actor) message('patientCardMessageV5',error.message); }
  };
  function dateText(at) { return esc(new Date(at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})); }
@@ -365,6 +428,7 @@
  const openPatientBase = openPatient;
  openPatient = async function(id) { const actor = actorKey(); await openPatientBase(id); if (actor === actorKey() && currentPatientId === id && $('patientCard').classList.contains('active')) await global.loadPatientClinicalV10(id); };
  global.openDebtPaymentV10 = function(kind,id,debt,patientId=currentPatientId,returnToDebts=false) {
+  if (debtBusy) return;
   beginQuickNavigation4();
   let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
   host.dataset.kind = kind; host.dataset.recordId = id; host.dataset.debt = String(debt); host.dataset.patientId = patientId || ''; host.dataset.returnToDebts=String(returnToDebts);
@@ -375,6 +439,15 @@
   $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
   $('debtAmountV10').addEventListener('input',() => { if (!tenderEdited) $('debtTenderV10').value = $('debtAmountV10').value; });
   $('debtMethodV10').addEventListener('change',() => { const cash = $('debtMethodV10').value === 'cash'; $('debtTenderV10').classList.toggle('hidden',!cash); $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!cash); $('debtConfirmV10').checked = false; });
+  const retry = pendingPayments16.get(JSON.stringify([actorKey(),kind,id]));
+  if (retry) {
+   const payments = retry.payload.payments;
+   $('debtAmountV10').value = amount(retry.paid); $('debtTenderV10').value = String(payments.cash_received);
+   $('debtMethodV10').value = payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
+   $('debtNoteV10').value = retry.payload.comment || ''; $('debtConfirmV10').checked = true;
+   host.querySelectorAll('input,select').forEach(input => input.disabled = true);
+   message('debtMessageV10','Предыдущее сохранение оплаты ещё не подтверждено. Повторите сохранение — отправим первоначальную оплату без дубля.');
+  }
   show('debtPaymentV10');
  };
  global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
@@ -389,23 +462,37 @@
  };
  global.saveDebtPaymentV10 = async function() {
   if (debtBusy) return; const navigation=quickNavigation4, actor = actorKey(), host = $('debtPaymentV10');
+  const key = JSON.stringify([actor,host.dataset.kind,host.dataset.recordId]);
+  let committed = false, snapshot;
   try {
-   if (!shift?.id) throw Error('Для приёма оплаты откройте свою смену');
-   const paid = cents($('debtAmountV10').value), remaining = cents(host.dataset.debt), method = $('debtMethodV10').value;
-   if (!paid || paid > remaining) throw Error('Укажите оплату больше нуля и не больше оставшегося долга');
-   if (!$('debtConfirmV10').checked) throw Error('Проверьте оплату и отметьте подтверждение');
-   const tender = method === 'cash' ? cents($('debtTenderV10').value,'Получено наличными') : 0;
-   if (method === 'cash' && tender < paid) throw Error('Получено наличными меньше суммы оплаты');
+   snapshot = pendingPayments16.get(key);
+   if (!snapshot) {
+    if (!shift?.id) throw Error('Для приёма оплаты откройте свою смену');
+    const paid = cents($('debtAmountV10').value), remaining = cents(host.dataset.debt), method = $('debtMethodV10').value;
+    if (!paid || paid > remaining) throw Error('Укажите оплату больше нуля и не больше оставшегося долга');
+    if (!$('debtConfirmV10').checked) throw Error('Проверьте оплату и отметьте подтверждение');
+    const tender = method === 'cash' ? cents($('debtTenderV10').value,'Получено наличными') : 0;
+    if (method === 'cash' && tender < paid) throw Error('Получено наличными меньше суммы оплаты');
+    const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
+    snapshot = {paid,remaining,payload:{kind:host.dataset.kind,id:host.dataset.recordId,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null}};
+   }
    debtBusy = true; host.querySelectorAll('button,input,select').forEach(input => input.disabled = true);
-   const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
-   const receipt = await clinicalRpc('debt_payment',{kind:host.dataset.kind,id:host.dataset.recordId,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null},true);
-   assertActor(actor); $('debtConfirmV10').checked = false;
+   const receipt = await clinicalRpc('debt_payment',snapshot.payload,true);
+   assertActor(actor); committed = true; pendingPayments16.delete(key); $('debtConfirmV10').checked = false;
    const patient = host.dataset.patientId, returnToDebts=host.dataset.returnToDebts==='true',returnToJournal=host.dataset.returnToJournal; host.innerHTML = '';
    if(!quickNavigationCurrent4(navigation,currentStaff?.id))return;
-   if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else await openPatient(patient);
-   message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':'patientCardMessageV5','Оплата сохранена. Осталось: ' + rub(receipt?.debt_total ?? (remaining - paid) / 100),true);
-  } catch (error) { if (actor === actorKey()) message('debtMessageV10',error.message); }
-  finally { debtBusy = false; host.querySelectorAll('button,input,select').forEach(input => input.disabled = false); }
+   const success = 'Оплата сохранена. Осталось: ' + rub(receipt?.debt_total ?? (snapshot.remaining - snapshot.paid) / 100);
+   try {
+    if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else await openPatient(patient);
+    if (actor === actorKey()) message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':'patientCardMessageV5',success,true);
+   } catch (error) { if (actor === actorKey()) { show('workspace'); message('homeMessage',success + '. Не удалось обновить экран: ' + error.message,true); } }
+  } catch (error) {
+   if (actor === actorKey()) {
+    if (!committed && snapshot && (pendingPayments16.has(key) || financeRetryableErrorV16(error,error.status))) { pendingPayments16.set(key,snapshot); error = saveError({...error,uncertain:true,message:error.message},error.status); }
+    message(committed ? 'homeMessage' : 'debtMessageV10',committed ? 'Оплата сохранена. Не удалось обновить экран: ' + error.message : error.message);
+   }
+  }
+  finally { debtBusy = false; if (actor === actorKey()) host.querySelectorAll('button,input,select').forEach(input => input.disabled = pendingPayments16.has(key) && input.tagName !== 'BUTTON'); }
  };
  function treatmentEvents(data) { return Array.isArray(data) ? data : data?.events || [...(data?.procedures || []).map(event => ({...event,kind:'procedure'})),...(data?.sales || []).map(event => ({...event,kind:'sale'}))].sort((a,b) => new Date(b.at || b.visit_at || b.sold_at) - new Date(a.at || a.visit_at || a.sold_at)); }
  let debtView = 0;
@@ -428,5 +515,5 @@
  const showBase = show;
  show = function(id) { if (id === 'debtsV10' && !isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); id = 'workspace'; } showBase(id); };
  const signOutBase = signOut;
- signOut = async function() { session++; patientView++; editorView++; debtView++; forms.proc = null; forms.sale = null; requests.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10']) if ($(id)) $(id).innerHTML = ''; await signOutBase(); };
+ signOut = async function() { session++; patientView++; editorView++; debtView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10']) if ($(id)) $(id).innerHTML = ''; await signOutBase(); };
 })(typeof window === 'object' ? window : globalThis);

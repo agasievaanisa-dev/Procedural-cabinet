@@ -25,8 +25,8 @@ function boot() {
 }
 
 function report() {
- return {shift:{id:'shift-1',date:'2026-10-11',started_at:'2026-10-11T05:30:00Z',planned_end_at:'2026-10-11T13:00:00Z',status:'closed'},staff:[{id:'nurse-1',full_name:'Наталья <img src=x>',amount:99991},{id:'nurse-2',full_name:'Лилия',amount:99992}],patients_count:3,procedures_count:2,sales_count:1,
-  revenue:{cash:700,terminal:300,owner_card:100,total:1100},charge_total:1300,debt_total:200,payroll_total:99993,cash_after_salary:99994,
+ return {shift:{id:'shift-1',date:'2026-10-11',started_at:'2026-10-11T05:30:00Z',planned_end_at:'2026-10-11T13:00:00Z',status:'closed'},staff:[{id:'nurse-1',full_name:'Наталья <img src=x>',amount:2000,reason:'Скрытая причина зарплаты'},{id:'nurse-2',full_name:'Лилия',amount:2500}],patients_count:3,procedures_count:2,sales_count:1,
+  revenue:{cash:700,terminal:300,owner_card:100,total:1100},charge_total:1300,debt_total:200,payroll_total:4500,payroll_complete:true,payroll_unknown:0,cash_after_salary:-3400,
   used:[{name:'Скрытое складское списание',quantity:7}],untracked:[{name:'Скрытая операция без списания',quantity:8}],stock:[{name:'Скрытый запас',reserve:99995,work:99996}],warnings:[{name:'Скрытое предупреждение'}],
   procedures:[{id:'later',at:'2026-10-11T09:00:00Z',patient:'Анна <script>bad()</script>',nurse:'Наталья',type:'Капельница',services:[{name:'Капельница со своими препаратами',quantity:1,line_total:500},{name:'Дополнительный внутримышечный укол',quantity:1,line_total:100}],items:[{name:'Милдронат 5 мл',quantity:2,unit:'амп.',line_total:600}],own_medications:[{name:'Препарат пациента 10 мл',quantity:1,unit:'фл.'}],list_total:1200,charge_total:1000,paid_total:800,debt_total:200,discount_amount:200,discount_reason:'Постоянная скидка',discount_comment:'Согласовано с владельцем',payments:{cash:500,terminal:300,owner_card:0}},
    {id:'free',at:'2026-10-11T10:00:00Z',patient:'Бесплатная процедура',nurse:'Лилия',type:'Внутривенный укол',own_medications:[{name:'Препарат пациента',quantity:1,unit:'амп.'}],items:[],list_total:300,charge_total:0,paid_total:0,debt_total:0,discount_amount:300,discount_reason:'Помощь пациенту'}],
@@ -37,18 +37,18 @@ test('shift PDF includes chronological patients, full services, medicines, disco
  const {c}=boot(),html=c.buildShiftPrintV5(report());
  assert.ok(html.indexOf('Первый пациент')<html.indexOf('Анна &lt;script&gt;'));
  assert.ok(html.indexOf('Анна &lt;script&gt;')<html.indexOf('Бесплатная процедура'));
- for (const expected of ['Наталья &lt;img','Лилия','08:30–16:00','11.10.2026, 12:00','Капельница со своими препаратами','Дополнительный внутримышечный укол','Милдронат 5 мл × 2 амп.','Препарат пациента 10 мл × 1 фл.','По прайсу:','К оплате:','Оплачено:','В долг:','200 ₽','Согласовано с владельцем','Бесплатно','Итоги смены','1300 ₽','1100 ₽','700 ₽','300 ₽','100 ₽']) assert.ok(html.includes(expected),expected);
- for(const secret of ['Скрыт','9999','Зарплата','Списано со склада','Остатки','Без списания со склада','<script>bad()','<img src=x>']) assert.ok(!html.includes(secret),secret);
+ for (const expected of ['Наталья &lt;img','Лилия','08:30–16:00','11.10.2026, 12:00','Капельница со своими препаратами','Дополнительный внутримышечный укол','Милдронат 5 мл × 2 амп.','Препарат пациента 10 мл × 1 фл.','По прайсу:','К оплате:','Оплачено:','В долг:','200 ₽','Согласовано с владельцем','Бесплатно','Итоги смены','1300 ₽','1100 ₽','700 ₽','300 ₽','100 ₽','Зарплаты за смену','Всего зарплата','2000 ₽','2500 ₽','4500 ₽','Выручка после зарплаты','-3400 ₽']) assert.ok(html.includes(expected),expected);
+ for(const secret of ['Скрыт','99995','99996','Списано со склада','Остатки','Без списания со склада','salaryAmount5-','salaryReason5-','saveSalaryV5(','<script>bad()','<img src=x>']) assert.ok(!html.includes(secret),secret);
 });
 
 test('nurse own shift shows finances without warehouse while owner keeps stock on the application screen',()=>{
  const {c,element}=boot();c.renderShiftReportV5(report(),true);
  let html=element('reportBody').innerHTML;
- for (const expected of ['Общая выручка','1100 ₽','Стоимость процедур и продаж','1300 ₽','В долг','200 ₽','Согласовано с владельцем']) assert.ok(html.includes(expected),expected);
- for (const secret of ['Скрыт','9999','Зарплата','Списано со склада','Остатки']) assert.ok(!html.includes(secret),secret);
+ for (const expected of ['Общая выручка','1100 ₽','Стоимость процедур и продаж','1300 ₽','В долг','200 ₽','Согласовано с владельцем','Зарплаты за смену','2000 ₽','2500 ₽','4500 ₽','Выручка после зарплаты','-3400 ₽']) assert.ok(html.includes(expected),expected);
+ for (const secret of ['Скрыт','99995','99996','Списано со склада','Остатки','salaryAmount5-','salaryReason5-','saveSalaryV5(']) assert.ok(!html.includes(secret),secret);
  c.currentStaff.role='owner';c.renderShiftReportV5(report(),true);html=element('reportBody').innerHTML;
- assert.ok(html.includes('Скрытый запас'));assert.ok(html.includes('99993'));assert.ok(html.includes('report-warehouse-v5'));
- assert.ok(!c.buildShiftPrintV5(report()).includes('99993'));
+ assert.ok(html.includes('Скрытый запас'));assert.ok(html.includes('4500'));assert.ok(html.includes('salaryAmount5-nurse-1'));assert.ok(html.includes('report-warehouse-v5'));
+ assert.ok(c.buildShiftPrintV5(report()).includes('4500 ₽'));assert.ok(!c.buildShiftPrintV5(report()).includes('99995'));assert.ok(!c.buildShiftPrintV5(report()).includes('Скрытая причина зарплаты'));
 });
 
 test('printing requires a current actor snapshot and print DOM is removed after printing or sign-out',async()=>{

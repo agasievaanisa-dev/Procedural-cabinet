@@ -1,0 +1,5 @@
+.med-origin-badge-v21{display:inline-block;margin:5px 0;padding:4px 8px;border-radius:8px;background:#eee5fa;color:#59307b;font-size:12px;font-weight:700;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
+.inventory-card.med-origin-import-v21,.med-tile.med-origin-import-v21,.item.med-origin-import-v21{border-left:4px solid #8656af}
+.inventory-card.med-origin-import-v21 h2,.med-tile.med-origin-import-v21 .photo-choice strong,.item.med-origin-import-v21 strong,.medrow.med-origin-import-v21 .chosen-name strong{color:#59307b}
+.medrow.med-origin-import-v21:not(.short){border-left:4px solid #8656af}
+.med-tile.med-origin-import-v21 .med-origin-badge-v21{font-size:11px}

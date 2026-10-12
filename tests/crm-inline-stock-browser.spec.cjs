@@ -6,7 +6,7 @@ const root=path.resolve(__dirname,'..');
 async function boot(page){
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.addInitScript(()=>{
-  window.requests=[];window.savedRequests={};window.transportAfterCommit=false;window.deferCorrection=false;window.deferredBatches={};window.releaseBatches={};window.listFailures=0;window.batchFailures=0;
+  window.requests=[];window.savedRequests={};window.transportAfterCommit=0;window.transportErrors=[];window.deferCorrection=false;window.deferredBatches={};window.releaseBatches={};window.listFailures=0;window.batchFailures=0;
   window.medData=[
    {id:'m1',name:'Самыр <img src=x onerror=alert(1)>',consumption_unit:'амп.',units_per_package:10,reserve_qty:20,work_qty:4,reserve_available:20,work_available:4,purchase_price:100,sale_price:20,manufacturer:'Производитель',release_form:'Раствор',comment:'Сохранить комментарий',dosage:'400 мг',manufacturer_country:'Италия',active:true},
    {id:'m2',name:'Препарат во флаконах',consumption_unit:'фл.',units_per_package:5,reserve_qty:9,work_qty:0,reserve_available:9,work_available:0,purchase_price:80,sale_price:25,comment:'Комментарий о флаконах',active:true}
@@ -34,7 +34,8 @@ async function boot(page){
     }
     if(name==='crm_stock_correction_v6'){
      if(deferCorrection){deferCorrection=false;await new Promise(resolve=>{window.releaseCorrection=resolve;});}
-     const existing=savedRequests[args.p_request_id];if(existing)return {data:copy(existing),error:null};
+     const lostReply=()=>{if(transportAfterCommit>0){transportAfterCommit--;return {error:transportErrors.shift()||{message:'Failed to fetch'}};}return null;};
+     const existing=savedRequests[args.p_request_id];if(existing)return lostReply()||{data:copy(existing),error:null};
      const med=medData.find(m=>m.id===p.id),batch=(batchData[p.id]||[]).find(b=>b.id===p.batch_id);
      if(action!=='inventory'||!batch)return {error:{code:'P0001',message:'Выберите партию'}};
      const before=p.location==='work'?batch.work_quantity:batch.quantity_remaining-batch.work_quantity;
@@ -42,7 +43,7 @@ async function boot(page){
      const difference=p.actual_quantity-before;batch.quantity_remaining+=difference;if(p.location==='work')batch.work_quantity+=difference;
      med[p.location==='work'?'work_qty':'reserve_qty']+=difference;med[p.location==='work'?'work_available':'reserve_available']+=difference;
      const result={id:p.id,batch_id:p.batch_id,before,quantity:p.actual_quantity,difference};savedRequests[args.p_request_id]=copy(result);
-     if(transportAfterCommit){transportAfterCommit=false;return {error:{message:'Failed to fetch'}};}
+     const failure=lostReply();if(failure)return failure;
      return {data:copy(result),error:null};
     }
     return {data:[],error:null};
@@ -128,11 +129,32 @@ test('empty, fractional, negative and unchanged quantities cannot save, and a pe
 
 test('a response lost after commit retries exactly the same operation without applying the quantity twice',async({page})=>{
  const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
- await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=true);await save(reserve).click();
- await expect(status(reserve)).toContainText('Не получен ответ сервера');await expect(input(reserve)).toHaveValue('6');
+ await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=2);await save(reserve).click();
+ await expect(status(reserve)).toContainText(/ответ.*(?:сохранени|сервер)|(?:сохранени|сервер).*ответ/i);await expect(input(reserve)).toHaveValue('6');
  expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);await save(reserve).click();await expect(status(reserve)).toContainText(/сохран/i);
- const calls=await correctionCalls(page);expect(calls).toHaveLength(2);expect(calls[0].args).toEqual(calls[1].args);
+ const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[2].args);
  expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
+});
+
+for(const finalError of [
+ {code:'08006',message:'Connection failure'},
+ {code:'P0001',message:'Остаток уже изменился. Обновите карточку'}
+])test(`an uncertain save retains its frozen payload when the final reply carries ${finalError.code}`,async({page})=>{
+ const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
+ await input(reserve).fill('6');await page.evaluate(error=>{transportAfterCommit=2;transportErrors=[{message:'Failed to fetch'},error];},finalError);
+ await save(reserve).click();await expect(save(reserve)).toHaveText('Повторить сохранение');await expect(save(reserve)).toBeEnabled();await expect(input(reserve)).toBeDisabled();
+ await input(reserve).evaluate(node=>{node.value='99';node.dispatchEvent(new Event('input'));});
+ await save(reserve).click();await expect(status(reserve)).toContainText(/сохран/i);await expect(input(reserve)).toHaveValue('6');
+ const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[2].args);
+ expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
+});
+
+test('a throwing refresh after a confirmed correction keeps the saved outcome and cannot replay it',async({page})=>{
+ const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
+ await input(reserve).fill('6');await page.evaluate(()=>{loadInventory=async()=>{throw Error('Catalogue refresh failed');};});
+ await save(reserve).click();await expect(status(reserve)).toContainText('Количество сохранено');await expect(status(reserve)).toContainText('Не удалось обновить экран');
+ await expect(save(reserve)).toHaveText('Сохранить');await expect(save(reserve)).toBeDisabled();await expect(input(reserve)).toHaveValue('6');
+ expect(await correctionCalls(page)).toHaveLength(1);expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);expect(await page.evaluate(()=>Object.keys(savedRequests).length)).toBe(1);expect(errors).toEqual([]);
 });
 
 test('a concurrently changed balance requires a refreshed count and a new request ID',async({page})=>{
@@ -170,21 +192,21 @@ test('nurses cannot open, reload or save stock editors through their public entr
 
 for(const externalRefresh of [false,true])test(`a confirmed retry reconciles totals when the catalogue refresh fails (external refresh: ${externalRefresh})`,async({page})=>{
  const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
- await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=true);await save(reserve).click();await expect(status(reserve)).toContainText('Не получен ответ сервера');
+ await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=2);await save(reserve).click();await expect(status(reserve)).toContainText(/ответ.*(?:сохранени|сервер)|(?:сохранени|сервер).*ответ/i);
  if(externalRefresh)await page.evaluate(()=>loadInventory());
  await page.evaluate(()=>listFailures=1);await save(reserve).click();await expect(status(reserve)).toContainText('Не удалось обновить список');
  expect(await page.evaluate(()=>inventory.find(m=>m.id==='m2').reserve_qty)).toBe(6);expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);
  await expect(input(reserve)).toHaveValue('6');await expect(page.locator('[data-inline-stock-medication-v8="m2"] .stock-cell').first()).toContainText('6 фл.');
- const calls=await correctionCalls(page);expect(calls).toHaveLength(2);expect(calls[0].args).toEqual(calls[1].args);expect(errors).toEqual([]);
+ const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[2].args);expect(errors).toEqual([]);
 });
 
 test('an explicit recount retires an uncertain request ID before an identical future correction',async({page})=>{
  const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
- await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=true);await save(reserve).click();await expect(status(reserve)).toContainText('Не получен ответ сервера');
+ await input(reserve).fill('6');await page.evaluate(()=>transportAfterCommit=2);await save(reserve).click();await expect(status(reserve)).toContainText(/ответ.*(?:сохранени|сервер)|(?:сохранени|сервер).*ответ/i);
  await editor.locator('[data-inline-stock-reload-v8]').filter({visible:true}).first().click();await expect(input(reserve)).toHaveValue('6');
  await page.evaluate(async()=>{batchData.m2[0].quantity_remaining=9;medData[1].reserve_qty=9;medData[1].reserve_available=9;await reloadInlineStockV8('m2','list');});
  await expect(input(reserve)).toHaveValue('9');await input(reserve).fill('6');await save(reserve).click();await expect(status(reserve)).toContainText(/сохран/i);
- const calls=await correctionCalls(page);expect(calls).toHaveLength(2);expect(calls[0].args.p_payload).toEqual(calls[1].args.p_payload);expect(calls[0].args.p_request_id).not.toBe(calls[1].args.p_request_id);
+ const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args.p_payload).toEqual(calls[2].args.p_payload);expect(calls[0].args.p_request_id).not.toBe(calls[2].args.p_request_id);
  expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(6);expect(errors).toEqual([]);
 });
 
@@ -199,10 +221,10 @@ test('catalogue refreshes during batch loading and saving preserve the logical e
 
 test('replaying an older committed correction cannot overwrite a later card correction when reads fail',async({page})=>{
  const errors=await boot(page),editor=await openList(page,'m2','B-1'),reserve=row(editor,'b3','reserve');
- await input(reserve).fill('7');await page.evaluate(()=>transportAfterCommit=true);await save(reserve).click();await expect(status(reserve)).toContainText('Не получен ответ сервера');
+ await input(reserve).fill('7');await page.evaluate(()=>transportAfterCommit=2);await save(reserve).click();await expect(status(reserve)).toContainText(/ответ.*(?:сохранени|сервер)|(?:сохранени|сервер).*ответ/i);
  await page.evaluate(()=>openMedForm('m2','edit'));const cardReserve=row(page.locator('#batchList'),'b3','reserve');await expect(input(cardReserve)).toHaveValue('7');
  await input(cardReserve).fill('5');await save(cardReserve).click();await expect(status(cardReserve)).toContainText(/сохран/i);
- await page.evaluate(()=>{show('admin');batchFailures=1;listFailures=1;});await save(reserve).click();await expect(status(reserve)).toContainText('Не удалось проверить текущие партии');
+ await page.evaluate(()=>{show('admin');batchFailures=2;listFailures=1;});await save(reserve).click();await expect(status(reserve)).toContainText('Не удалось проверить текущие партии');
  expect(await page.evaluate(()=>inventory.find(m=>m.id==='m2').reserve_qty)).toBe(5);expect(await page.evaluate(()=>medData[1].reserve_qty)).toBe(5);await expect(input(cardReserve)).toHaveValue('5');
- const calls=await correctionCalls(page);expect(calls).toHaveLength(3);expect(calls[0].args).toEqual(calls[2].args);expect(errors).toEqual([]);
+ const calls=await correctionCalls(page);expect(calls).toHaveLength(4);expect(calls[0].args).toEqual(calls[1].args);expect(calls[0].args).toEqual(calls[3].args);expect(errors).toEqual([]);
 });

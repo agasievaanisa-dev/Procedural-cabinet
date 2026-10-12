@@ -9,8 +9,8 @@ async function boot(page,role='nurse') {
  await page.evaluate(role=>{
   currentStaff={id:'staff-1',full_name:'Наталья',role,active:true};shift={id:'shift-1',a:'Наталья',b:'Лилия',type:'08:30–16:00'};
   financeAccountingMode5={payment_only:true,stock_deducted:false};
-  window.__reportV10={shift:{id:'shift-1',date:'2026-10-11',started_at:'2026-10-11T05:30:00Z',planned_end_at:'2026-10-11T13:00:00Z',status:'closed'},staff:[{id:'staff-1',full_name:'Наталья',amount:99991},{id:'staff-2',full_name:'Лилия <img src=x>',amount:99992}],patients_count:3,procedures_count:2,sales_count:1,
-   revenue:{cash:500,terminal:200,owner_card:300,total:1000},charge_total:1200,debt_total:200,payroll_total:99993,cash_after_salary:99994,
+  window.__reportV10={shift:{id:'shift-1',date:'2026-10-11',started_at:'2026-10-11T05:30:00Z',planned_end_at:'2026-10-11T13:00:00Z',status:'closed'},staff:[{id:'staff-1',full_name:'Наталья',amount:2000,reason:'Скрытая причина зарплаты'},{id:'staff-2',full_name:'Лилия <img src=x>',amount:2500}],patients_count:3,procedures_count:2,sales_count:1,
+   revenue:{cash:500,terminal:200,owner_card:300,total:1000},charge_total:1200,debt_total:200,payroll_total:4500,payroll_complete:true,payroll_unknown:0,cash_after_salary:-3500,
    used:[{name:'Скрытое списание',quantity:9}],untracked:[{name:'Скрытая операция',quantity:3}],stock:[{name:'Скрытый склад',work:99995,reserve:99996}],warnings:[],
    procedures:[{id:'procedure-1',at:'2026-10-11T09:00:00Z',patient:'Анна <script>bad()</script>',nurse:'Наталья',type:'Капельница',services:[{name:'Капельница со своими препаратами',quantity:1,line_total:500},{name:'Внутримышечный дополнительный укол',quantity:1,line_total:100}],items:[{name:'Милдронат 5 мл',quantity:2,unit:'амп.',line_total:600}],own_medications:[{name:'Препарат пациента',quantity:1,unit:'фл.'}],list_total:1200,charge_total:900,paid_total:700,debt_total:200,discount_amount:300,discount_reason:'Постоянная скидка',discount_comment:'Согласовано с владельцем',payments:{cash:500,terminal:200,owner_card:0}},
     {id:'procedure-2',at:'2026-10-11T10:00:00Z',patient:'Вера',nurse:'Лилия',type:'Внутривенный укол',own_medications:[{name:'Свой препарат',quantity:1,unit:'амп.'}],items:[],list_total:300,charge_total:0,paid_total:0,debt_total:0,discount_amount:300,discount_comment:'Бесплатно по решению владельца'}],
@@ -27,7 +27,9 @@ test('nurse has explicit medication sale action and prints the entire own shift 
  await expect(page.locator('#workspace .home-actions button[onclick="openSale()"]')).toContainText('Продажа препарата');
  await page.evaluate(()=>renderShiftReportV5(window.__reportV10,true));
  await expect(page.locator('#reportBody')).toContainText('1 000');await expect(page.locator('#reportBody')).toContainText('В долг');
- for (const secret of ['Скрыт','Зарплата','Списано со склада','Остатки']) await expect(page.locator('#reportBody')).not.toContainText(secret);
+ for (const expected of ['Зарплаты за смену','2 000','2 500','4 500','Выручка после зарплаты','-3 500']) await expect(page.locator('#reportBody')).toContainText(expected);
+ await expect(page.locator('#reportBody input[id^="salaryAmount5-"],#reportBody input[id^="salaryReason5-"],#reportBody button[onclick^="saveSalaryV5"]')).toHaveCount(0);
+ for (const secret of ['Скрыт','99 995','99 996','Списано со склада','Остатки']) await expect(page.locator('#reportBody')).not.toContainText(secret);
  await page.click('#reportPrintV5');expect(await page.evaluate(()=>window.__printCalls)).toBe(1);
  await page.emulateMedia({media:'print'});
  await expect(page.locator('#shiftPrintV5')).toBeVisible();await expect(page.locator('.app')).toBeHidden();
@@ -36,7 +38,9 @@ test('nurse has explicit medication sale action and prints the entire own shift 
  await expect(entries.nth(0)).toContainText('Первый пациент');await expect(entries.nth(1)).toContainText('Анна <script>bad()</script>');await expect(entries.nth(2)).toContainText('Вера');
  for (const expected of ['11.10.2026, 12:00','Капельница со своими препаратами','Внутримышечный дополнительный укол','Милдронат 5 мл × 2 амп.','Препарат пациента × 1 фл.','Согласовано с владельцем','К оплате: 900','Оплачено: 700','В долг: 200']) await expect(entries.nth(1)).toContainText(expected);
  await expect(entries.nth(2)).toContainText('Бесплатно');await expect(page.locator('#shiftPrintV5 footer')).toContainText('1 200');await expect(page.locator('#shiftPrintV5 footer')).toContainText('1 000');
- for (const secret of ['Скрыт','9999','Зарплата','Остатки','Списано со склада','Без списания со склада']) await expect(page.locator('#shiftPrintV5')).not.toContainText(secret);
+ for (const expected of ['Зарплаты за смену','2 000','2 500','4 500','Выручка после зарплаты','-3 500']) await expect(page.locator('#shiftPrintV5 footer')).toContainText(expected);
+ expect(await page.locator('#shiftPrintV5 input,#shiftPrintV5 button[onclick^="saveSalaryV5"]').count()).toBe(0);
+ for (const secret of ['Скрыт','99 995','99 996','Остатки','Списано со склада','Без списания со склада']) await expect(page.locator('#shiftPrintV5')).not.toContainText(secret);
  expect(await page.locator('#shiftPrintV5 script,#shiftPrintV5 img').count()).toBe(0);
  await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));await expect(page.locator('#shiftPrintV5')).toHaveCount(0);
  await page.emulateMedia({media:'screen'});await expect(page.locator('#report')).toBeVisible();
@@ -45,9 +49,9 @@ test('nurse has explicit medication sale action and prints the entire own shift 
 
 test('owner stock remains in app but stays outside the printed shift; failed next shift cannot print stale data',async({page})=>{
  const errors=await boot(page,'owner');await page.evaluate(()=>renderShiftReportV5(window.__reportV10,true));
- await expect(page.locator('#reportBody')).toContainText('Скрытый склад');await expect(page.locator('#reportBody')).toContainText('Зарплата');
+ await expect(page.locator('#reportBody')).toContainText('Скрытый склад');await expect(page.locator('#reportBody')).toContainText('Зарплаты за смену');await expect(page.locator('#reportBody input[id^="salaryAmount5-"]')).toHaveCount(2);
  await page.click('#reportPrintV5');await page.emulateMedia({media:'print'});await expect(page.locator('#shiftPrintV5')).toBeVisible();
- await expect(page.locator('#shiftPrintV5')).not.toContainText('Скрытый склад');await expect(page.locator('#shiftPrintV5')).not.toContainText('99993');
+ await expect(page.locator('#shiftPrintV5')).not.toContainText('Скрытый склад');await expect(page.locator('#shiftPrintV5 footer')).toContainText('4 500');await expect(page.locator('#shiftPrintV5')).not.toContainText('Скрытая причина зарплаты');expect(await page.locator('#shiftPrintV5 input').count()).toBe(0);
  await page.emulateMedia({media:'screen'});await page.evaluate(async()=>{window.dispatchEvent(new Event('afterprint'));db.rpc=async()=>({error:{code:'P0001',message:'Не удалось получить смену'}});await openReportByIdV5('shift-2');printShiftReportV5()});
  await expect(page.locator('#reportPrintV5')).toBeDisabled();await expect(page.locator('#shiftPrintV5')).toHaveCount(0);expect(await page.evaluate(()=>window.__printCalls)).toBe(1);
  await expect(page.locator('#reportPrintMessageV5')).toContainText('Сначала откройте');expect(errors).toEqual([]);
@@ -62,7 +66,7 @@ for(const role of ['nurse','owner'])test(`${role} print shows captured 14300 lis
   // explain the exact reduction, independently of today's medication prices.
   delete event.discount_amount;
   services=[{id:'captured-service',name:'Услуга после изменения прайса',work_price:99997,consumables_price:0}];meds=[{id:'captured-med',name:'Переименованный препарат',sale_price:99998}];
-  Object.assign(__reportV10,{procedures:[event],sales:[],receipts:[],patients_count:1,procedures_count:1,sales_count:0,charge_total:11500,debt_total:11500,revenue:{cash:0,terminal:0,owner_card:0,total:0}});renderShiftReportV5(__reportV10,true);
+  Object.assign(__reportV10,{procedures:[event],sales:[],receipts:[],patients_count:1,procedures_count:1,sales_count:0,charge_total:11500,debt_total:11500,cash_after_salary:-4500,revenue:{cash:0,terminal:0,owner_card:0,total:0}});renderShiftReportV5(__reportV10,true);
  });
  await page.click('#reportPrintV5');expect(await page.evaluate(()=>__printCalls)).toBe(1);await page.emulateMedia({media:'print'});await expect(page.locator('#shiftPrintV5')).toBeVisible();
  const entry=page.locator('#shiftPrintV5 .shift-print-event-v5');await expect(entry).toHaveCount(1);
@@ -70,6 +74,7 @@ for(const role of ['nurse','owner'])test(`${role} print shows captured 14300 lis
  expect(await entry.innerText()).toMatch(/По прайсу:[\s\S]*Скидка:[\s\S]*К оплате:[\s\S]*Оплачено(?: всего)?:[\s\S]*В долг:/);
  await expect(entry).toContainText(/Препарат с сохранённой ценой\s*×\s*2\s*фл\./);await expect(entry).toContainText('Капельница по сохранённому прайсу');await expect(entry).toContainText('Скидка 2 800 ₽ согласована начальником');
  for(const changed of ['Услуга после изменения прайса','Переименованный препарат','99 997','99 998'])await expect(entry).not.toContainText(changed);
- for(const secret of ['Скрыт','9999','Зарплата','Остатки','Списано со склада'])await expect(page.locator('#shiftPrintV5')).not.toContainText(secret);
+ await expect(page.locator('#shiftPrintV5 footer')).toContainText('Зарплаты за смену');await expect(page.locator('#shiftPrintV5 footer')).toContainText('4 500');expect(await page.locator('#shiftPrintV5 input').count()).toBe(0);
+ for(const secret of ['Скрыт','99 995','99 996','99 997','99 998','Остатки','Списано со склада'])await expect(page.locator('#shiftPrintV5')).not.toContainText(secret);
  expect(await page.locator('#shiftPrintV5 script,#shiftPrintV5 img').count()).toBe(0);await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));await expect(page.locator('#shiftPrintV5')).toHaveCount(0);expect(errors).toEqual([]);
 });

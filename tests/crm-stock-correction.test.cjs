@@ -48,3 +48,13 @@ test('an old response after clearing a session cannot discard the next session r
  const old=send('inventory',data);send.clear();await assert.rejects(send('inventory',data));resolveFirst({data:{quantity:3},error:null});await old;await send('inventory',data);
  assert.notEqual(calls[0].p_request_id,calls[1].p_request_id);assert.equal(calls[1].p_request_id,calls[2].p_request_id);
 });
+test('malformed correction acknowledgement retains its UUID and thrown SQL errors preserve metadata',async()=>{
+ const calls=[];let serial=0,reply=null;
+ const send=createRequester(async(_name,args)=>{calls.push(args);if(reply instanceof Error)throw reply;return reply;},()=>{},()=>`request-${++serial}`);
+ const data={id:'m1',actual_quantity:3,expected_quantity:8,reason:'Ошибка'};
+ for(const value of [null,{},[],{quantity:null},{quantity:'bad'}]){reply={data:value};await assert.rejects(send('inventory',data),error=>error.uncertain===true);}
+ reply={data:{quantity:3}};await send('inventory',data);assert.equal(new Set(calls.map(call=>call.p_request_id)).size,1);
+ reply=Object.assign(Error('Connection reset'),{code:'08006',status:503,uncertain:true});
+ await assert.rejects(send('inventory',data),error=>error.code==='08006'&&error.status===503&&error.uncertain===true);
+ reply={data:{quantity:3}};await send('inventory',data);assert.equal(calls.at(-1).p_request_id,calls.at(-2).p_request_id);
+});
