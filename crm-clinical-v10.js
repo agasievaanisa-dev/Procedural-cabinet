@@ -157,6 +157,40 @@
   return medicines + (prefix === 'proc' ? selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) : 0);
  }
  function clearConfirmation(prefix) { if ($(prefix + 'PayConfirmed')) $(prefix + 'PayConfirmed').checked = false; }
+ function installVisitTime(prefix) {
+  if ($(prefix + 'VisitDateV23')) return;
+  const host = document.createElement('div'); host.className = 'clinical-visit-time-v23';
+  host.innerHTML = `<h2>Время посещения</h2><p class="small">Дата и время прихода пациента · Москва (UTC+3)</p><div class="grid2"><div><label for="${prefix}VisitDateV23">Дата посещения *</label><input id="${prefix}VisitDateV23" type="date" required></div><div><label for="${prefix}VisitTimeV23">Точное время посещения *</label><input id="${prefix}VisitTimeV23" type="time" step="60" required></div></div>`;
+  $(prefix + 'Patient').closest('.grid2').after(host);
+  for (const suffix of ['Date','Time']) {
+   const input = $(prefix + 'Visit' + suffix + 'V23');
+   for (const event of ['input','change']) input.addEventListener(event,() => {
+    const s = state(prefix); if (!s) return;
+    if (s.visitTimeV23) s.visitTimeV23.manual = true;
+    clearConfirmation(prefix);
+   });
+  }
+  $(prefix + 'Patient').addEventListener('change',() => {
+   const s = state(prefix); if (!s || s.edit || s.retry || s.visitTimeV23?.manual) return;
+   resetVisitTime(prefix,null,$(prefix + 'Patient').value);
+  });
+ }
+ function resetVisitTime(prefix,record,patientId) {
+  const s = state(prefix); if (!s) return;
+  const original = record?.arrival_at || record?.display_visit_at || record?.at || record?.visit_at || record?.sold_at || null;
+  const seed = !record && typeof global.patientVisitSeedV23 === 'function' ? global.patientVisitSeedV23(patientId) : null;
+  const value = original || seed, defaults = value ? global.CrmVisitTimeV23.parts(value) : global.CrmVisitTimeV23.nowParts();
+  $(prefix + 'VisitDateV23').value = defaults.date; $(prefix + 'VisitTimeV23').value = defaults.time;
+  s.visitTimeV23 = {original,date:defaults.date,time:defaults.time,manual:false};
+ }
+ function visitPayload(prefix) {
+  const s = state(prefix), initial = s?.visitTimeV23;
+  // Older non-UI integrations do not install visit controls; their server default remains valid.
+  if (!initial) return {};
+  const date = $(prefix + 'VisitDateV23').value, time = $(prefix + 'VisitTimeV23').value;
+  if (s.edit && date === initial.date && time === initial.time) return {};
+  return {arrival_at:global.CrmVisitTimeV23.toIso(date,time)};
+ }
  function chargeChanged(prefix) {
   if (!state(prefix)) return;
   state(prefix).chargeEdited = true; clearConfirmation(prefix); calculate(prefix,false);
@@ -172,6 +206,7 @@
  }
  function install(prefix) {
   installPaymentControlsV5(prefix);
+  installVisitTime(prefix);
   if ($(prefix + 'ClinicalV10')) return;
   const paid = $(prefix + 'Paid'), host = document.createElement('div');
   host.id = prefix + 'ClinicalV10'; host.className = 'clinical-payment-v10';
@@ -366,7 +401,7 @@
   if (prefix === 'proc') { $('procAdditionalServicesV10').innerHTML = ''; $('procOwnMedsV10').innerHTML = ''; }
   const ready = await prepareBase(kind,patientId,navigation);
   if (!quickNavigationCurrent4(navigation,actor)) return false;
-  if (ready) { $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Новая процедура' : 'Продажа препаратов'; $('repeatHint')?.classList.remove('hidden'); $(prefix + 'Patient').disabled = false; $(prefix + 'Nurse').disabled = false; }
+  if (ready) { resetVisitTime(prefix,null,$(prefix + 'Patient').value); $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Новая процедура' : 'Продажа препаратов'; $('repeatHint')?.classList.remove('hidden'); $(prefix + 'Patient').disabled = false; $(prefix + 'Nurse').disabled = false; }
   return ready;
  };
  saveTreatment = async function(kind) {
@@ -395,7 +430,7 @@
    if (model.status === 'pending' && model.received === 0) $(prefix + 'PayConfirmed').checked = true;
    const allServices = kind === 'procedure' ? selectedServices() : [];
    allServices.forEach(item => positiveWhole(item.quantity,'Количество процедур'));
-   payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly};
+   payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly,...visitPayload(prefix)};
    if (!paymentOnly && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) payload.reserve_sale = true;
    if (s.edit && model.received > 0 && shift?.id && shift.id !== s.edit.shift_id) { payload.payment_shift_id=shift.id; payload.payment_nurse_id=[shift.aId,shift.bId].includes(currentStaff.id)?currentStaff.id:shift.aId; }
    if (s.edit) {
@@ -413,6 +448,7 @@
    s.correctionSavingV22 = correcting;
    const receipt = s.edit ? await clinicalRpc(correcting ? 'payment_correction' : 'treatment_edit',payload,true) : await treatmentRpc(kind,payload);
    assertActor(actor); saved = true;
+   if (!s.edit && kind === 'procedure' && typeof global.consumePatientVisitSeedV23 === 'function') global.consumePatientVisitSeedV23(payload.patient_id);
    if (!correcting || state(prefix) === s) { forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = ''; }
    if (!correcting || quickNavigationCurrent4(navigation,currentStaff?.id)) show('workspace');
    const success = correcting ? `Оплата исправлена. В долг: ${rub(receipt?.debt_total ?? model.debt / 100)}. Ошибочно отмеченная оплата убрана из выручки.` : `${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`;
@@ -454,6 +490,7 @@
    install(prefix); await Promise.all([loadMeds(),loadPatients(),loadServices()]); assertActor(actor); if (version !== editorView || !quickNavigationCurrent4(navigation,currentStaff?.id)) return;
    financeTreatmentMode5[prefix] = {payment_only:record.stock_deducted === false,stock_deducted:record.stock_deducted !== false};
    $(prefix + 'Patient').innerHTML = patientOptions(true); if (patientId && !patients.some(patient => patient.id === patientId)) $(prefix + 'Patient').add(new Option(record.patient || 'Пациент записи',patientId)); $(prefix + 'Patient').value = patientId || ''; $(prefix + 'Patient').disabled = true;
+   resetVisitTime(prefix,record,patientId);
    $(prefix + 'Nurse').innerHTML = `<option value="${esc(record.nurse_id)}">${esc(record.nurse || 'Медсестра записи')}</option>`; $(prefix + 'Nurse').disabled = true;
    $(prefix + 'Meds').innerHTML = '';
    if (prefix === 'proc') {

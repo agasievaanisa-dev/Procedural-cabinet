@@ -52,6 +52,8 @@
   const documentDrafts = new Map();
   const archiveDrafts = new Map();
   const deletionRequests = new Map();
+  const firstVisitSeedsV23 = new Map();
+  let originalFirstVisitV23 = null, originalFirstVisitPartsV23 = null;
   let deletionBusy = false;
   let recognition = null, voicePlan = null, voiceVersion = 0, voiceBusy = false, voiceReturnFocus = null;
   const allowed = () => ['owner', 'admin', 'nurse'].includes(currentStaff?.role);
@@ -60,6 +62,12 @@
   function requireAccess() { if (!allowed()) throw new Error('Войдите под учётной записью владельца или медсестры.'); }
   function patientMessage(text, success = false) { message('patientFormMessageV5', text, success); }
   const patientActor = () => JSON.stringify([currentStaff?.id, currentStaff?.role, patientSession]);
+  global.patientVisitSeedV23 = function (id) {
+    const seed = firstVisitSeedsV23.get(id);
+    if (!allowed() || seed?.actor !== patientActor()) { firstVisitSeedsV23.delete(id); return null; }
+    return seed.at;
+  };
+  global.consumePatientVisitSeedV23 = function (id) { firstVisitSeedsV23.delete(id); };
   function requirePatientActor(actor) { requireAccess(); if (actor !== patientActor()) throw new Error('Учётная запись изменилась. Откройте форму заново.'); }
   function networkFailure(error, status) {
     if (typeof global.SaveRecoveryV16?.isRetryable === 'function') return global.SaveRecoveryV16.isRetryable(error, status);
@@ -98,7 +106,7 @@
   global.patientCardRecordV20 = function (id) {
     requireAccess(); const patient = patientById(id);
     if (!patient || isDeleted(patient) || (isArchived(patient) && !owner())) throw new Error('Пациент не найден. Откройте его карточку заново.');
-    return Object.fromEntries(['id', 'full_name', 'birth_date', 'sex', 'phone', 'complaints', 'request', 'prescriptions', 'notes'].map(key => [key, patient[key] ?? null]));
+    return Object.fromEntries(['id', 'full_name', 'birth_date', 'sex', 'phone', 'complaints', 'request', 'prescriptions', 'notes', 'first_visit_at'].map(key => [key, patient[key] ?? null]));
   };
   loadPatients = async function () {
     requireAccess();
@@ -131,6 +139,10 @@
   function fillPatientForm(patient = {}) {
     ++formVersion;
     Object.entries(patientFields).forEach(([id, key]) => { $(id).value = patient[key] || (key === 'sex' ? 'unknown' : ''); });
+    originalFirstVisitV23 = patient.first_visit_at || null;
+    originalFirstVisitPartsV23 = originalFirstVisitV23 ? global.CrmVisitTimeV23.parts(originalFirstVisitV23) : null;
+    const visit = originalFirstVisitPartsV23 || (editId || Object.hasOwn(patient, 'first_visit_at') ? {date:'',time:''} : global.CrmVisitTimeV23.nowParts());
+    $('pVisitDateV23').value = visit.date; $('pVisitTimeV23').value = visit.time;
     $('newPatient').querySelector('h1').textContent = editId ? 'Редактирование пациента' : 'Новый пациент';
     $('newPatient').querySelector('button[onclick="addPatient()"]').textContent = editId ? 'Сохранить изменения' : 'Сохранить пациента';
     patientMessage('');
@@ -138,7 +150,7 @@
   }
   function updatePatientSaveControls() {
     const pending = saveDraft?.actor === patientActor() && (saving || saveDraft.uncertain || saveDraft.result);
-    Object.keys(patientFields).forEach(id => { $(id).disabled = !!pending; });
+    [...Object.keys(patientFields), 'pVisitDateV23', 'pVisitTimeV23'].forEach(id => { $(id).disabled = !!pending; });
     const button = $('newPatient').querySelector('button[onclick="addPatient()"]');
     button.disabled = saving;
     button.textContent = saveDraft?.result ? 'Открыть сохранённую карточку' : saveDraft?.uncertain ? 'Повторить сохранение' : editId ? 'Сохранить изменения' : 'Сохранить пациента';
@@ -167,12 +179,18 @@
     try {
       requireAccess();
       if (editId && !owner()) throw new Error('Изменять карточку пациента может только владелец.');
-      const payload = Object.fromEntries(Object.entries(patientFields).map(([id, key]) => [key, $(id).value.trim() || null]));
-      if (!payload.full_name) throw new Error('Укажите имя пациента. Фамилия и остальные поля необязательны.');
-      if (payload.full_name.length > 200) throw new Error('Имя пациента должно содержать не более 200 символов.');
-      if (payload.birth_date && payload.birth_date > localDateValue()) throw new Error('Дата рождения не может быть в будущем.');
-      if (editId) payload.id = editId;
-      draft = saveDraft?.actor === actor ? saveDraft : {actor,payload,requestId:crypto.randomUUID(),uncertain:false,result:null};
+      draft = saveDraft?.actor === actor ? saveDraft : null;
+      if (!draft) {
+        const payload = Object.fromEntries(Object.entries(patientFields).map(([id, key]) => [key, $(id).value.trim() || null]));
+        if (!payload.full_name) throw new Error('Укажите имя пациента. Фамилия и остальные поля необязательны.');
+        if (payload.full_name.length > 200) throw new Error('Имя пациента должно содержать не более 200 символов.');
+        if (payload.birth_date && payload.birth_date > localDateValue()) throw new Error('Дата рождения не может быть в будущем.');
+        const visitDate = $('pVisitDateV23').value, visitTime = $('pVisitTimeV23').value;
+        payload.first_visit_at = originalFirstVisitV23 && visitDate === originalFirstVisitPartsV23?.date && visitTime === originalFirstVisitPartsV23?.time
+          ? originalFirstVisitV23 : global.CrmVisitTimeV23.optionalIso(visitDate, visitTime);
+        if (editId) payload.id = editId;
+        draft = {actor,payload,requestId:crypto.randomUUID(),uncertain:false,result:null};
+      }
       saveDraft = draft; saving = true; saveOperation = operation; updatePatientSaveControls(); patientMessage(draft.result ? 'Открываем сохранённую карточку…' : 'Сохраняем…');
       if (!draft.result) {
         const result = await patientRequest('crm_patient_save_v11', {p_payload:draft.payload,p_request_id:draft.requestId}, true, () => {draft.uncertain = true;});
@@ -182,6 +200,10 @@
       }
       requirePatientActor(actor);
       const patient = draft.result;
+      if (!draft.patientSeedHandled) {
+        if (!draft.payload.id && patient.first_visit_at) firstVisitSeedsV23.set(patient.id, {actor,at:patient.first_visit_at});
+        draft.patientSeedHandled = true;
+      }
       directory = directory.filter(item => item.id !== patient.id).concat(patient);
       patients = patients.filter(item => item.id !== patient.id).concat(isArchived(patient) || isDeleted(patient) ? [] : patient);
       if (!stillCurrent()) return;
@@ -254,11 +276,12 @@
     finally { deletionBusy = false; $('patientDeleteV10').disabled = false; }
   };
   function renderPatientInfo(patient) {
-    const fields = [['Дата рождения', patient.birth_date], ['Пол', sexLabel(patient.sex)], ['Телефон', patient.phone], ['Жалобы', patient.complaints], ['Запрос', patient.request], ['Назначения врача', patient.prescriptions], ['Комментарий', patient.notes]];
+    const firstVisit = patient.first_visit_at ? new Date(patient.first_visit_at).toLocaleString('ru-RU', {timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : null;
+    const fields = [['Дата рождения', patient.birth_date], ['Пол', sexLabel(patient.sex)], ['Телефон', patient.phone], ['Первое посещение · Москва', firstVisit], ['Жалобы', patient.complaints], ['Запрос', patient.request], ['Назначения врача', patient.prescriptions], ['Комментарий', patient.notes]];
     $('patientCardInfo').innerHTML = fields.filter(([, value], index) => index < 3 || value).map(([label, value]) => `<div><b>${label}:</b> ${esc(value || '—')}</div>`).join('');
   }
   function renderPatientHistory(data) {
-    const events = [...(data?.procedures || []).map(event => ({ ...event, kind: 'Процедура', at: event.visit_at, items: event.medications || [] })), ...(data?.sales || []).map(event => ({ ...event, kind: 'Продажа препарата', at: event.sold_at, items: event.items || [] }))].sort((a, b) => new Date(b.at) - new Date(a.at));
+    const events = [...(data?.procedures || []).map(event => ({ ...event, kind: 'Процедура', at: event.at || event.arrival_at || event.visit_at, items: event.medications || [] })), ...(data?.sales || []).map(event => ({ ...event, kind: 'Продажа препарата', at: event.at || event.sold_at, items: event.items || [] }))].sort((a, b) => new Date(b.at) - new Date(a.at));
     $('patientHistory').innerHTML = events.map(event => `<div class="item"><div class="row between"><strong>${event.kind}${event.procedure_type ? ' · ' + esc(event.procedure_type) : ''}</strong>${owner() && event.paid_total != null ? `<span>${rub(event.paid_total)}</span>` : ''}</div>${event.stock_deducted === false ? '<span class="pill accounting-badge-v5">Без списания со склада</span>' : ''}<div class="small">${esc(new Date(event.at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }))} · ${esc(event.nurse || '')}</div>${event.items.length ? `<div class="small">${event.items.map(item => `${esc(item.name)} × ${esc(qty(item.quantity))} ${esc(item.unit || '')}`).join(', ')}</div>` : ''}${owner() && num(event.discount_amount) > 0 ? `<div class="small">Скидка: ${rub(event.discount_amount)}</div>` : ''}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}</div>`).join('') || '<div class="notice">История пока пустая.</div>';
   }
   loadPatientDocuments = async function (patientId) {
@@ -510,6 +533,9 @@
     const sex = document.createElement('div'); sex.className = 'patient-sex-v5';
     sex.innerHTML = '<label for="psexV5">Пол</label><select id="psexV5"><option value="unknown">Не указан</option><option value="female">Женский</option><option value="male">Мужской</option></select><p class="small">Для сохранения достаточно имени. Остальные поля можно заполнить позже.</p>';
     $('pphone').before(sex);
+    const visit = document.createElement('fieldset'); visit.className = 'patient-visit-time-v23';
+    visit.innerHTML = '<legend>Дата и время посещения · Москва</legend><div class="patient-visit-inputs-v23"><div><label for="pVisitDateV23">Дата посещения</label><input id="pVisitDateV23" type="date"></div><div><label for="pVisitTimeV23">Точное время</label><input id="pVisitTimeV23" type="time" step="60"></div></div><p class="small">При создании указано текущее время. Можно изменить его или оставить оба поля пустыми. Следующие посещения указывайте в процедуре.</p>';
+    sex.after(visit);
     const formMessage = document.createElement('div'); formMessage.id = 'patientFormMessageV5'; formMessage.setAttribute('role', 'status'); $('newPatient').querySelector('.card').append(formMessage);
     const filter = document.createElement('div'); filter.id = 'patientArchiveFilterV5'; filter.className = 'hidden patient-archive-filter-v5'; filter.innerHTML = '<label><input id="patientIncludeArchivedV5" type="checkbox"> Показать архив пациентов</label>';
     $('patientSearch').after(filter); $('patientIncludeArchivedV5').onchange = renderPatients;
@@ -530,7 +556,7 @@
     document.body.append(dialog); $('voiceCloseV5').onclick = global.closeVoiceV5; $('voiceListenV5').onclick = global.listenVoiceV5; $('voicePreviewButtonV5').onclick = global.previewVoiceV5; $('voiceApplyV5').onclick = global.applyVoiceV5; $('voiceTextV5').oninput = invalidateVoice;
     dialog.addEventListener('cancel', event => { event.preventDefault(); global.closeVoiceV5(); });
     const originalSignOut = signOut;
-    signOut = async function () { ++patientSession; ++cardVersion; ++listVersion; saveDraft = null; saveOperation = null; archiveOperation = null; documentOperation = null; archiveBusy = false; documentSaving = false; saving = false; voiceBusy = false; global.closeVoiceV5(); directory = []; documentDrafts.clear(); archiveDrafts.clear(); editId = null; fillPatientForm(); currentPatientId = null; $('patientIncludeArchivedV5').checked = false; for (const id of ['patientHistory', 'patientDocuments', 'patientCourses', 'patientCardInfo', 'lastProcedure']) $(id).textContent = ''; await originalSignOut(); };
+    signOut = async function () { ++patientSession; ++cardVersion; ++listVersion; saveDraft = null; saveOperation = null; archiveOperation = null; documentOperation = null; archiveBusy = false; documentSaving = false; saving = false; voiceBusy = false; global.closeVoiceV5(); directory = []; documentDrafts.clear(); archiveDrafts.clear(); firstVisitSeedsV23.clear(); editId = null; fillPatientForm(); currentPatientId = null; $('patientIncludeArchivedV5').checked = false; for (const id of ['patientHistory', 'patientDocuments', 'patientCourses', 'patientCardInfo', 'lastProcedure']) $(id).textContent = ''; await originalSignOut(); };
   }
   install();
 })(typeof window !== 'undefined' ? window : globalThis);

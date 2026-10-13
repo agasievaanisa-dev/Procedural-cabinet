@@ -14,7 +14,7 @@
  }
  function patientSnapshot(patient) {
   if (!patient?.id || !patient.full_name) throw Error('Сначала откройте карточку пациента');
-  return Object.fromEntries(['id','full_name','birth_date','sex','phone','complaints','request','prescriptions','notes'].map(key => [key,string(patient[key])]));
+  return Object.fromEntries(['id','full_name','birth_date','sex','phone','complaints','request','prescriptions','notes','first_visit_at'].map(key => [key,string(patient[key])]));
  }
  function itemSnapshot(item, own = false) {
   const result = {name:string(item.name || item.service_name),dosage:string(item.dosage),quantity:number(item.quantity ?? 1),unit:string(item.unit)};
@@ -45,7 +45,7 @@
  }
  function profileHtml(patient) {
   const sex = {female:'Женский',male:'Мужской',unknown:'Не указан'}[patient.sex] || 'Не указан';
-  const fields = [['Дата рождения',date(patient.birth_date)],['Пол',sex],['Телефон',patient.phone || 'Не указан'],['Жалобы',patient.complaints],['Запрос',patient.request],['Назначения врача',patient.prescriptions],['Заметки',patient.notes]];
+  const fields = [['Дата рождения',date(patient.birth_date)],['Пол',sex],['Телефон',patient.phone || 'Не указан'],['Первое посещение · Москва',patient.first_visit_at ? date(patient.first_visit_at,true) : ''],['Жалобы',patient.complaints],['Запрос',patient.request],['Назначения врача',patient.prescriptions],['Заметки',patient.notes]];
   return `<dl class="patient-card-fields-v20">${fields.filter(([,value],index) => index < 3 || value).map(([label,value]) => `<div><dt>${label}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl>`;
  }
  function itemListHtml(items, label, own = false) {
