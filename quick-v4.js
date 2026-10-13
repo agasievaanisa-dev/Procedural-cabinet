@@ -88,7 +88,20 @@ addMedRow=function(target,id='',amount=1,fallback=null){
  const m=meds.find(x=>x.id===id)||fallback;if(!m)return;
  const d=document.createElement('div');d.className='medrow '+medicationOriginClassV21(m);d.dataset.medicationId=id;
  d.innerHTML=`<div class="medphoto">${medPhotoHtml(m)}</div><div class="chosen-name"><strong>${esc(m.name)}</strong>${medicationOriginBadgeV21(m)}<small>${esc(m.dosage||'')} · ${esc(unit(m))}</small><small class="stock-hint"></small></div><select class="medsel" aria-label="Препарат"><option value="${esc(id)}" selected>${esc(m.name)}</option></select><input class="medqty" aria-label="Количество: ${esc(m.name)}" type="number" inputmode="numeric" min="1" step="1" value="${Number(amount)}" oninput="recalc()"><button class="btn danger" aria-label="Убрать: ${esc(m.name)}" onclick="this.parentElement.remove();recalc()">×</button>`;
+ if(target==='procMeds'){
+  const dose=document.createElement('label');dose.className='clinical-dose-v24';
+  dose.innerHTML=`Доза для пациента<input class="meddose-v24" aria-label="Доза для пациента: ${esc(m.name)}" maxlength="200" placeholder="По назначению, например 500 мг">`;
+  dose.querySelector('input').value=String(fallback?.dose??'');
+  dose.querySelector('input').addEventListener('input',()=>{const confirm=$('procPayConfirmed');if(confirm)confirm.checked=false;});
+  d.querySelector('.chosen-name').appendChild(dose);
+  const quantity=d.querySelector('.medqty'),quantityLabel=document.createElement('label');quantityLabel.className='clinical-quantity-v24';quantityLabel.textContent='Кол-во, '+unit(m);quantity.before(quantityLabel);quantityLabel.appendChild(quantity);
+ }
  $(target).appendChild(d);recalc();
+};
+const originalRowsV24=typeof rows==='function'?rows:null;
+rows=function(target){
+ if(target!=='procMeds'&&originalRowsV24)return originalRowsV24(target);
+ return [...$(target).querySelectorAll('.medrow')].filter(row=>row.querySelector('.medsel').value).map(row=>({medication_id:row.querySelector('.medsel').value,quantity:num(row.querySelector('.medqty').value),dose:row.querySelector('.meddose-v24')?.value.trim()||null}));
 };
 chooseMedication=function(target,id){const row=[...$(target).querySelectorAll('.medrow')].find(r=>r.dataset.medicationId===id);if(row)row.querySelector('.medqty').value=num(row.querySelector('.medqty').value)+1;else addMedRow(target,id);recalc()};
 const originalRecalc4=recalc;
@@ -126,7 +139,7 @@ saveTreatment=async function(kind){
   if($('workspace').classList.contains('active'))message('homeMessage',(kind==='procedure'?'Процедура сохранена. ':'Продажа сохранена. ')+(paymentOnly?'Оплата учтена, остатки склада не изменены.':'Препараты списаны.'),true);
  }catch(e){message(kind+'Message',e.message)}
 };
-function templateText4(t){return `${new Date(t.at).toLocaleDateString('ru-RU')} · ${esc(t.service_name||'Процедура')}${t.stock_deducted===false?' · без списания со склада':''}<br>${(t.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit||'')}`).join(', ')||'Без препаратов'}`}
+function templateText4(t){return `${new Date(t.at).toLocaleDateString('ru-RU')} · ${esc(t.service_name||'Процедура')}${t.stock_deducted===false?' · без списания со склада':''}<br>${(t.items||[]).map(m=>`${esc(m.name)} × ${qty(m.quantity)} ${esc(m.unit||'')}${m.dose?' · Доза: '+esc(m.dose):''}`).join(', ')||'Без препаратов'}`}
 async function showRepeatHint(){const token=++hintView4,id=$('procPatient').value;$('repeatHint').innerHTML='';if(!id)return;try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==hintView4)return;if(t)$('repeatHint').innerHTML=`<div class="card"><span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn secondary" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button></div>`}catch(e){message('repeatHint',e.message)}}
 const originalOpenPatient4=openPatient;
 openPatient=async function(id){const token=++patientView4;lastTemplate=null;$('lastProcedure').textContent='Загружаем последнюю процедуру…';await originalOpenPatient4(id);try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==patientView4||currentPatientId!==id)return;lastTemplate=t;$('lastProcedure').innerHTML=t?`<span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn primary wide" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button>`:'Процедур пока нет.'}catch(e){$('lastProcedure').textContent=e.message}};
@@ -134,7 +147,7 @@ async function repeatLast4(id,navigation=null){
  navigation??=beginQuickNavigation4();const actor=currentStaff?.id;
  try{if(!await requireShift4(()=>repeatLast4(id,navigation),navigation))return;const t=await quickRpc('last_procedure',{patient_id:id});if(!t||!quickNavigationCurrent4(navigation,actor))return;
  if(!await prepareTreatment4('procedure',id,navigation)||!quickNavigationCurrent4(navigation,actor))return;$('procMeds').innerHTML='';$('procService').value=services.some(s=>s.id===t.service_id)?t.service_id:'';
- (t.items||[]).forEach(m=>addMedRow('procMeds',m.medication_id,m.quantity,{id:m.medication_id,name:m.name,consumption_unit:m.unit}));
+ (t.items||[]).forEach(m=>addMedRow('procMeds',m.medication_id,m.quantity,{id:m.medication_id,name:m.name,consumption_unit:m.unit,dose:m.dose}));
  // Current prices, current nurse and no inherited discount/payment/notes.
  calcProcedure();recalc();message('procedureMessage','Черновик заполнен по прошлой процедуре. Проверьте назначение, препараты, количество и оплату перед сохранением.');
  if(!$('procService').value)message('repeatHint','Прежняя услуга недоступна. Выберите действующую услугу из прайса.');

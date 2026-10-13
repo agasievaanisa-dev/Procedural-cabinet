@@ -183,7 +183,7 @@ begin
  if shift is null or public.crm_save_recovery_v16('start_shift_v82',args,req) is distinct from answer then raise exception 'Nurse shift replay mismatch';end if;
  perform set_config('test.v16.shift',shift::text,true);perform set_config('test.v16.shift_args',args::text,true);
  perform set_config('test.v16.shift_request',req::text,true);
- foreach route in array array['staff_save','template_save','patient_archive'] loop
+ foreach route in array array['staff_save','patient_archive'] loop
   begin
    perform public.crm_save_recovery_v16('crm_management_v5',jsonb_build_object('p_action',route,'p_payload','{}'::jsonb),gen_random_uuid());
    raise exception 'Nurse unexpectedly authorized for manager save';

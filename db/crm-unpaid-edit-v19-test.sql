@@ -68,7 +68,7 @@ begin
  perform set_config('test.v19.edit_request',req::text,true);
  p:=p||jsonb_build_object('expected_version',3);
  begin perform public.crm_clinical_v10('treatment_edit',p||jsonb_build_object('charge_total',3500),gen_random_uuid());raise exception 'New pending discount missing reason succeeded';
- exception when others then if sqlerrm<>'Укажите причину и обязательный комментарий к скидке или бесплатной процедуре' then raise;end if;end;
+ exception when others then if sqlerrm<>'Укажите причину и обязательный комментарий к изменению цены или бесплатной процедуре' then raise;end if;end;
  begin perform public.crm_clinical_v10('treatment_edit',p||jsonb_build_object('paid_total',100,'payments',jsonb_build_object('cash',100)),gen_random_uuid());raise exception 'Edit accepting first payment omitted edit reason';
  exception when others then if sqlerrm<>'Укажите, что изменили и почему' then raise;end if;end;
  begin perform public.crm_clinical_v10('treatment_edit',p||jsonb_build_object('payment_status','debt'),gen_random_uuid());raise exception 'Pending-to-debt edit omitted edit reason';

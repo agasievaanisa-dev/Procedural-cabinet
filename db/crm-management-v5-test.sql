@@ -54,7 +54,7 @@ do $$ declare p jsonb;rows jsonb;action_name text;begin
  if not exists(select 1 from jsonb_array_elements(rows) a where a->>'id'=current_setting('test.template')) then raise exception 'Nurse cannot read template';end if;
  rows:=public.crm_management_v5('patient_list','{"include_archived":true}');
  if exists(select 1 from jsonb_array_elements(rows) a where a->>'id'=current_setting('test.patient')) then raise exception 'Nurse exposed archived patient';end if;
- foreach action_name in array array['patient_archive','staff_list','staff_save','template_save','service_save','audit_list','backup_export'] loop
+ foreach action_name in array array['patient_archive','staff_list','staff_save','service_save','audit_list','backup_export'] loop
   begin
    perform public.crm_management_v5(action_name,jsonb_build_object('id',current_setting('test.patient'),'full_name','forbidden'));
    raise exception 'Unexpected nurse authorization';

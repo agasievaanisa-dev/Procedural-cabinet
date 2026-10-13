@@ -71,6 +71,11 @@ async function fixture(context){
    }
    if(url.pathname==='/rest/v1/rpc/crm_identity_test_v15')return json(route,{
     staff_id:record.member.id,name:record.member.full_name,role:record.member.role,session_id:record.sessionId});
+   if(url.pathname==='/rest/v1/rpc/crm_dashboard_day_v25'){
+    if(record.member.active===false||!['admin','owner'].includes(record.member.role)){unauthorized.push({pathname:url.pathname,authorization,staffId:record.member.id});return json(route,{code:'42501',message:'Manager access required'},403);}
+    if(request.method()!=='POST'||typeof body.p_date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(body.p_date)){unexpected.push(`Invalid dashboard request: ${request.method()} ${url.pathname}`);return json(route,{code:'22023',message:'Expected dashboard date'},400);}
+    return json(route,{date:body.p_date,working_day:{patients_count:0,procedures_count:0,revenue:{total:0,cash:0,terminal:0,owner_card:0},payroll_total:0,payroll_complete:true,cash_after_salary:0},receipts_day:{revenue:{total:0,cash:0,terminal:0,owner_card:0},breakdown:{}}});
+   }
    if(url.pathname==='/rest/v1/rpc/quick_ui_v4'&&body.p_action==='context')return json(route,{favorites:[],recent:[],shifts:[]});
    if(url.pathname==='/rest/v1/rpc/get_my_open_shift_v82')return json(route,null);
    if(url.pathname==='/rest/v1/rpc/crm_finance_v5'){
@@ -111,7 +116,11 @@ async function expectOwnSession(page,member){
  const state=await session(page);expect(state.userId).toBe(member.auth_user_id);expect(state.staffId).toBe(member.id);
  const answer=await identity(page);expect(answer).toMatchObject({staff_id:member.id,name:member.full_name,role:member.role});return {state,answer};
 }
-function expectClean(server){expect(server.errors).toEqual([]);expect(server.unexpected).toEqual([]);expect(server.unauthorized).toEqual([]);}
+function expectClean(server){
+ expect(server.errors).toEqual([]);expect(server.unexpected).toEqual([]);expect(server.unauthorized).toEqual([]);
+ const dashboard=server.requests.filter(item=>item.pathname==='/rest/v1/rpc/crm_dashboard_day_v25');
+ expect(dashboard.every(item=>['admin','owner'].includes(staff.find(member=>member.id===item.staffId)?.role))).toBe(true);
+}
 
 test('three tabs keep their own administrator/nurse identity, refresh token and API Authorization',async({context})=>{
  const server=await fixture(context),pages=await Promise.all(staff.map(()=>open(context)));

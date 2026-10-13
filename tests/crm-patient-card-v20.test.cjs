@@ -34,6 +34,37 @@ test('print contains captured unit prices, complete financial history, own medic
  for(const secret of ['99999','88888','77777','hidden-warehouse','auth_user_id','stock_deducted','<script>','<img','<button','onclick=','data-card-edit-v20','data-card-payment-v20'])assert.ok(!html.includes(secret),secret);
 });
 
+test('patient-specific dose survives printable snapshots, stays separate from pack dosage and cannot change billed quantities',()=>{
+ const source=procedure({items:[{name:'Препарат из шаблона',dosage:'500 мг / 2 мл',dose:'250 мг <img src=x onerror="bad()">',quantity:2,unit:'амп.',unit_price:500,line_total:1000,purchase_price:777777}]});
+ const history=historySnapshot({procedures:[source],sales:[]});
+ assert.equal(history[0].items[0].dose,source.items[0].dose);
+ assert.equal(history[0].items[0].dosage,'500 мг / 2 мл');
+ assert.equal(history[0].items[0].quantity,2);
+ assert.equal(history[0].items[0].line_total,1000);
+ assert.equal(history[0].charge,1300);
+ source.items[0].dose='Изменено после загрузки';
+ const html=buildPatientCardHtml(patientSnapshot(patient),history);
+ assert.ok(html.includes('Препарат из шаблона · 500 мг / 2 мл × 2 амп. · Доза: 250 мг &lt;img src=x onerror=&quot;bad()&quot;&gt; · 500 ₽ за единицу · 1 000 ₽'));
+ for(const value of ['<img src=x','777777','Изменено после загрузки'])assert.ok(!html.includes(value),value);
+ const legacy=historySnapshot({procedures:[procedure({items:[{name:'Старый препарат',quantity:1,unit:'амп.',unit_price:100}]})],sales:[]});
+ assert.equal(legacy[0].items[0].dose,null);
+ assert.ok(!buildPatientCardHtml(patientSnapshot(patient),legacy).includes('Доза:'));
+});
+
+test('a final price above pricelist prints a positive surcharge and keeps original price, received money and debt',()=>{
+ const history=historySnapshot({procedures:[procedure({list_total:1600,charge_total:2100,received_total:800,debt_total:1300,discount_amount:0,discount_reason:'Индивидуальная стоимость',discount_comment:'Дополнительная работа <b>по согласованию</b>'})],sales:[]});
+ assert.equal(history[0].list,1600);assert.equal(history[0].charge,2100);
+ assert.equal(history[0].discount,0);assert.equal(history[0].surcharge,500);
+ assert.equal(history[0].received,800);assert.equal(history[0].debt,1300);
+ for(const interactive of [false,true]){
+  const html=buildPatientCardHtml(patientSnapshot(patient),history,interactive);
+  for(const phrase of ['По прайсу: <b>1 600 ₽','Скидка: <b>0 ₽','Надбавка: <b>500 ₽','К оплате: <b>2 100 ₽','Оплачено всего: <b>800 ₽','В долг: <b>1 300 ₽','Итоговая стоимость: <b>2 100 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
+  assert.ok(!html.includes('Скидка: <b>-'));assert.ok(!html.includes('<b>по согласованию</b>'));
+ }
+ const discounted=historySnapshot({procedures:[procedure()],sales:[]});
+ assert.equal(discounted[0].surcharge,0);assert.ok(!buildPatientCardHtml(patientSnapshot(patient),discounted).includes('Надбавка:'));
+});
+
 test('live card supports authorized edit and payment controls while print strips every control',()=>{
  const history=historySnapshot({procedures:[procedure()],sales:[]});
  const live=buildPatientCardHtml(patientSnapshot(patient),history,true),printed=buildPatientCardHtml(patientSnapshot(patient),history);

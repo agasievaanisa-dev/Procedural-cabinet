@@ -21,12 +21,18 @@ test('management blocks nurse writes and sends create passwords only to secured 
   assert.equal(el('staffCreatePasswordV5').value,'');assert.ok(calls.filter(x=>x.args?.p_payload).every(x=>!('password' in x.args.p_payload)));
 });
 
-test('template fills an editable draft with current prices and leaves notes unchanged',()=>{
-  const {c,el,calls}=setup();vm.runInContext("managementTemplatesV5=[{name:'Шаблон',service_id:'service1',items:[{medication_id:'m1',quantity:2},{medication_id:'missing',quantity:1}]}]",c);
-  el('procTemplateSelectV5').value='0';el('procNotes').value='Назначение врача';c.applyProcedureTemplateV5();
+test('template fills an independent editable draft by stable ID with current prices and leaves notes unchanged',()=>{
+  const {c,el,calls}=setup();vm.runInContext("procedureTemplatesV24.set('template1',{id:'template1',name:'Шаблон',service_id:'service1',items:[{medication_id:'m1',quantity:2,dose:'400 мг'}]});procedureTemplateActorV24=managementActorV16()",c);
+  el('procTemplateSelectV5').value='template1';el('procNotes').value='Назначение врача';c.applyProcedureTemplateV5();
   assert.equal(el('procService').value,'service1');assert.equal(el('procMeds').innerHTML,'');assert.equal(el('procNotes').value,'Назначение врача');
-  assert.equal(calls.filter(x=>x.type==='add')[0].quantity,2);assert.equal(calls.filter(x=>x.type==='add')[1].fallback.name,'Препарат из шаблона недоступен');
+  assert.equal(calls.filter(x=>x.type==='add')[0].quantity,2);assert.equal(calls.filter(x=>x.type==='add')[0].fallback.dose,'400 мг');
   assert.equal(calls.filter(x=>x.type==='calculate').length,1);assert.ok(calls.every(x=>!x.name));
+});
+
+test('unavailable template medication prevents any patient draft mutation',()=>{
+  const {c,el,calls,notices}=setup();vm.runInContext("procedureTemplatesV24.set('stale',{id:'stale',name:'Шаблон',items:[{medication_id:'missing',quantity:1}]});procedureTemplateActorV24=managementActorV16()",c);
+  el('procTemplateSelectV5').value='stale';el('procMeds').innerHTML='Состав пациента';c.applyProcedureTemplateV5();
+  assert.equal(el('procMeds').innerHTML,'Состав пациента');assert.equal(calls.length,0);assert.match(notices.at(-1).value,/недоступен/);
 });
 
 test('template validation rejects empty medication and nonpositive or inactive doses',()=>{

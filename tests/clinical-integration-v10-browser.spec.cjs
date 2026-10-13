@@ -134,7 +134,7 @@ test('own and previously purchased medicines can accompany intramuscular and int
  const errors=await boot(page);await procedure(page,false);await page.click('#procAddOwnV10');await page.fill('#procOwnMedsV10 .own-name-v10','Свой витамин B12 500 мкг');
  await page.click('#procAddOwnV10');const previous=page.locator('#procOwnMedsV10 .clinical-own-v10').nth(1);await previous.locator('.own-name-v10').fill('Ранее купленный Самыр');await previous.locator('.own-source-v10').selectOption('previously_purchased');await previous.locator('.own-quantity-v10').fill('2');
  await page.click('#procAddServiceV10');await page.selectOption('#procAdditionalServicesV10 select','service-2');await expect(page.locator('#procPaid')).toHaveValue('175.00');await noOverflow(page);await save(page);await expect(page.locator('#workspace')).toBeVisible();
- const payload=(await created(page))[0].args.p_payload;expect(payload.items).toEqual([]);expect(payload.services).toEqual([{service_id:'service-1',quantity:1},{service_id:'service-2',quantity:1}]);expect(payload.own_medications).toEqual([{name:'Свой витамин B12 500 мкг',quantity:1,unit:'амп.',source:'patient'},{name:'Ранее купленный Самыр',quantity:2,unit:'амп.',source:'previously_purchased'}]);expect(payload.charge_total).toBe(175);expect(errors).toEqual([]);
+ const payload=(await created(page))[0].args.p_payload;expect(payload.items).toEqual([]);expect(payload.services).toEqual([{service_id:'service-1',quantity:1},{service_id:'service-2',quantity:1}]);expect(payload.own_medications).toEqual([{name:'Свой витамин B12 500 мкг',quantity:1,unit:'амп.',source:'patient',dose:null},{name:'Ранее купленный Самыр',quantity:2,unit:'амп.',source:'previously_purchased',dose:null}]);expect(payload.charge_total).toBe(175);expect(errors).toEqual([]);
 });
 
 test('committed creation with a lost response retries the same receipt instead of duplicating it',async({page})=>{
@@ -188,7 +188,7 @@ test('editing keeps multiple primary services and captured prices after a catalo
   return editTreatmentV10('procedure','procedure-1');
  });
  await expect(page.locator('#procList')).toContainText('490');await expect(page.locator('#procPaid')).toHaveValue('490.00');await expect(page.locator('#procAdditionalServicesV10 input')).toHaveValue('2');await page.fill('#procEditReasonV10','Исправлен комментарий без изменения услуг и оплаты');await save(page);await expect(page.locator('#workspace')).toBeVisible();
- const call=await page.evaluate(()=>__v10Calls.find(x=>x.name==='crm_clinical_v10'&&x.args.p_action==='treatment_edit'));expect(call.args.p_payload.expected_version).toBe(3);expect(call.args.p_payload.charge_total).toBe(490);expect(call.args.p_payload.paid_total).toBe(0);expect(call.args.p_payload.services.filter(x=>x.service_id==='service-1').reduce((sum,x)=>sum+x.quantity,0)).toBe(3);expect(call.args.p_payload.items).toEqual([{medication_id:'med-1',quantity:2}]);expect(errors).toEqual([]);
+ const call=await page.evaluate(()=>__v10Calls.find(x=>x.name==='crm_clinical_v10'&&x.args.p_action==='treatment_edit'));expect(call.args.p_payload.expected_version).toBe(3);expect(call.args.p_payload.charge_total).toBe(490);expect(call.args.p_payload.paid_total).toBe(0);expect(call.args.p_payload.services.filter(x=>x.service_id==='service-1').reduce((sum,x)=>sum+x.quantity,0)).toBe(3);expect(call.args.p_payload.items).toEqual([{medication_id:'med-1',quantity:2,dose:null}]);expect(errors).toEqual([]);
 });
 
 

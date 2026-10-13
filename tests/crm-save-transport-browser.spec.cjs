@@ -93,6 +93,11 @@ async function fixture(context,plans=[]){
    const result=ledger.get(requestId).result;
    return json(route,legacy?{result}:result);
   }
+  if(endpoint==='crm_dashboard_day_v25'){
+   if(record.member.active===false||!['admin','owner'].includes(record.member.role)){unauthorized.push(observed);return json(route,{code:'42501',message:'Manager access required'},403);}
+   if(request.method()!=='POST'||typeof body.p_date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(body.p_date)){unexpected.push(`Invalid dashboard request: ${request.method()} ${url.pathname}`);return json(route,{code:'22023',message:'Expected dashboard date'},400);}
+   return json(route,{date:body.p_date,working_day:{patients_count:0,procedures_count:0,revenue:{total:0,cash:0,terminal:0,owner_card:0},payroll_total:0,payroll_complete:true,cash_after_salary:0},receipts_day:{revenue:{total:0,cash:0,terminal:0,owner_card:0},breakdown:{}}});
+  }
   if(endpoint==='quick_ui_v4'&&body.p_action==='context')return json(route,{favorites:[],recent:[],shifts:[]});
   if(endpoint==='get_my_open_shift_v82')return json(route,null);
   if(endpoint==='crm_finance_v5'&&body.p_action==='accounting_mode')return json(route,{payment_only:true,stock_deducted:false});
@@ -113,7 +118,11 @@ async function login(context,member=staff[0]){
 function rpc(page,name,args,options){return page.evaluate(async input=>{
  const response=await db.rpc(input.name,input.args,input.options);return {data:response.data,error:response.error,status:response.status};
 },{name,args,options});}
-function clean(server){expect(server.errors).toEqual([]);expect(server.unexpected).toEqual([]);expect(server.unauthorized).toEqual([]);}
+function clean(server){
+ expect(server.errors).toEqual([]);expect(server.unexpected).toEqual([]);expect(server.unauthorized).toEqual([]);
+ const dashboard=server.requests.filter(item=>item.pathname==='/rest/v1/rpc/crm_dashboard_day_v25');
+ expect(dashboard.every(item=>['admin','owner'].includes(staff.find(member=>member.id===item.staffId)?.role))).toBe(true);
+}
 function recovered(plan,server,args,member=staff[0]){
  expect(plan.calls).toHaveLength(2);expect(server.writes).toHaveLength(1);
  expect(plan.calls[1].body).toEqual(plan.calls[0].body);expect(plan.calls.every(call=>call.staffId===member.id)).toBe(true);

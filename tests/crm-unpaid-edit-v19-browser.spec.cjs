@@ -99,7 +99,7 @@ for (const role of ['nurse','owner']) test(`${role} repeatedly reopens an unpaid
  expect((await writes(page))[0].args.p_payload).toMatchObject({id:'procedure-1',expected_version:3,charge_total:200,paid_total:0,payment_status:'pending',edit_reason:null,discount_comment:null});
  await page.evaluate(()=>{meds[1].sale_price=7777;return editTreatmentV10('procedure','procedure-1')});
  await expect(page.locator('#procEditReasonBoxV10')).toBeHidden();
- await page.locator('#procMeds .medrow[data-medication-id="med-2"] input').fill('2');
+ await page.locator('#procMeds .medrow[data-medication-id="med-2"] .medqty').fill('2');
  await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('210.00');
  await page.locator('button[onclick="saveProcedure()"]') .click();
  await expect(page.locator('#workspace')).toBeVisible();

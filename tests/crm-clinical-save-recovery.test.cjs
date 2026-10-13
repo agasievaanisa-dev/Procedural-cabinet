@@ -9,8 +9,10 @@ test('the same procedure selected as primary and additional is saved once with i
  assert.deepEqual(mergeServices([{service_id:'im',quantity:1},{service_id:'iv',quantity:1},{service_id:'im',quantity:2},{service_id:'',quantity:0}]),[{service_id:'im',quantity:3},{service_id:'iv',quantity:1}]);
  assert.throws(()=>mergeServices([{service_id:'im',quantity:0.5}]),/Количество процедур/);
 });
-test('removing medicines cannot leave a charge above the remaining list price',()=>{
- assert.throws(()=>paymentModel({list:'100',charge:'150',received:'150',status:'paid',patient:'patient',reason:'Changed'}),/превышает.*по прайсу/);
+test('an individual charge above the list price requires a reason and preserves the original list',()=>{
+ assert.throws(()=>paymentModel({list:'100',charge:'150',received:'150',status:'paid',patient:'patient',reason:''}),/комментарий/);
+ const model=paymentModel({list:'100',charge:'150',received:'150',status:'paid',patient:'patient',reason:'Индивидуальная стоимость'});
+ assert.equal(model.list,10000);assert.equal(model.charge,15000);assert.equal(model.received,15000);assert.equal(model.debt,0);
 });
 
 function fixture(clinical=false){

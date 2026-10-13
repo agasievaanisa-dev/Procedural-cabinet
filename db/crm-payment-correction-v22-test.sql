@@ -105,7 +105,7 @@ do $$declare original jsonb;payload jsonb;bad jsonb;req uuid;failed_ids jsonb:='
   ('new payment',payload||jsonb_build_object('payments',jsonb_build_object('cash',1),'paid_total',1)),
   ('invalid discount',payload-'discount_reason'-'discount_comment'),
   ('unknown drug',payload||jsonb_build_object('items',jsonb_build_array(jsonb_build_object('medication_id',gen_random_uuid(),'quantity',1)))),
-  ('overpriced bill',payload||jsonb_build_object('charge_total',14301)),
+  ('non-finite bill',payload||jsonb_build_object('charge_total','Infinity')),
   ('zero debt',payload||jsonb_build_object('charge_total',0)),
   ('different patient',payload||jsonb_build_object('patient_id',gen_random_uuid())),
   ('different stock mode',payload||jsonb_build_object('expected_stock_deducted',false)),

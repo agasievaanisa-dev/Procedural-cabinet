@@ -41,6 +41,37 @@ test('shift PDF includes chronological patients, full services, medicines, disco
  for(const secret of ['Скрыт','99995','99996','Списано со склада','Остатки','Без списания со склада','salaryAmount5-','salaryReason5-','saveSalaryV5(','<script>bad()','<img src=x>']) assert.ok(!html.includes(secret),secret);
 });
 
+test('patient-assigned dose is escaped in shift journal and PDF without changing captured prices or totals',()=>{
+ const {c,element}=boot(),data=report();
+ Object.assign(data.procedures[0].items[0],{dosage:'500 мг / 5 мл',dose:'250 мг <img src=x onerror="bad()">'});
+ c.renderShiftReportV5(data,true);
+ const journal=element('reportBody').innerHTML,printed=c.buildShiftPrintV5(data);
+ const row='Милдронат 5 мл · 500 мг / 5 мл × 2 амп. · Доза: 250 мг &lt;img src=x onerror=&quot;bad()&quot;&gt; · 600 ₽';
+ for(const html of [journal,printed]){
+  assert.ok(html.includes(row));
+  for(const total of ['1300 ₽','1100 ₽','4500 ₽','-3400 ₽'])assert.ok(html.includes(total),total);
+  assert.ok(!html.includes('<img src=x'));
+ }
+ data.procedures[0].items[0].dose=null;
+ assert.ok(!c.buildShiftPrintV5(data).includes('Доза:'));
+});
+
+test('above-pricelist charge shows surcharge in finance and print without adding it to received cash',()=>{
+ const {c,element}=boot(),data=report();
+ Object.assign(data.procedures[0],{list_total:1200,charge_total:1500,paid_total:800,debt_total:700,discount_amount:0,discount_reason:'Индивидуальная стоимость',discount_comment:'Дополнительная работа <b>по согласованию</b>'});
+ data.charge_total=1800;data.debt_total=700;
+ c.renderShiftReportV5(data,true);
+ for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0]),element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
+  for(const phrase of ['По прайсу: <b>1200 ₽','Скидка: <b>0 ₽','Надбавка: <b>300 ₽','К оплате: <b>1500 ₽','Оплачено: <b>800 ₽','В долг: <b>700 ₽','Наличные 500 ₽','терминал 300 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
+  assert.ok(!html.includes('Скидка: <b>-'));assert.ok(!html.includes('<b>по согласованию</b>'));
+ }
+ for(const html of [element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
+  for(const unchanged of ['1100 ₽','700 ₽','300 ₽','100 ₽','4500 ₽','-3400 ₽'])assert.ok(html.includes(unchanged),unchanged);
+  assert.ok(html.includes('1800 ₽'),'Accrued amount includes surcharge, collected revenue stays unchanged');
+ }
+ assert.ok(!c.financeEventPriceHtmlV14({list_total:1200,charge_total:1000}).includes('Надбавка:'));
+});
+
 test('nurse own shift shows finances without warehouse while owner keeps stock on the application screen',()=>{
  const {c,element}=boot();c.renderShiftReportV5(report(),true);
  let html=element('reportBody').innerHTML;

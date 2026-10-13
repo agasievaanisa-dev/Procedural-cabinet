@@ -17,6 +17,7 @@ function fixture(role = 'admin') {
   financeAccountingMode5:{payment_only:true},
   $:el, document:{querySelector:()=>({content:'5.5.5'})}, setInterval(){},
   isManager:()=>['admin','owner'].includes(c.currentStaff?.role),
+  canManageTemplatesV24:()=>!!c.currentStaff?.id&&c.currentStaff.active!==false&&['admin','owner','nurse'].includes(c.currentStaff.role),
   show:id=>shown.push(id), message:(...args)=>messages.push(args),
   enterApp:async user=>{c.currentStaff=user;}, signOut:async()=>{c.currentStaff=null;},
   loadStockDetails:async()=>{}, openSettingsV5:async()=>{},
@@ -66,4 +67,14 @@ test('rendering without a signed-in staff member does not overwrite the login he
  const f=fixture();f.c.currentStaff=null;f.el('status').textContent='СКЛАД';
  f.c.renderCabinetHomeV5();f.c.show('login');
  assert.equal(f.el('status').textContent,'СКЛАД');
+});
+
+
+test('template home button and screen are shared by nurses and managers while mentor remains restricted',()=>{
+ for(const role of ['admin','owner','nurse','mentor']){
+  const f=fixture(role),allowed=role!=='mentor';f.c.renderCabinetHomeV5();
+  assert.equal(f.el('workspace .home-actions').innerHTML.includes('openTemplatesV5()'),allowed);
+  f.c.show('templatesV5');assert.equal(f.shown.at(-1),allowed?'templatesV5':'workspace');
+  assert.equal(f.messages.length,allowed?0:1);
+ }
 });

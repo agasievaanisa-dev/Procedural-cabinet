@@ -5,6 +5,7 @@ let financeReportId5 = null, financeBusy5 = false, financeView5 = 0;
 const financeSnapshots5 = new Map();
 const financeSnapshotFilters5 = new Map();
 let financeSession5 = 0;
+let financeDashboardReadV25 = 0;
 let financeShiftSnapshot5 = null;
 const financePaymentState5 = {proc: null, sale: null};
 let financeAccountingMode5 = null, financeAccountingLoad5 = 0;
@@ -330,14 +331,14 @@ function financeEventAmountsV5(event) {
  return {received,debt,charge,list:num(event.list_total ?? (charge + num(event.discount_amount)))};
 }
 function financeEventPriceHtmlV14(event) {
- const amounts = financeEventAmountsV5(event),discount = Math.max(0,Math.round((amounts.list - amounts.charge) * 100) / 100);
- return `<div class="report-event-prices-v14"><div>По прайсу: <b>${esc(rub(amounts.list))}</b></div><div>Скидка: <b>${esc(rub(discount))}</b></div><div>К оплате: <b>${esc(rub(amounts.charge))}</b>${amounts.charge === 0 ? ' · Бесплатно' : ''}</div></div>`;
+ const amounts = financeEventAmountsV5(event),discount = Math.max(0,Math.round((amounts.list - amounts.charge) * 100) / 100),surcharge = Math.max(0,Math.round((amounts.charge - amounts.list) * 100) / 100);
+ return `<div class="report-event-prices-v14"><div>По прайсу: <b>${esc(rub(amounts.list))}</b></div><div>Скидка: <b>${esc(rub(discount))}</b></div>${surcharge > 0 ? `<div>Надбавка: <b>${esc(rub(surcharge))}</b></div>` : ''}<div>К оплате: <b>${esc(rub(amounts.charge))}</b>${amounts.charge === 0 ? ' · Бесплатно' : ''}</div></div>`;
 }
 function financeEventDetailsHtmlV5(event) {
  const serviceItems = Array.isArray(event.services) && event.services.length ? event.services : event.type || event.service_name ? [{name:event.service_name || event.type,quantity:1}] : [];
  const medications = Array.isArray(event.items) ? event.items : [];
  const ownMedications = Array.isArray(event.own_medications) ? event.own_medications : [];
- const line = item => `<li>${esc(item.name || item.service_name || 'Без названия')}${item.dosage ? ' · ' + esc(item.dosage) : ''}${item.quantity !== undefined ? ' × ' + esc(qty(item.quantity)) + ' ' + esc(item.unit || '') : ''}${item.line_total !== undefined ? ' · ' + esc(rub(item.line_total)) : ''}${item.source === 'previously_purchased' ? ' · ранее куплен в кабинете' : ''}</li>`;
+ const line = item => `<li>${esc(item.name || item.service_name || 'Без названия')}${item.dosage ? ' · ' + esc(item.dosage) : ''}${item.quantity !== undefined ? ' × ' + esc(qty(item.quantity)) + ' ' + esc(item.unit || '') : ''}${typeof item.dose === 'string' && item.dose ? ' · Доза: ' + esc(item.dose) : ''}${item.line_total !== undefined ? ' · ' + esc(rub(item.line_total)) : ''}${item.source === 'previously_purchased' ? ' · ранее куплен в кабинете' : ''}</li>`;
  return `${serviceItems.length ? `<div class="report-detail-label-v5">Услуги</div><ul>${serviceItems.map(line).join('')}</ul>` : ''}${medications.length ? `<div class="report-detail-label-v5">Препараты кабинета</div><ul>${medications.map(line).join('')}</ul>` : ''}${ownMedications.length ? `<div class="report-detail-label-v5">Препараты пациента</div><ul>${ownMedications.map(line).join('')}</ul>` : event.own_medications === true || event.own_meds === true ? '<p>Пациент со своими препаратами</p>' : ''}${!medications.length && !ownMedications.length && !event.own_medications && !event.own_meds ? '<p>Без препаратов кабинета</p>' : ''}`;
 }
 function financeEventPaymentHtmlV5(event) {
@@ -630,12 +631,40 @@ async function refreshOwnerDashboardV5() {
  if (!isManager()) return;
  let host = $('ownerDashboardV5');
  if (!host) { host = document.createElement('div'); host.id = 'ownerDashboardV5'; $('workspace').appendChild(host); }
- const actor = currentStaff.id, generation = financeView5, date = localDateValue();
+ const actor = currentStaff.id,role = currentStaff.role,session = financeSession5,view = financeView5;
+ const generation = ++financeDashboardReadV25,date = localDateValue();
+ const stillCurrent = () => isManager() && currentStaff?.id === actor && currentStaff?.role === role
+  && financeSession5 === session && financeView5 === view && financeDashboardReadV25 === generation;
  try {
-  const [data,stockLoaded] = await Promise.all([crmFinanceRpcV5('summary',{from:date,to:date,group_by:'day'}),loadInventory()]);
-  if (!isManager() || currentStaff.id !== actor || generation !== financeView5) return;
-  host.innerHTML = `<h2>Сегодня</h2><div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Выручка<b>${rub(data.revenue?.total)}</b></div></div>${financePeriodDebtHtmlV5(data,false)}<div class="card"><span>Денежный остаток после выплаты зарплаты</span><div class="money">${financeRemainingTextV5(data)}</div><p class="small">${data.has_open_shifts === true ? 'Предварительно: есть открытые смены. ' : ''}Зарплата: ${financePayrollTextV5(data)}. Показатель не является прибылью.</p>${financePayrollNoteV5(data)}</div>${stockLoaded === false ? '<div class="notice">Не удалось обновить остатки склада. Откройте склад и повторите загрузку.</div>' : renderOwnerStockOverviewV5()}`;
- } catch (e) { if (isManager() && currentStaff.id === actor && generation === financeView5) host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; }
+  const [data,stockLoaded] = await Promise.all([financeDashboardRpcV25(date),loadInventory()]);
+  if (!stillCurrent()) return;
+  host.innerHTML = financeDashboardHtmlV25(data) + (stockLoaded === false ? '<div class="notice">Не удалось обновить остатки склада. Откройте склад и повторите загрузку.</div>' : renderOwnerStockOverviewV5());
+ } catch (e) { if (stillCurrent()) host.innerHTML = `<div class="notice">${esc(e.message)}</div>`; }
+}
+async function financeDashboardRpcV25(date) {
+ const actor = currentStaff?.id,role = currentStaff?.role,session = financeSession5;
+ const requireActor = () => {
+  if (!actor || !isManager() || currentStaff?.id !== actor || currentStaff?.role !== role || financeSession5 !== session) throw Error('Учётная запись изменилась. Откройте страницу заново.');
+ };
+ for (let attempt = 0;attempt < 2;attempt++) {
+  requireActor();let response;
+  try {response = await db.rpc('crm_dashboard_day_v25',{p_date:date});} catch (error) {response = {error};}
+  requireActor();const {data,error,status} = response || {};
+  if (!response) throw Error('Нет ответа от сервера');
+  if (!error) {
+   if (!data?.working_day || !data?.receipts_day) throw Error('Не удалось загрузить итоги дня. Обновите страницу.');
+   return data;
+  }
+  if (!financeNetworkErrorV5(error,status)) throw financeSaveErrorV16(error,status);
+  if (attempt || error.recoveryAttemptedV16) throw Error('Не удалось связаться с сервером. Проверьте интернет и обновите страницу.');
+  await new Promise(resolve => setTimeout(resolve,350));
+ }
+}
+function financeDashboardHtmlV25(data) {
+ const working = data.working_day,calendar = data.receipts_day,breakdown = calendar.breakdown || {};
+ const date = /^\d{4}-\d{2}-\d{2}$/.test(data.date || '') ? data.date.split('-').reverse().join('.') : data.date || '';
+ const amount = (key,label) => `<div class="stat" data-dashboard-money="${key}"><span>${label}</span><b>${esc(rub(breakdown[key]?.total))}</b></div>`;
+ return `<section aria-label="Смены дня" data-dashboard-section="shifts"><h2>Смены за ${esc(date)}</h2><p class="small">По дате смены · Москва. Каждый пациент учитывается один раз, даже если у него несколько процедур. Погашение старого долга не добавляет пациента.</p><div class="stats"><div class="stat" data-dashboard-stat="patients">Пациентов<b>${num(working.patients_count)}</b></div><div class="stat" data-dashboard-stat="procedures">Процедур<b>${num(working.procedures_count)}</b></div>${num(working.sales_count) ? `<div class="stat" data-dashboard-stat="sales">Продаж<b>${num(working.sales_count)}</b></div>` : ''}<div class="stat" data-dashboard-stat="revenue">Выручка смен<b>${esc(rub(working.revenue?.total))}</b></div></div><div class="finance-totals-v5"><div class="stat"><span>Стоимость процедур и продаж смен</span><b>${esc(rub(working.charge_total))}</b></div><div class="stat"><span>Остаток долга по записям смен</span><b>${esc(rub(working.debt_total))}</b></div><div class="stat"><span>Первоначально не оплачено</span><b>${esc(rub(working.debt_created_total))}</b></div><div class="stat"><span>Доплаты в этих сменах · включены в выручку</span><b>${esc(rub(working.debt_payments_total))}</b></div></div><div class="card"><span>Выручка смен после зарплаты</span><div class="money">${financeRemainingTextV5(working)}</div><p class="small">${working.has_open_shifts === true ? 'Предварительно: есть открытые смены. ' : ''}Зарплата за эти смены: ${financePayrollTextV5(working)}. Показатель не является прибылью.</p>${financePayrollNoteV5(working)}</div></section><section class="card" aria-label="Календарные поступления" data-dashboard-section="calendar"><h2>Поступления за календарный день · ${esc(date)}</h2><p class="small">С ${esc(date)} 00:00 до конца дня по Москве. Сюда входят оплаты, внесённые в этот день в смены с другой датой.</p>${financeRevenueHtmlV5(calendar.revenue)}<div class="finance-totals-v5">${amount('current_day_shifts','В сменах этого дня')}${amount('previous_day_shifts','В сменах прошлых дней')}${num(breakdown.other_day_shifts?.total) ? amount('other_day_shifts','В других сменах') : ''}</div><p class="small">Доплаты и погашение долга: ${esc(rub(calendar.debt_payments_total))} · уже включены в поступления. Итоги смен и календарные поступления могут отличаться, если запись сохранена в другой день или долг оплачен позже.</p></section>`;
 }
 refreshDashboard = async function() {
  if (isManager()) { await refreshOwnerDashboardV5(); return; }
@@ -656,6 +685,7 @@ enterApp = async function(user) {
 };
 signOut = async function() {
  financeSession5++;
+ financeDashboardReadV25++;
  financeShiftSnapshot5 = null;clearShiftPrintV5();
  financeAccountingLoad5++; financeAccountingMode5 = null;
  financeTreatmentMode5.proc = null; financeTreatmentMode5.sale = null;

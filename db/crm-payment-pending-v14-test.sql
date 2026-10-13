@@ -45,7 +45,7 @@ begin
  exception when others then if sqlerrm<>'Для оплаты после процедуры должен остаться неоплаченный остаток' then raise;end if;end;
  begin
   perform public.record_treatment_v5('procedure',p-'discount_comment',gen_random_uuid());raise exception 'Pending discount without comment unexpectedly allowed';
- exception when others then if sqlerrm<>'Укажите причину и обязательный комментарий к скидке или бесплатной процедуре' then raise;end if;end;
+ exception when others then if sqlerrm<>'Укажите причину и обязательный комментарий к изменению цены или бесплатной процедуре' then raise;end if;end;
  p:=jsonb_build_object('patient_id',current_setting('test.v14.patient'),'shift_id',current_setting('test.v14.shift'),'nurse_id',current_setting('test.v14.peer'),
   'items',jsonb_build_array(jsonb_build_object('medication_id',current_setting('test.v14.med'),'quantity',1)),
   'charge_total',900,'paid_total',0,'payment_status','pending','discount_reason','Постоянная скидка','discount_comment','TEST sale discount','notes','TEST sale note',

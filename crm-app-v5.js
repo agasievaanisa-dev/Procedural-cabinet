@@ -4,15 +4,15 @@ localDateValue=function(d=new Date()) {return new Intl.DateTimeFormat('sv-SE',{t
 shiftLabel=function(started,end){const f=v=>new Date(v).toLocaleTimeString('ru-RU',{timeZone:CRM_TIME_ZONE_V5,hour:'2-digit',minute:'2-digit'});return end?`${f(started)}–${f(end)}`:`с ${f(started)}`};
 
 const enterCabinetV5=enterApp,showCabinetV5=show,signOutCabinetV5=signOut;
-const ownerScreensV5=new Set(['admin','medForm','services','servicesAdmin','bulkImport','bulk','staffV5','settingsV5','templatesV5','auditV5','cashV5','reportsV5','analyticsV5']);
+const ownerScreensV5=new Set(['admin','medForm','services','servicesAdmin','bulkImport','bulk','staffV5','settingsV5','auditV5','cashV5','reportsV5','analyticsV5']);
 function staffRoleLabelV5(role=currentStaff?.role){return {admin:'Администратор',owner:'Владелец',nurse:'Медсестра',mentor:'Наставник'}[role]||role||''}
 function renderStaffStatusV5(){if(currentStaff)$('status').textContent=`${currentStaff.full_name} · ${staffRoleLabelV5()}`}
 function renderCabinetHomeV5(){
  if(!currentStaff)return;
  const actions=isManager()?[
   ['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊','Продажа препаратов','openSale()'],['📦','Прайс и препараты','openStock()'],['🧾','Прайс услуг','openPriceServicesV10()'],
-  ['💰','Касса','openCashV5()'],['👩‍⚕️','Сотрудники','openStaffV5()'],['📊','Отчёты','openReportsV5()'],['📈','Аналитика','openAnalyticsV5()'],['⚙️','Настройки','openSettingsV5()']
- ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊',financeAccountingMode5?.payment_only?'Прайс препаратов':'Препараты в работе','openStock()'],['💰','Продажа препарата','openSale()'],['📋','Закрыть смену','openShiftMenu()']];
+  ['📑','Шаблоны','openTemplatesV5()'],['💰','Касса','openCashV5()'],['👩‍⚕️','Сотрудники','openStaffV5()'],['📊','Отчёты','openReportsV5()'],['📈','Аналитика','openAnalyticsV5()'],['⚙️','Настройки','openSettingsV5()']
+ ]:[['👤','Пациенты','goPatients()'],['💉','Процедуры','openProcedure()'],['💊',financeAccountingMode5?.payment_only?'Прайс препаратов':'Препараты в работе','openStock()'],['💰','Продажа препарата','openSale()'],...(canManageTemplatesV24()?[['📑','Шаблоны','openTemplatesV5()']]:[]),['📋','Закрыть смену','openShiftMenu()']];
  $('workspace').querySelector('.home-actions').innerHTML=actions.map(([icon,label,action])=>`<button onclick="${action}"><span>${icon}</span><strong>${label}</strong></button>`).join('');
  $('workspace').querySelector('h1').textContent=currentStaff.role==='admin'?'Кабинет администратора':currentStaff.role==='owner'?'Кабинет владельца':'Работа со своей сменой';
  renderStaffStatusV5();
@@ -20,7 +20,7 @@ function renderCabinetHomeV5(){
  let voice=$('homeVoiceV5');if(!voice){voice=document.createElement('button');voice.id='homeVoiceV5';voice.className='btn secondary wide';voice.textContent='🎙 Голосовой помощник';voice.onclick=()=>openVoiceV5();$('workspace').querySelector('.home-actions').after(voice)}
  const newPatient=$('patients').querySelector('.card');if(!$('patientCreateV5')){const b=document.createElement('button');b.id='patientCreateV5';b.className='btn primary wide';b.textContent='＋ Новый пациент';b.onclick=goNewPatient;newPatient.append(b)}
 }
-show=function(id){if(ownerScreensV5.has(id)&&!isManager()){message('homeMessage','Раздел доступен только владельцу');id='workspace'}showCabinetV5(id);renderStaffStatusV5();if(id==='workspace')renderCabinetHomeV5()};
+show=function(id){if(id==='templatesV5'&&!canManageTemplatesV24()){message('homeMessage','Шаблоны доступны администратору и медсёстрам.');id='workspace'}if(ownerScreensV5.has(id)&&!isManager()){message('homeMessage','Раздел доступен только владельцу');id='workspace'}showCabinetV5(id);renderStaffStatusV5();if(id==='workspace')renderCabinetHomeV5()};
 async function openPriceServicesV10(){beginQuickNavigation4();await goServicesV5()}
 enterApp=async function(user){try{await enterCabinetV5(user);if(currentStaff)renderCabinetHomeV5()}catch(e){$('loginMessage').textContent='Не удалось загрузить кабинет. '+e.message;show('login')}};
 signOut=async function(){await signOutCabinetV5();const s=$('backupStatusV5');if(s)s.textContent='';};

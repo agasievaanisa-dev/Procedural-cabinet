@@ -12,7 +12,6 @@
   const list = cents(input.list, 'Стоимость по прайсу'), charge = cents(input.charge, 'Стоимость для пациента');
   const previous = cents(input.previous ?? 0, 'Ранее оплачено'), received = cents(input.received, 'Оплата сейчас');
   const reason = String(input.reason || '').trim(), status = input.status || 'paid';
-  if (charge > list) throw Error('Стоимость для пациента превышает стоимость выбранных процедур и препаратов по прайсу. Исправьте сумму к оплате или состав процедуры');
   if (!['paid','pending','debt','free'].includes(status)) throw Error('Выберите вариант оплаты');
   if (charge !== list && !reason) throw Error('Укажите комментарий, почему стоимость отличается от прайса');
   if (charge === 0 && status !== 'free') throw Error('Для нулевой стоимости выберите «Бесплатно» и укажите комментарий');
@@ -30,8 +29,28 @@
    if (!Number.isSafeInteger(quantity) || quantity < 1) throw Error('Количество своего препарата должно быть целым и больше нуля');
    if (!['patient','previously_purchased'].includes(item.source)) throw Error('Укажите, откуда препарат пациента');
    if (!unit || unit.length > 30) throw Error('Укажите единицу своего препарата');
-   return {name,quantity,unit,source:item.source};
+   return {name,quantity,unit,source:item.source,...(Object.hasOwn(item,'dose') ? {dose:doseValue(item.dose)} : {})};
   });
+ }
+ function doseValue(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string' || value.trim().length > 200) throw Error('Доза для пациента: укажите текст длиной до 200 символов');
+  return value.trim() || null;
+ }
+ function protocolItems(items) {
+  if (!Array.isArray(items)) throw Error('Неверный состав шаблона');
+  const combined = new Map();
+  for (const item of items) {
+   if (!item || typeof item.medication_id !== 'string' || !item.medication_id) throw Error('Выберите препарат шаблона');
+   const quantity = Number(item.quantity), dose = doseValue(item.dose);
+   if (!Number.isSafeInteger(quantity) || quantity < 1) throw Error('Количество препарата должно быть целым и больше нуля');
+   const previous = combined.get(item.medication_id);
+   if (previous && previous.dose !== dose) throw Error('У одного препарата указаны разные дозы. Скорректируйте дозу в процедуре или замените состав шаблоном');
+   const total = quantity + (previous?.quantity || 0);
+   if (!Number.isSafeInteger(total)) throw Error('Слишком большое количество препарата');
+   combined.set(item.medication_id,{...item,medication_id:item.medication_id,quantity:total,dose});
+  }
+  return [...combined.values()];
  }
  function mergeServices(items) {
   const quantities = new Map();
@@ -61,7 +80,7 @@
   try { return cents(record.paid_total ?? 0) > 0; } catch { return false; }
  }
  const correctionReasonV22 = 'Оплата отмечена ошибочно: деньги не получены';
- const helpers = {cents,paymentModel,ownedItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge,paymentCorrectionAllowed};
+ const helpers = {cents,paymentModel,ownedItems,doseValue,protocolItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge,paymentCorrectionAllowed};
  if (typeof module === 'object' && module.exports) module.exports = helpers;
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
@@ -214,21 +233,22 @@
   const correction = document.createElement('div'); correction.id = prefix + 'PaymentCorrectionBoxV22'; correction.className = 'clinical-payment-correction-v22 hidden';
   correction.innerHTML = `<label class="payment-confirm-v5"><input id="${prefix}PaymentCorrectionV22" type="checkbox"><span><strong>Исправить ошибочную оплату</strong><br>Подтверждаю: деньги по этой записи не получены.</span></label><p id="${prefix}PaymentCorrectionAmountV22" class="small"></p>`;
   host.prepend(correction);
-  paid.after(host); paid.previousElementSibling.textContent = 'Стоимость с учётом скидки, ₽'; paid.removeAttribute('oninput');
+  paid.after(host); paid.previousElementSibling.textContent = 'Индивидуальная стоимость, ₽'; paid.removeAttribute('oninput');
   $(prefix + 'PaymentCorrectionV22').addEventListener('change',() => correctionChanged(prefix));
   $(prefix + 'PaymentStatusV10').add(new Option('Оплатит после процедуры','pending'),1);
   const debtHint = document.createElement('p'); debtHint.id = prefix + 'DebtHintV13'; debtHint.className = 'notice hidden';
-  debtHint.textContent = 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
+  debtHint.textContent = 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentStatusV10').after(debtHint);
   paid.addEventListener('input',() => chargeChanged(prefix));
   $(prefix + 'PaymentStatusV10').addEventListener('change',() => paymentStatusChanged(prefix));
   $(prefix + 'ReceivedV10').addEventListener('input',() => { clearConfirmation(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountComment').addEventListener('input',() => { clearConfirmation(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountReason').removeAttribute('onchange');
+  $(prefix + 'DiscountReason').previousElementSibling.textContent = 'Причина изменения стоимости *';
   $(prefix + 'DiscountReason').addEventListener('change',() => { clearConfirmation(prefix); discountVisibility(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountComment').previousElementSibling.textContent = 'Почему стоимость отличается от прайса / бесплатно *';
   const inline = document.createElement('div'); inline.className = 'clinical-discount-inline-v11';
-  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">Стоимость с учётом скидки (включая долг), ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: скидка от начальника"></textarea></div>`;
+  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">Индивидуальная стоимость (включая долг), ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: индивидуальная цена согласована"></textarea></div>`;
   $(prefix + 'PaymentV5').querySelector('h2').after(inline);
   const shortCash = document.createElement('div'); shortCash.id = prefix + 'ShortCashBoxV11'; shortCash.className = 'clinical-short-cash-v11 hidden';
   shortCash.innerHTML = `<p id="${prefix}ShortCashHintV11" class="small"></p><button id="${prefix}ApplyDiscountV11" type="button" class="btn secondary wide">Учесть разницу как скидку</button><div id="${prefix}ApplyDiscountMessageV11" role="alert"></div>`;
@@ -246,7 +266,7 @@
    $('procMeds').after(extra);
    $('procAddServiceV10').onclick = () => addService(); $('procAddOwnV10').onclick = () => addOwn();
    const notice = $('procMeds').parentElement.querySelector('.notice');
-   if (notice) notice.textContent = 'Стоимость по прайсу рассчитана автоматически. При скидке или бесплатной процедуре укажите комментарий.';
+   if (notice) notice.textContent = 'Стоимость по прайсу рассчитана автоматически. Можно уменьшить или увеличить сумму для пациента. При изменении стоимости укажите комментарий.';
   }
  }
  function addService(item = {}) {
@@ -262,13 +282,13 @@
  }
  function addOwn(item = {}) {
   const row = document.createElement('div'); row.className = 'clinical-own-v10';
-  row.innerHTML = `<label>Название препарата<input class="own-name-v10" aria-label="Название своего препарата" maxlength="200" placeholder="Название и дозировка" value="${esc(item.name || '')}"></label><label>Откуда препарат<select class="own-source-v10" aria-label="Откуда препарат"><option value="patient">Принёс пациент</option><option value="previously_purchased">Ранее куплен у нас</option></select></label><div class="grid2"><label>Количество<input class="own-quantity-v10" aria-label="Количество своего препарата" type="number" min="1" step="1" inputmode="numeric" value="${Number(item.quantity || 1)}"></label><label>Единица<input class="own-unit-v10" aria-label="Единица своего препарата" maxlength="30" value="${esc(item.unit || 'амп.')}"></label></div><button type="button" class="btn danger" aria-label="Убрать свой препарат">Убрать</button>`;
+  row.innerHTML = `<label>Название препарата<input class="own-name-v10" aria-label="Название своего препарата" maxlength="200" placeholder="Название препарата" value="${esc(item.name || '')}"></label><label>Откуда препарат<select class="own-source-v10" aria-label="Откуда препарат"><option value="patient">Принёс пациент</option><option value="previously_purchased">Ранее куплен у нас</option></select></label><div class="grid2"><label>Количество<input class="own-quantity-v10" aria-label="Количество своего препарата" type="number" min="1" step="1" inputmode="numeric" value="${Number(item.quantity || 1)}"></label><label>Единица<input class="own-unit-v10" aria-label="Единица своего препарата" maxlength="30" value="${esc(item.unit || 'амп.')}"></label></div><label>Доза для пациента<input class="own-dose-v24" aria-label="Доза своего препарата для пациента" maxlength="200" placeholder="По назначению, например 500 мг" value="${esc(item.dose || '')}"></label><button type="button" class="btn danger" aria-label="Убрать свой препарат">Убрать</button>`;
   row.querySelector('select').value = item.source || 'patient';
   row.addEventListener('input',() => clearConfirmation('proc')); row.addEventListener('change',() => clearConfirmation('proc'));
   row.querySelector('button').onclick = () => { row.remove(); clearConfirmation('proc'); };
   $('procOwnMedsV10').appendChild(row); clearConfirmation('proc');
  }
- function readOwn() { return ownedItems([...$('procOwnMedsV10').querySelectorAll('.clinical-own-v10')].map(row => ({name:row.querySelector('.own-name-v10').value,quantity:row.querySelector('.own-quantity-v10').value,unit:row.querySelector('.own-unit-v10').value,source:row.querySelector('.own-source-v10').value}))); }
+ function readOwn() { return ownedItems([...$('procOwnMedsV10').querySelectorAll('.clinical-own-v10')].map(row => ({name:row.querySelector('.own-name-v10').value,quantity:row.querySelector('.own-quantity-v10').value,unit:row.querySelector('.own-unit-v10').value,source:row.querySelector('.own-source-v10').value,dose:row.querySelector('.own-dose-v24').value}))); }
  function calculate(prefix, update = true) {
   const s = state(prefix); if (!s) return;
   let total;
@@ -279,6 +299,45 @@
   if (prefix === 'proc') $('servicePriceInfo').textContent = 'Работа и расходники выбранных процедур: ' + rub(selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) / 100);
   discountVisibility(prefix); syncPaymentV5(prefix);
  }
+ helpers.templateState = function() {
+  const s = state('proc');
+  return {ready:!!s,locked:!s || !!s.retry || clinicalBusy || !!s.correctionSavingV22,editing:!!s?.edit,hasSelection:!!$('procMeds')?.querySelector('.medrow') || !!$('procAdditionalServicesV10')?.querySelector('.clinical-service-v10')};
+ };
+ helpers.applyTemplate = function(template, mode = 'replace') {
+  const s = state('proc');
+  if (!s || !currentStaff?.id || currentStaff.active === false) throw Error('Сначала откройте процедуру пациента');
+  if (s.retry || clinicalBusy || s.correctionSavingV22) throw Error('Дождитесь подтверждения сохранения процедуры перед применением шаблона');
+  if (!['replace','append'].includes(mode)) throw Error('Выберите, как применить шаблон');
+  if (!template || template.active === false) throw Error('Шаблон недоступен');
+  const additions = protocolItems(template.items || []);
+  additions.forEach(item => {
+   const medication = meds.find(med => med.id === item.medication_id);
+   if (!medication || medication.active === false) throw Error('В шаблоне есть недоступный препарат. Обновите шаблон перед применением');
+   if (num(medication.sale_price) <= 0) throw Error('У препарата шаблона не указана цена продажи. Добавьте цену перед применением шаблона');
+  });
+  const templateServices = mergeServices(template.services || (template.service_id ? [{service_id:template.service_id,quantity:1}] : []));
+  templateServices.forEach(item => {
+   const service = services.find(service => service.id === item.service_id);
+   if (!service || service.active === false) throw Error('Услуга шаблона недоступна. Обновите шаблон перед применением');
+  });
+  const medications = protocolItems((mode === 'append' ? rows('procMeds') : []).concat(additions));
+  const existingServices = selectedServices();
+  const allServices = mode === 'append'
+   ? existingServices.concat(templateServices.filter(item => !existingServices.some(previous => previous.service_id === item.service_id)))
+   : templateServices.length ? templateServices : existingServices;
+  // The patient draft is independent of the shared protocol. Keep the form's
+  // captured prices, manual charge, receipts, visit time and patient medicines.
+  $('procMeds').innerHTML = ''; $('procAdditionalServicesV10').innerHTML = '';
+  $('procService').value = allServices[0]?.service_id || '';
+  if (allServices[0]?.quantity > 1) addService({...allServices[0],quantity:allServices[0].quantity - 1});
+  allServices.slice(1).forEach(item => addService(item));
+  medications.forEach(item => {
+   const original = s.edit?.items?.find(previous => previous.medication_id === item.medication_id);
+   addMedRow('procMeds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name || original?.name,consumption_unit:item.unit || original?.unit,dose:item.dose});
+  });
+  clearConfirmation('proc'); calculate('proc'); recalc();
+  return {items:rows('procMeds'),services:selectedServices()};
+ };
  function receivedCents(prefix) {
   const s = state(prefix), status = $(prefix + 'PaymentStatusV10').value, charge = cents($(prefix + 'Paid').value || '0');
   if (correctionSelected(prefix)) return 0;
@@ -365,7 +424,7 @@
   $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',correcting || (paymentStatus !== 'debt' && !pendingSelected));
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
-  $(prefix + 'DebtHintV13').textContent = pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Скидку можно сохранить и без оплаты. Укажите стоимость после скидки и её причину. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
+  $(prefix + 'DebtHintV13').textContent = pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
   $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
@@ -374,7 +433,7 @@
   let unpaidBalance = 0; try { unpaidBalance = cents($(prefix + 'Paid').value || '0') - (s.previous || 0); } catch {}
   $(prefix + 'SavePendingV14').classList.toggle('hidden',correcting || pendingSelected || paymentStatus === 'free' || unpaidBalance <= 0);
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
-  try { const m = currentModel(prefix); $(prefix + 'DebtSummaryV10').textContent = `По прайсу: ${rub(m.list / 100)}. Скидка: ${rub(Math.max(0,m.list - m.charge) / 100)}. К оплате с учётом скидки: ${rub(m.charge / 100)}. ${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. ${m.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
+  try { const m = currentModel(prefix), increase = m.charge > m.list; $(prefix + 'DebtSummaryV10').textContent = `По прайсу: ${rub(m.list / 100)}. ${increase ? 'Надбавка' : 'Скидка'}: ${rub(Math.abs(m.list - m.charge) / 100)}. К оплате с учётом ${increase ? 'надбавки' : 'скидки'}: ${rub(m.charge / 100)}. ${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. ${m.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
   correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
@@ -415,7 +474,7 @@
    else {
    if (!s.edit && !shift?.id) throw Error('Сначала откройте смену');
    if (kind === 'procedure' && (!$('procPatient').value || !$('procService').value)) throw Error('Выберите пациента и услугу');
-   const selected = rows(prefix + 'Meds');
+   const selected = rows(prefix + 'Meds').map(item => kind === 'procedure' ? {...item,dose:doseValue(item.dose)} : item);
    if (kind === 'sale' && !selected.length) throw Error('Добавьте препарат для продажи');
    const totals = new Map(); selected.forEach(item => { positiveWhole(item.quantity,'Количество препарата'); totals.set(item.medication_id,(totals.get(item.medication_id) || 0) + item.quantity); });
    const paymentOnly = s.edit ? s.edit.stock_deducted === false : isPaymentOnlyV5(prefix);
@@ -501,13 +560,14 @@
     if (num(main.quantity) > 1) addService({...main,quantity:num(main.quantity) - 1});
     (record.services || []).slice(1).forEach(item => addService(item)); (record.own_medications || []).forEach(item => addOwn(item)); $('repeatHint').classList.add('hidden');
    }
-   (record.items || []).forEach(item => addMedRow(prefix + 'Meds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name,consumption_unit:item.unit}));
+   (record.items || []).forEach(item => addMedRow(prefix + 'Meds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name,consumption_unit:item.unit,dose:item.dose}));
    $(prefix + 'Notes').value = record.notes || ''; $(prefix + 'DiscountReason').value = record.discount_reason || ''; $(prefix + 'DiscountComment').value = record.discount_comment || '';
    $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0)); resetPaymentV5(prefix); $(prefix + 'Paid').value = amount(cents(record.charge_total ?? record.paid_total ?? 0));
    forms[prefix].chargeEdited = !automaticUnpaidCharge(record);
    $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00';
    $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Редактирование процедуры' : 'Редактирование продажи'; show(kind); calculate(prefix,false); renderAccountingModeV5();
-   message(kind + 'Message',pendingUnpaidRecord(record) ? 'Добавьте или измените процедуру и препараты. До оплаты можно сохранять изменения без комментария. При скидке укажите её причину.' : 'Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
+   message(kind + 'Message',pendingUnpaidRecord(record) ? 'Добавьте или измените процедуру и препараты. До оплаты можно сохранять изменения без комментария. При изменении стоимости укажите её причину.' : 'Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
+   if (prefix === 'proc' && typeof global.loadProcedureTemplatesV5 === 'function') await global.loadProcedureTemplatesV5();
   } catch (error) { if (actorKey() === actor) message('patientCardMessageV5',error.message); }
  };
  function dateText(at) { return esc(new Date(at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})); }
@@ -526,7 +586,7 @@
    const data = await clinicalRpc('patient_treatments',{patient_id:id});
    if (version !== patientView || id !== currentPatientId || actor !== actorKey()) return;
    const events = treatmentEvents(data);
-   host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div>${financeEventPaymentHtmlV5(event)}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}${global.treatmentActionsHtmlV14(event)}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
+   host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div>${financeEventPaymentHtmlV5(event)}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)}${item.dose ? ' · Доза: ' + esc(item.dose) : ''} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}${global.treatmentActionsHtmlV14(event)}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
   } catch (error) { if (version === patientView && id === currentPatientId && actor === actorKey()) host.innerHTML = `<div class="notice">${esc(error.message)}<button type="button" class="btn secondary wide" onclick="loadPatientClinicalV10()">Повторить</button></div>`; }
  };
  const openPatientBase = openPatient;

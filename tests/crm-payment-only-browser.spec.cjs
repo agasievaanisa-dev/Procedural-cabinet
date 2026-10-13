@@ -54,7 +54,7 @@ async function procedure(page){await page.evaluate(()=>openProcedure('patient-1'
 async function noOverflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);}
 
 test('nurse bills zero-stock price items with mixed payment while stock stays unchanged',async({page})=>{
- const errors=await boot(page);await expect(page.locator('#workspace .home-actions>button')).toHaveCount(6);await expect(page.locator('#accountingModeBannerV5')).toContainText('без списания со склада');await noOverflow(page);
+ const errors=await boot(page);await expect(page.locator('#workspace .home-actions>button')).toHaveCount(7);await expect(page.locator('#accountingModeBannerV5')).toContainText('без списания со склада');await noOverflow(page);
  await page.evaluate(()=>openStock());await expect(page.locator('#workStock h1')).toHaveText('Прайс препаратов');await expect(page.locator('#workStockList')).toContainText('20 ₽');await expect(page.locator('#workStockList')).toContainText('Цена не задана');
  await procedure(page);await expect(page.locator('#procAccountingModeV5')).toContainText('Остатки препаратов не меняются');await expect(page.locator('#procMeds .medrow')).not.toHaveClass(/short/);await expect(page.locator('#procMeds .stock-hint')).toContainText('без списания');
  await page.click('#procPaymentV5 [data-pay-method="mixed"]');await page.fill('#procPayCash','40');await page.fill('#procPayTerminal','50');await page.fill('#procPayOwnerCard','100');await page.fill('#procPayTender','200');await page.check('#procPayConfirmed');

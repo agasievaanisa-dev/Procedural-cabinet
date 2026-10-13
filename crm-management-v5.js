@@ -1,8 +1,10 @@
-/* Owner management and editable procedure templates. Authorization is enforced by RPCs. */
+/* Owner management and shared editable procedure templates. RPCs enforce authorization. */
 let managementStaffV5=[],managementTemplatesV5=[],managementAuditV5=[],managementBusyV5=false,managementLoadV5=0;
 let managementSettingsLoadedV5=false;
 let managementSessionV16=0;
 let managementTemplatesLoadV16=0,managementSettingsLoadV16=0;
+let procedureTemplatesLoadV24=0,procedureTemplateActorV24=null,procedureTemplatePendingV24=null,procedureTemplateNavigationV24=null;
+const procedureTemplatesV24=new Map();
 const managementDraftsV16={staff:null,template:null,settings:null,account:null};
 const managementScreensV16={staff:'staffV5',template:'templatesV5',settings:'settingsV5',account:'staffV5'};
 const managementMessagesV16={staff:'staffMessageV5',template:'templatesMessageV5',settings:'settingsMessageV5',account:'staffMessageV5'};
@@ -10,6 +12,9 @@ const managementSaveNamesV16={staff:'saveStaffV5()',template:'saveTemplateV5()',
 const managementSaveLabelsV16={staff:'Сохранить сотрудника',template:'Сохранить шаблон',settings:'Сохранить настройки',account:'Создать доступ медсестре'};
 function managementActorV16(){return JSON.stringify([currentStaff?.id,currentStaff?.role,managementSessionV16])}
 function managementStillActorV16(actor){return isManager()&&actor===managementActorV16()}
+function canManageTemplatesV24(){return !!currentStaff?.id&&currentStaff.active!==false&&['owner','admin','nurse'].includes(currentStaff.role)}
+function templateManagementV24(){if(canManageTemplatesV24())return true;message('homeMessage','Шаблоны доступны администратору и медсёстрам.');return false}
+function managementDraftActorV24(kind,actor){return kind==='template'?canManageTemplatesV24()&&actor===managementActorV16():managementStillActorV16(actor)}
 function managementFailureV16(error,status){
   const failure=Error(error?.message||'Не удалось выполнить действие. Проверьте соединение.');
   for(const key of ['code','details','hint','uncertain','retryable','network'])if(error?.[key]!==undefined)failure[key]=error[key];
@@ -22,7 +27,7 @@ function managementListV16(data,label){
 }
 function managementDraftV16(kind,payload){
   let draft=managementDraftsV16[kind];
-  if(draft&&!managementStillActorV16(draft.actor))throw Error('Учётная запись изменилась. Откройте форму заново.');
+  if(draft&&!managementDraftActorV24(kind,draft.actor))throw Error('Учётная запись изменилась. Откройте форму заново.');
   if(!draft){
     const copy=JSON.parse(JSON.stringify(payload));
     function freeze(value){if(value&&typeof value==='object'){Object.values(value).forEach(freeze);Object.freeze(value)}return value}
@@ -34,7 +39,7 @@ function managementDraftControlsV16(kind){
   const screen=$(managementScreensV16[kind]);if(!screen)return;
   const draft=managementDraftsV16[kind],button=screen.querySelector?.(`button[onclick="${managementSaveNamesV16[kind]}"]`);
   if(!draft){if(button)button.textContent=managementSaveLabelsV16[kind];return}
-  if(!managementStillActorV16(draft.actor))return;
+  if(!managementDraftActorV24(kind,draft.actor))return;
   const section=kind==='staff'?$('staffEditV5'):kind==='template'?$('templateEditV5'):kind==='account'?$('staffCreatePasswordV5')?.closest?.('.card'):screen;
   section?.querySelectorAll('input,select,textarea,button').forEach(el=>el.disabled=true);
   if(kind==='account')for(const id of ['staffCreateNameV5','staffCreateEmailV5','staffCreatePasswordV5'])if($(id))$(id).disabled=true;
@@ -46,13 +51,13 @@ function managementDraftControlsV16(kind){
   if(kind==='staff')$('staffListV5')?.querySelectorAll('button').forEach(el=>el.disabled=true);
 }
 function managementResumeV16(kind){
-  const draft=managementDraftsV16[kind];if(!draft||!managementStillActorV16(draft.actor)||!$(managementScreensV16[kind]))return false;
+  const draft=managementDraftsV16[kind];if(!draft||!managementDraftActorV24(kind,draft.actor)||!$(managementScreensV16[kind]))return false;
   show(managementScreensV16[kind]);managementDraftControlsV16(kind);
   message(managementMessagesV16[kind],draft.result?'Изменение уже сохранено. Нажмите «Завершить сохранение».':kind==='account'?'Ответ о создании доступа не получен. Нажмите «Проверить создание доступа».':'Ответ о сохранении не получен. Данные остались в форме. Нажмите «Повторить сохранение».',!!draft.result);
   return true;
 }
 function managementSaveFailedV16(kind,error,draft){
-  if(!managementStillActorV16(draft?.actor||managementActorV16()))return;
+  if(!managementDraftActorV24(kind,draft?.actor||managementActorV16()))return;
   if(draft&&(error.uncertain||error.retryable||error.network||serviceNetworkFailureV11(error)))draft.uncertain=true;
   if(draft&&!draft.result&&!draft.uncertain)managementDraftsV16[kind]=null;
   message(managementMessagesV16[kind],error.message+(managementDraftsV16[kind]?.uncertain?' Данные остались в форме. Повторное сохранение проверит ту же запись.':''));
@@ -333,51 +338,70 @@ saveService=async function(){
 };
 
 function templateMedicationV5(id){return meds.find(m=>m.id===id)||(isManager()?inventory.find(m=>m.id===id):null)}
-function templateItemsTextV5(t){return (t.items||[]).map(x=>{const m=templateMedicationV5(x.medication_id)||x;return `${esc(m.name||'Препарат недоступен')} × ${qty(x.quantity)} ${esc(unit(m))}`}).join('<br>')||'Без препаратов'}
+function templateItemsTextV5(t){return (t.items||[]).map(x=>{const m=templateMedicationV5(x.medication_id)||x;return `${esc(m.name||'Препарат недоступен')} × ${qty(x.quantity)} ${esc(unit(m))}${x.dose?` · Доза: ${esc(x.dose)}`:''}`}).join('<br>')||'Без препаратов'}
 async function openTemplatesV5(){
-  if(!ownerManagementV5())return;
+  if(!templateManagementV24())return;
   if(managementResumeV16('template'))return;
   const actor=managementActorV16(),version=++managementTemplatesLoadV16;
-  managementScreenV5('templatesV5','Шаблоны процедур',`<p class="sub">Шаблон заполняет черновик процедуры. Перед сохранением можно изменить препараты и дозировку.</p><button class="btn primary wide" onclick="editTemplateV5(-1)">＋ Новый шаблон</button><div id="templatesMessageV5" role="status" aria-live="polite"></div><div id="templatesListV5" class="list" style="margin-top:14px"></div><div id="templateEditV5" class="card hidden"><h2>Состав шаблона</h2><input id="templateIdV5" type="hidden"><label for="templateNameV5">Название *</label><input id="templateNameV5" placeholder="Капельница №1"><label for="templateServiceV5">Услуга</label><select id="templateServiceV5"></select><h3>Препараты</h3><div id="templateItemsV5"></div><button class="btn secondary wide" onclick="addTemplateItemV5()">＋ Добавить препарат</button><label for="templateNotesV5">Комментарий</label><textarea id="templateNotesV5"></textarea><label class="management-check"><input id="templateActiveV5" type="checkbox" checked> Использовать шаблон</label><button class="btn primary wide" onclick="saveTemplateV5()">Сохранить шаблон</button><button class="btn secondary wide" onclick="$('templateEditV5').classList.add('hidden')">Отмена</button></div>`);
+  managementScreenV5('templatesV5','Шаблоны капельниц',`<p class="sub">Общие образцы для администратора и медсестёр. В процедуре пациента можно менять состав, дозы, количество и итоговую стоимость. Общий шаблон при этом сохраняется.</p><button class="btn primary wide" onclick="editTemplateV5(-1)" disabled>＋ Новый шаблон</button><label for="templatesSearchV24">Найти шаблон</label><input id="templatesSearchV24" type="search" placeholder="Название шаблона" oninput="renderTemplatesV5()"><div id="templatesMessageV5" role="status" aria-live="polite"></div><div id="templatesListV5" class="list" style="margin-top:14px"></div><div id="templateEditV5" class="card hidden"><h2>Состав общего шаблона</h2><input id="templateIdV5" type="hidden"><label for="templateNameV5">Название *</label><input id="templateNameV5" placeholder="Капельница №1"><label for="templateServiceV5">Услуга</label><select id="templateServiceV5"></select><h3>Препараты</h3><div id="templateItemsV5"></div><button class="btn secondary wide" onclick="addTemplateItemV5()">＋ Добавить препарат</button><p class="small">Доза — назначение для пациента. Количество — целое число ампул или флаконов, использованных для расчёта стоимости.</p><label for="templateNotesV5">Комментарий к образцу</label><textarea id="templateNotesV5"></textarea><label class="management-check"><input id="templateActiveV5" type="checkbox" checked> Использовать шаблон (снимите отметку, чтобы отправить в архив)</label><button class="btn primary wide" onclick="saveTemplateV5()">Сохранить шаблон</button><button class="btn secondary wide" onclick="$('templateEditV5').classList.add('hidden')">Отмена</button></div>`);
   show('templatesV5');message('templatesMessageV5','Загружаем шаблоны…');
-  try{const results=await Promise.all([crmManagementRpcV5('templates_list'),loadServices(),loadMeds(),loadInventory()]);if(!managementStillActorV16(actor)||version!==managementTemplatesLoadV16)return;managementTemplatesV5=managementListV16(results[0],'Список шаблонов');renderTemplatesV5();message('templatesMessageV5','')}
-  catch(e){if(managementStillActorV16(actor)&&version===managementTemplatesLoadV16)message('templatesMessageV5',e.message)}
+  try{
+    const jobs=[crmManagementRpcV5('templates_list'),loadServices(),loadMeds()];if(isManager())jobs.push(loadInventory());
+    const results=await Promise.all(jobs);if(!managementDraftActorV24('template',actor)||version!==managementTemplatesLoadV16)return;
+    managementTemplatesV5=managementListV16(results[0],'Список шаблонов');renderTemplatesV5();
+    $('templatesV5').querySelector('button[onclick="editTemplateV5(-1)"]').disabled=false;message('templatesMessageV5','');
+  }catch(e){if(managementDraftActorV24('template',actor)&&version===managementTemplatesLoadV16)message('templatesMessageV5',e.message)}
 }
 function renderTemplatesV5(){
-  $('templatesListV5').innerHTML=managementTemplatesV5.map((t,i)=>`<button class="item management-list-button" onclick="editTemplateV5(${i})"><div class="row between"><strong>${esc(t.name)}</strong><span class="pill">${t.active!==false?'Активен':'В архиве'}</span></div><p class="small">${templateItemsTextV5(t)}</p>${t.notes?`<div class="small">${esc(t.notes)}</div>`:''}</button>`).join('')||'<p>Шаблонов пока нет.</p>';
+  const search=normalizeSearch($('templatesSearchV24')?.value||'');
+  const rows=managementTemplatesV5.filter(t=>!search||normalizeSearch(t.name).includes(search));
+  $('templatesListV5').innerHTML=rows.map(t=>`<button class="item management-list-button" data-template-id="${esc(t.id)}" onclick="editTemplateV5(this.dataset.templateId)"><div class="row between"><strong>${esc(t.name)}</strong><span class="pill">${t.active!==false?'Активен':'В архиве'}</span></div><p class="small">${templateItemsTextV5(t)}</p>${t.notes?`<div class="small">${esc(t.notes)}</div>`:''}</button>`).join('')||`<p>${search?'Шаблоны не найдены.':'Шаблонов пока нет. Создайте первый образец.'}</p>`;
 }
-function editTemplateV5(index){
-  if(!ownerManagementV5())return;if(managementResumeV16('template'))return;const t=managementTemplatesV5[index]||{};
+function editTemplateV5(id){
+  if(!templateManagementV24())return;if(managementResumeV16('template'))return;
+  const t=id===-1?{}:managementTemplatesV5.find(row=>row.id===id);if(!t)return;
   $('templateIdV5').value=t.id||'';$('templateNameV5').value=t.name||'';$('templateNotesV5').value=t.notes||'';$('templateActiveV5').checked=t.active!==false;
-  $('templateServiceV5').innerHTML='<option value="">Выбрать при процедуре</option>'+services.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
-  if(t.service_id&&!services.some(s=>s.id===t.service_id))$('templateServiceV5').insertAdjacentHTML('beforeend',`<option value="${esc(t.service_id)}">Прежняя услуга недоступна — выберите другую</option>`);
-  $('templateServiceV5').value=t.service_id||'';$('templateItemsV5').innerHTML='';(t.items||[]).forEach(x=>addTemplateItemV5(x.medication_id,x.quantity));
+  $('templateServiceV5').innerHTML='<option value="">Выбрать при процедуре</option>'+services.filter(s=>s.active!==false).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  if(t.service_id&&!services.some(s=>s.id===t.service_id&&s.active!==false))$('templateServiceV5').insertAdjacentHTML('beforeend',`<option value="${esc(t.service_id)}">Прежняя услуга недоступна — выберите другую</option>`);
+  $('templateServiceV5').value=t.service_id||'';$('templateItemsV5').innerHTML='';(t.items||[]).forEach(x=>addTemplateItemV5(x.medication_id,x.quantity,x.dose));
   $('templateEditV5').classList.remove('hidden');$('templateEditV5').scrollIntoView({behavior:'smooth',block:'start'});
 }
-function addTemplateItemV5(id='',quantity=1){
-  if(!isManager()||managementDraftsV16.template)return;const all=(inventory.length?inventory:meds).filter(m=>m.active!==false),row=document.createElement('div');row.className='template-item-v5';
-  const options=all.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}${m.dosage?' · '+esc(m.dosage):''} · ${esc(unit(m))}</option>`).join('');
-  row.innerHTML=`<div><label>Препарат</label><select class="template-med-v5" aria-label="Препарат шаблона"><option value="">Выберите препарат</option>${options}${id&&!all.some(m=>m.id===id)?`<option value="${esc(id)}">Препарат недоступен — замените или уберите</option>`:''}</select></div><div><label>Количество</label><input class="template-quantity-v5" aria-label="Количество препарата" type="number" inputmode="numeric" min="1" step="1" value="${esc(quantity)}"></div><button class="btn danger" aria-label="Убрать препарат" onclick="this.parentElement.remove()">×</button>`;
+function templateMedicationOptionsV24(selected='',search=''){
+  const all=meds.filter(m=>m.active!==false),normalized=normalizeSearch(search);
+  const matches=all.filter(m=>m.id===selected||!normalized||matchesMedication(m,normalized));
+  return '<option value="">Выберите препарат</option>'+matches.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}${m.dosage?' · '+esc(m.dosage):''} · ${esc(unit(m))}</option>`).join('')+(selected&&!all.some(m=>m.id===selected)?`<option value="${esc(selected)}">Препарат недоступен — замените или уберите</option>`:'');
+}
+function searchTemplateMedicationV24(input){
+  const row=input.closest('.template-item-v5'),select=row?.querySelector('.template-med-v5');if(!select)return;
+  const selected=select.value;select.innerHTML=templateMedicationOptionsV24(selected,input.value);select.value=selected;
+}
+function addTemplateItemV5(id='',quantity=1,dose=null){
+  if(!canManageTemplatesV24()||managementDraftsV16.template)return;const row=document.createElement('div');row.className='template-item-v5';
+  row.innerHTML=`<div class="template-medication-v24"><label>Препарат</label><input class="template-med-search-v24" aria-label="Найти препарат в шаблоне" type="search" placeholder="Поиск препарата" oninput="searchTemplateMedicationV24(this)"><select class="template-med-v5" aria-label="Препарат шаблона">${templateMedicationOptionsV24(id)}</select></div><div class="template-count-v24"><label>Ампул / флаконов</label><input class="template-quantity-v5" aria-label="Количество ампул или флаконов" type="number" inputmode="numeric" min="1" step="1" value="${esc(quantity)}"></div><div class="template-dose-v24"><label>Доза для пациента</label><input class="template-dose-input-v24" aria-label="Доза для пациента" type="text" maxlength="200" placeholder="Например: 400 мг, 5 мл" value="${esc(dose||'')}"></div><button class="btn danger template-remove-v24" aria-label="Убрать препарат" onclick="this.parentElement.remove()">×</button>`;
   row.querySelector('select').value=id;$('templateItemsV5').appendChild(row);
 }
 function templatePayloadV5(){
   const name=$('templateNameV5').value.trim();if(!name)throw Error('Укажите название шаблона');
   const items=[...$('templateItemsV5').querySelectorAll('.template-item-v5')].map(row=>{
-    const medication_id=row.querySelector('select').value,quantity=Number(row.querySelector('input').value);
+    const medication_id=row.querySelector('select').value,quantity=Number((row.querySelector('.template-quantity-v5')||row.querySelector('input')).value);
+    const dose=(row.querySelector('.template-dose-input-v24')?.value||'').trim()||null;
     if(!medication_id)throw Error('Выберите препарат в каждой строке или уберите пустую строку');
-    if(!Number.isSafeInteger(quantity)||quantity<=0)throw Error('Количество препарата должно быть целым числом больше нуля в единицах списания');
+    if(!Number.isSafeInteger(quantity)||quantity<=0)throw Error('Количество препарата должно быть целым числом больше нуля в ампулах или флаконах');
+    if(dose&&dose.length>200)throw Error('Доза для пациента должна быть не длиннее 200 символов');
     const m=templateMedicationV5(medication_id);if(!m||m.active===false)throw Error('В шаблоне есть недоступный препарат. Замените его или уберите.');
-    return {medication_id,quantity};
+    return {medication_id,quantity,dose};
   });
-  return {id:$('templateIdV5').value||null,name,service_id:$('templateServiceV5').value||null,items,notes:$('templateNotesV5').value.trim()||null,active:$('templateActiveV5').checked};
+  const service_id=$('templateServiceV5').value||null;
+  if(service_id&&!services.some(s=>s.id===service_id&&s.active!==false))throw Error('Услуга недоступна. Выберите действующую услугу.');
+  return {id:$('templateIdV5').value||null,name,service_id,items,notes:$('templateNotesV5').value.trim()||null,active:$('templateActiveV5').checked};
 }
 async function saveTemplateV5(){
-  if(!ownerManagementV5()||managementBusyV5)return;
+  if(!templateManagementV24()||managementBusyV5)return;
   const actor=managementActorV16();let draft;
   try{
     draft=managementDraftsV16.template?managementDraftV16('template'):managementDraftV16('template',templatePayloadV5());
     managementSetBusyV5('templatesV5',true);const saved=draft.result||await crmManagementRpcV5('template_save',draft.payload,draft.requestId);
-    if(!managementStillActorV16(actor))return;
+    if(!managementDraftActorV24('template',actor))return;
     if(!saved?.id||typeof saved.id!=='string'||typeof saved.name!=='string'||!Array.isArray(saved.items))throw Object.assign(Error('Ответ о сохранении шаблона не получен.'),{uncertain:true});
     draft.result=saved;draft.uncertain=false;managementCacheV16('template',saved);
     if(!$('templatesV5').classList.contains('active'))return;
@@ -385,32 +409,67 @@ async function saveTemplateV5(){
     const version=++managementTemplatesLoadV16;
     const stale=await managementRefreshV16([async()=>{
       const rows=managementListV16(await crmManagementRpcV5('templates_list'),'Список шаблонов');
-      if(!managementStillActorV16(actor)||version!==managementTemplatesLoadV16)return false;
+      if(!managementDraftActorV24('template',actor)||version!==managementTemplatesLoadV16)return false;
       managementTemplatesV5=rows;if($('templatesV5').classList.contains('active'))renderTemplatesV5();return true;
     }]);
-    if(managementStillActorV16(actor)&&$('templatesV5').classList.contains('active'))message('templatesMessageV5',stale?'Шаблон сохранён. Список пока не обновился. Повторно создавать шаблон не нужно.':'Шаблон сохранён.',true);
-  }catch(e){managementSaveFailedV16('template',e,draft)}finally{if(managementStillActorV16(actor))managementSetBusyV5('templatesV5',false)}
+    if(managementDraftActorV24('template',actor)&&$('templatesV5').classList.contains('active'))message('templatesMessageV5',stale?'Шаблон сохранён. Список пока не обновился. Повторно создавать шаблон не нужно.':'Шаблон сохранён.',true);
+  }catch(e){managementSaveFailedV16('template',e,draft)}finally{if(managementDraftActorV24('template',actor))managementSetBusyV5('templatesV5',false)}
 }
 
 function ensureTemplatePickerV5(){
   if($('procedureTemplateV5'))return;
-  $('servicePriceInfo').insertAdjacentHTML('afterend',`<div id="procedureTemplateV5" class="template-picker-v5"><label for="procTemplateSelectV5">Готовый шаблон</label><div class="row"><select id="procTemplateSelectV5"><option value="">Без шаблона</option></select><button class="btn secondary" onclick="applyProcedureTemplateV5()">Применить</button></div><div id="procTemplateMessageV5" role="status"></div></div>`);
+  $('servicePriceInfo').insertAdjacentHTML('afterend',`<div id="procedureTemplateV5" class="template-picker-v5"><button id="procTemplatesToggleV24" type="button" class="btn secondary wide" aria-expanded="false" aria-controls="procTemplatesPanelV24" onclick="toggleProcedureTemplatesV24()">Шаблоны</button><div id="procTemplatesPanelV24" class="hidden"><label for="procTemplateSelectV5">Образец капельницы</label><div class="row"><select id="procTemplateSelectV5" onchange="cancelProcedureTemplateV24()"><option value="">Выберите шаблон</option></select><button class="btn secondary" onclick="applyProcedureTemplateV5()">Применить</button></div><p class="small">Состав, дозы и стоимость можно изменить для этого пациента.</p><div id="procTemplateConfirmV24" class="hidden"><p id="procTemplateConfirmTextV24"></p><div class="template-confirm-actions-v24"><button class="btn secondary" onclick="confirmProcedureTemplateV24('append')">Добавить к составу</button><button class="btn secondary" onclick="confirmProcedureTemplateV24('replace')">Заменить состав</button><button class="btn secondary" onclick="cancelProcedureTemplateV24()">Отмена</button></div></div></div><div id="procTemplateMessageV5" role="status" aria-live="polite"></div></div>`);
 }
+function toggleProcedureTemplatesV24(){const button=$('procTemplatesToggleV24'),panel=$('procTemplatesPanelV24'),open=panel.classList.contains('hidden');panel.classList.toggle('hidden',!open);button.setAttribute('aria-expanded',String(open))}
+function cancelProcedureTemplateV24(){procedureTemplatePendingV24=null;$('procTemplateConfirmV24')?.classList.add('hidden')}
 async function loadProcedureTemplatesV5(){
-  ensureTemplatePickerV5();$('procTemplateSelectV5').innerHTML='<option value="">Без шаблона</option>';message('procTemplateMessageV5','');
-  try{const templates=await crmManagementRpcV5('templates_list');managementTemplatesV5=(templates||[]).filter(t=>t.active!==false);$('procTemplateSelectV5').innerHTML='<option value="">Без шаблона</option>'+managementTemplatesV5.map((t,i)=>`<option value="${i}">${esc(t.name)}</option>`).join('')}
-  catch(e){message('procTemplateMessageV5','Шаблоны не загрузились: '+e.message)}
+  if(!canManageTemplatesV24())return;ensureTemplatePickerV5();
+  const actor=managementActorV16(),version=++procedureTemplatesLoadV24,navigation=typeof quickNavigation4==='undefined'?null:quickNavigation4;
+  procedureTemplateActorV24=null;procedureTemplatesV24.clear();cancelProcedureTemplateV24();$('procTemplateSelectV5').innerHTML='<option value="">Выберите шаблон</option>';message('procTemplateMessageV5','Загружаем шаблоны…');
+  try{
+    const templates=managementListV16(await crmManagementRpcV5('templates_list'),'Список шаблонов');
+    if(!managementDraftActorV24('template',actor)||version!==procedureTemplatesLoadV24||navigation!==null&&navigation!==quickNavigation4)return;
+    templates.filter(t=>t.active!==false).forEach(t=>procedureTemplatesV24.set(t.id,JSON.parse(JSON.stringify(t))));procedureTemplateActorV24=actor;procedureTemplateNavigationV24=navigation;
+    $('procTemplateSelectV5').innerHTML='<option value="">Выберите шаблон</option>'+[...procedureTemplatesV24.values()].map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');
+    message('procTemplateMessageV5',procedureTemplatesV24.size?'':'Готовых шаблонов пока нет. Их можно создать через кнопку «Шаблоны» на главном экране.');
+  }catch(e){if(managementDraftActorV24('template',actor)&&version===procedureTemplatesLoadV24&&(navigation===null||navigation===quickNavigation4))message('procTemplateMessageV5','Шаблоны не загрузились: '+e.message)}
+}
+function checkedProcedureTemplateV24(id){
+  if(!canManageTemplatesV24()||procedureTemplateActorV24!==managementActorV16()||procedureTemplateNavigationV24!==null&&procedureTemplateNavigationV24!==quickNavigation4)throw Error('Форма или учётная запись изменилась. Откройте шаблоны заново.');
+  const t=procedureTemplatesV24.get(id);if(!t||t.active===false)throw Error('Шаблон недоступен. Откройте список заново.');
+  const live=managementTemplatesV5.find(row=>row.id===id);if(live?.active===false)throw Error('Шаблон отправлен в архив. Выберите другой.');
+  if(t.service_id){const s=services.find(row=>row.id===t.service_id);if(!s||s.active===false)throw Error('Услуга из шаблона недоступна. Состав пациента не изменён.');if(![s.work_price,s.consumables_price].every(value=>value!==null&&value!==undefined&&Number.isFinite(Number(value))&&Number(value)>=0))throw Error('У услуги из шаблона не указана цена. Состав пациента не изменён.');}
+  for(const item of t.items||[]){
+    const m=meds.find(row=>row.id===item.medication_id);if(!m||m.active===false)throw Error('Препарат из шаблона недоступен. Исправьте общий шаблон. Состав пациента не изменён.');
+    if(m.sale_price===null||m.sale_price===undefined||!Number.isFinite(Number(m.sale_price))||Number(m.sale_price)<=0)throw Error('У препарата из шаблона не указана цена. Состав пациента не изменён.');
+    if(!Number.isSafeInteger(Number(item.quantity))||Number(item.quantity)<=0||item.dose!=null&&(typeof item.dose!=='string'||item.dose.length>200))throw Error('В шаблоне неверное количество или доза. Состав пациента не изменён.');
+  }
+  const draft=globalThis.CrmClinicalV10?.templateState?.();if(draft?.locked||draft?.busy||draft?.pending)throw Error('Сначала завершите сохранение текущей процедуры.');
+  return JSON.parse(JSON.stringify(t));
 }
 function applyProcedureTemplateV5(){
-  const selected=$('procTemplateSelectV5').value;if(selected==='')return;const t=managementTemplatesV5[Number(selected)];if(!t)return;
-  $('procMeds').innerHTML='';
-  if(t.service_id)$('procService').value=services.some(s=>s.id===t.service_id)?t.service_id:'';
-  (t.items||[]).forEach(x=>addMedRow('procMeds',x.medication_id,x.quantity,{id:x.medication_id,name:x.name||'Препарат из шаблона недоступен',consumption_unit:x.unit||'ед.'}));
-  calcProcedure();recalc();message('procTemplateMessageV5','Шаблон применён. Можно добавить, убрать препараты или изменить количество. Проверьте назначение перед сохранением.',true);
-  if(t.service_id&&!$('procService').value)message('procedureMessage','Услуга из шаблона недоступна. Выберите действующую услугу.');
+  const id=$('procTemplateSelectV5').value;if(!id)return;
+  try{
+    const t=checkedProcedureTemplateV24(id),hasComposition=$('procMeds').querySelectorAll('.medrow').length>0||!!$('procService').value||!!$('procAdditionalServicesV10')?.querySelectorAll('.clinical-service-v10').length;
+    if(hasComposition){procedureTemplatePendingV24={id,actor:managementActorV16()};$('procTemplateConfirmTextV24').textContent=`В процедуре уже есть состав. Добавить «${t.name}» к нему или заменить препараты и услуги образцом? Препараты пациента, личные данные и оплата сохранятся.`;$('procTemplateConfirmV24').classList.remove('hidden');message('procTemplateMessageV5','');return}
+    installProcedureTemplateV24(t,'replace');
+  }catch(e){message('procTemplateMessageV5',e.message)}
+}
+function confirmProcedureTemplateV24(mode){
+  const pending=procedureTemplatePendingV24;if(!pending||pending.actor!==managementActorV16())return;
+  try{const t=checkedProcedureTemplateV24(pending.id);installProcedureTemplateV24(t,mode);cancelProcedureTemplateV24()}catch(e){message('procTemplateMessageV5',e.message)}
+}
+function installProcedureTemplateV24(t,mode){
+  if(!['replace','append'].includes(mode))throw Error('Выберите способ применения шаблона');
+  if(globalThis.CrmClinicalV10?.applyTemplate)globalThis.CrmClinicalV10.applyTemplate(t,mode);
+  else{
+    if(mode==='replace')$('procMeds').innerHTML='';if(t.service_id)$('procService').value=t.service_id;
+    (t.items||[]).forEach(x=>{const m=templateMedicationV5(x.medication_id);addMedRow('procMeds',x.medication_id,x.quantity,{...m,dose:x.dose||null})});calcProcedure();recalc();
+  }
+  message('procTemplateMessageV5','Образец применён. Измените препараты, дозы, количество и сумму для пациента, затем сохраните процедуру. Общий шаблон не изменился.',true);
 }
 const managementPrepareTreatmentV5=prepareTreatment4;
-prepareTreatment4=async function(kind,patientId){const ready=await managementPrepareTreatmentV5(kind,patientId);if(ready&&kind==='procedure')await loadProcedureTemplatesV5();return ready};
+prepareTreatment4=async function(...args){const ready=await managementPrepareTreatmentV5(...args);if(ready&&args[0]==='procedure')await loadProcedureTemplatesV5();return ready};
 
 /* Extra medication/batch metadata travels with the existing atomic warehouse operation. */
 const medicationBatchesExtraV5=new Map();
@@ -494,7 +553,7 @@ async function downloadDataExportV5(){
 
 const managementSignOutV5=signOut;
 signOut=async function(){
-  ++managementSessionV16;++managementTemplatesLoadV16;++managementSettingsLoadV16;
+  ++managementSessionV16;++managementTemplatesLoadV16;++managementSettingsLoadV16;++procedureTemplatesLoadV24;procedureTemplateActorV24=null;procedureTemplatesV24.clear();cancelProcedureTemplateV24();
   for(const kind of Object.keys(managementDraftsV16))managementDraftsV16[kind]=null;managementBusyV5=false;
   managementSettingsLoadedV5=false;
   ++serviceSessionV11;++serviceListV11;serviceDraftV11=null;serviceOperationV11=null;serviceSaving=false;fillServiceV11();serviceRows=[];$('serviceList').innerHTML='';message('serviceMessage','');
