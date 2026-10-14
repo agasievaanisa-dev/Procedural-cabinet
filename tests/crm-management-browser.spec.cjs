@@ -30,7 +30,7 @@ test('owner management mobile flows and nurse access restrictions',async({page})
    if(name==='warehouse_v5'||name==='warehouse_v2'){
     if(a==='list')data=medData;if(a==='save'){Object.assign(medData[0],p);data={id:'m1'}}
     if(a==='batches')data=[{id:'b1',batch_number:'N-17',supplier:'Поставщик',received_date:'2026-10-01',expiry_date:'2027-01-01',quantity_remaining:20,work_quantity:10,quantity_received:20,purchase_price_per_unit:20}];
-    if(a==='history')data=[];
+    if(a==='history')data=[];if(a==='receive')data={batch_id:'b2'};
    }
    return {data:wrapped?{result:data}:data,error:null};
   }};

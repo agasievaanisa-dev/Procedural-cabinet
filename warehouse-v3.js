@@ -77,7 +77,7 @@ async function warehouseRpc(action,payload={},write=false){
     const failure=new Error(definitive?(error?.message||'Не удалось выполнить операцию.'):'Ответ сервера не получен. Повторите сохранение — операция не продублируется.');
     failure.code=error?.code;failure.status=error?.status||response?.status;failure.uncertain=error?.uncertain;failure.definitive=definitive;throw failure;
   }
-  if(write&&(!data||typeof data!=='object'||action==='save'&&!data.id)){const failure=Error('Ответ о сохранении не получен. Повторите сохранение — операция не продублируется.');failure.uncertain=true;throw failure}
+  if(write&&(!data||typeof data!=='object'||Array.isArray(data)||action==='save'&&!data.id||['archive','restore'].includes(action)&&data.active!==(action==='restore'))){const failure=Error('Ответ о сохранении не получен. Повторите сохранение — операция не продублируется.');failure.uncertain=true;throw failure}
   if(write&&stockRequests.get(key)===requestId)stockRequests.delete(key);
   return data;
 }
@@ -114,7 +114,7 @@ function renderInventory(){
   inventoryCount.textContent=`Найдено препаратов: ${visible.length}`;
   inventoryList.innerHTML=visible.map(m=>{
     const f=stockFacts(m),bad=m.active===false?'В архиве':f.order?'Нужно заказать':f.refill?'Пополнить шкаф':'Остатки в норме';
-    return `<article class="inventory-card ${medicationOriginClassV21(m)}"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)} ${medicationOriginBadgeV21(m)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button><button class="btn secondary" onclick="openMedForm('${m.id}','prices')">Изменить цены</button><button class="btn danger" onclick="openMedForm('${m.id}','delete')">Удалить препарат</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
+    return `<article class="inventory-card ${medicationOriginClassV21(m)}" data-medication-id="${esc(m.id)}"><div class="inventory-heading">${medPhotoHtml(m)}<div style="flex:1;min-width:0"><div class="row between"><h2>${esc(m.name)} ${medicationOriginBadgeV21(m)}</h2><span class="pill ${f.order?'status-bad':f.refill?'status-warn':''}">${bad}</span></div><p class="small">${esc([m.generic_name,m.dosage,m.manufacturer_country,m.category].filter(Boolean).join(' · '))}</p></div></div>${stockCells(m)}<div class="row between"><span class="small">Закупка ${rub(m.purchase_price)}/уп. · Продажа ${rub(m.sale_price)}/${esc(unit(m))}</span>${f.days!==null?`<span class="${f.days<0?'status-bad':f.days<=60?'status-warn':'small'}">${f.days<0?'Срок истёк':'Ближайший срок'}: ${esc(m.nearest_expiry)}</span>`:''}</div><div class="row" style="margin-top:15px"><button class="btn secondary" onclick="openMedForm('${m.id}','edit')">Редактировать препарат</button><button class="btn secondary" onclick="openMedForm('${m.id}','prices')">Изменить цены</button><button class="btn danger" onclick="openMedForm('${m.id}','delete')">Удалить препарат</button>${m.active!==false?`<button class="btn secondary" onclick="openMedForm('${m.id}','correct')">Исправить количество</button><button class="btn secondary" onclick="openMedForm('${m.id}','receive')">＋ Приход партии</button><button class="btn primary" ${f.reserve<=0?'disabled':''} onclick="openMedForm('${m.id}','transfer')">Перевести в работу</button>`:''}</div></article>`;
   }).join('')||'<div class="notice">Препараты не найдены. Измените поиск или добавьте новую карточку.</div>';
 }
 function openMedForm(id='',focus=''){
@@ -264,7 +264,7 @@ async function archiveMedication(){
   if(['archive','restore'].includes(stockDraftV16?.action))return stockMutation(stockDraftV16.action,stockDraftV16.payload,stockDraftV16.success);
   const m=inventory.find(x=>x.id===medId.value);if(!m||warehouseBusy)return;
   const action=m.active===false?'restore':'archive';
-  if(action==='archive'&&prompt(`Карточка исчезнет из активного списка. Чтобы отправить её в архив, введите название полностью: ${m.name}`)!==m.name)return;
+  if(action==='archive'&&stockFacts(m).total!==0){message('stockOperationMessage','Архивирование доступно только при нулевом остатке.');return}
   await stockMutation(action,{id:m.id},action==='archive'?'Карточка в архиве.':'Карточка восстановлена.');
 }
 async function loadStockDetails(id,view){
