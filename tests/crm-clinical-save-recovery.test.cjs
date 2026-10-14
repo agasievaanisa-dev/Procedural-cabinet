@@ -103,6 +103,27 @@ test('a confirmed payment whose patient refresh fails reports saved money on an 
  await f.c.saveDebtPaymentV10();const last=f.messages.at(-1);
  assert.equal(last.id,'homeMessage');assert.match(last.text,/Оплата сохранена.*Не удалось обновить экран/);assert.equal(f.c.screen,'workspace');assert.equal(f.calls.length,1);
 });
+test('anonymous sale collection is available in the journal and never borrows the last patient',()=>{
+ const f=fixture(true),event={id:'sale-1',kind:'sale',patient_id:null,charge_total:100,paid_total:0,debt_total:100,editable:true};
+ for(const fromJournal of [true,false]){
+  const html=f.c.treatmentActionsHtmlV14(event,fromJournal);
+  assert.match(html,/Принять оплату долга/);assert.match(html,/Редактировать/);
+  assert.match(html,new RegExp((fromJournal?'openJournalPaymentV14':'openSavedPaymentV14')+"\\('sale','sale-1',100,'',false\\)"));
+  assert.doesNotMatch(html,/patient-1/);
+ }
+});
+test('collecting anonymous sale debt keeps the receipt on the sale and returns without a patient lookup',async()=>{
+ const f=fixture(true);let patientLookups=0,refreshes=0;
+ Object.assign(f.el('debtPaymentV10').dataset,{kind:'sale',recordId:'sale-1',debt:'100',patientId:''});
+ f.el('debtAmountV10').value='60';f.el('debtMethodV10').value='cash';f.el('debtTenderV10').value='60';f.el('debtConfirmV10').checked=true;
+ f.c.openPatient=async()=>{patientLookups++;};f.c.refreshDashboard=async()=>{refreshes++;};
+ f.setRpc(async()=>({data:{id:'receipt-1',debt_total:40}}));
+ await f.c.saveDebtPaymentV10();
+ assert.equal(f.calls.length,1);assert.equal(f.calls[0].args.p_action,'debt_payment');assert.equal(f.calls[0].args.p_payload.kind,'sale');assert.equal(f.calls[0].args.p_payload.id,'sale-1');
+ assert.equal(f.calls[0].args.p_payload.payments.cash,60);assert.equal('patient_id' in f.calls[0].args.p_payload,false);
+ assert.equal(patientLookups,0);assert.equal(refreshes,1);assert.equal(f.c.screen,'workspace');
+ assert.equal(f.messages.at(-1).id,'homeMessage');assert.match(f.messages.at(-1).text,/Оплата сохранена.*40/);
+});
 
 test('a closed shift remains visibly confirmed if refreshing the shift menu fails',async()=>{
  const f=fixture();vm.runInContext("financeReportId5='shift-1'",f.c);

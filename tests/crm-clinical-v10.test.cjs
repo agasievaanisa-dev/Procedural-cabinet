@@ -30,6 +30,25 @@ test('edited visit preserves earlier receipts and only counts newly collected mo
  assert.throws(()=>paymentModel({list:'1700',charge:'1700',previous:'1000',received:'200',status:'paid',patient:'patient'}),/полной оплаты/);
  assert.equal(paymentModel({list:'1700',charge:'1700',previous:'1000',received:'700',status:'paid',patient:'patient'}).debt,0);
 });
+test('sale without a patient preserves a full or partially paid debt and an unpaid draft',()=>{
+ const unpaid=paymentModel({kind:'sale',patient:null,list:'1700',charge:'1700',received:'0',status:'debt'});
+ assert.equal(unpaid.debt,170000);assert.equal(unpaid.received,0);assert.equal(unpaid.status,'debt');
+ const partial=paymentModel({kind:'sale',patient:'',list:'1700',charge:'1500',received:'400',status:'debt',reason:'Согласованная скидка'});
+ assert.equal(partial.list,170000);assert.equal(partial.charge,150000);assert.equal(partial.received,40000);assert.equal(partial.debt,110000);
+ const pending=paymentModel({kind:'sale',list:'1700',charge:'1700',received:'0',status:'pending'});
+ assert.equal(pending.status,'pending');assert.equal(pending.debt,170000);assert.equal(pending.received,0);
+ const edited=paymentModel({kind:'sale',patient:null,list:'1900',charge:'1800',previous:'400',received:'200',status:'debt',reason:'Согласованная стоимость'});
+ assert.equal(edited.previous,40000);assert.equal(edited.received,20000);assert.equal(edited.debt,120000);
+});
+test('anonymous sale exemption does not weaken procedure, discount or receipt guards',()=>{
+ for(const status of ['debt','pending'])for(const kind of [undefined,'procedure','unexpected']){
+  assert.throws(()=>paymentModel({kind,list:'1700',charge:'1700',received:'0',status}),/выберите пациента/);
+ }
+ assert.throws(()=>paymentModel({kind:'sale',list:'1700',charge:'1500',received:'0',status:'debt'}),/комментарий/);
+ assert.throws(()=>paymentModel({kind:'sale',list:'1700',charge:'1500',previous:'1600',received:'0',status:'debt',reason:'Скидка'}),/уже полученной/);
+ assert.throws(()=>paymentModel({kind:'sale',list:'1700',charge:'1700',received:'100',status:'paid'}),/полной оплаты/);
+ assert.throws(()=>paymentModel({kind:'sale',list:'1700',charge:'0',received:'0',status:'free'}),/комментарий/);
+});
 test('patient and previously purchased medicine keep quantities without a selling price',()=>{
  const items=ownedItems([{name:' Витамин B12 500 мкг ',quantity:'2',unit:'амп.',source:'previously_purchased'},{name:'Препарат пациента',quantity:1,unit:'фл.',source:'patient'}]);
  assert.deepEqual(items,[{name:'Витамин B12 500 мкг',quantity:2,unit:'амп.',source:'previously_purchased'},{name:'Препарат пациента',quantity:1,unit:'фл.',source:'patient'}]);

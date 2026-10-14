@@ -19,7 +19,7 @@
   if (previous + received > charge) throw Error('Стоимость не может быть меньше уже полученной оплаты. Для возврата обратитесь к владельцу');
   const debt = charge - previous - received;
   if (status === 'paid' && debt !== 0) throw Error('Для полной оплаты получите всю стоимость или выберите «Оплатит после процедуры» / «В долг»');
-  if ((status === 'debt' || status === 'pending') && !input.patient) throw Error('Для записи без полной оплаты выберите пациента');
+  if ((status === 'debt' || status === 'pending') && input.kind !== 'sale' && !input.patient) throw Error('Для записи без полной оплаты выберите пациента');
   return {list,charge,previous,received,debt,status:debt > 0 ? (status === 'pending' ? 'pending' : 'debt') : charge === 0 ? 'free' : 'paid',reason};
  }
  function ownedItems(items) {
@@ -227,6 +227,11 @@
   installPaymentControlsV5(prefix);
   installVisitTime(prefix);
   if ($(prefix + 'ClinicalV10')) return;
+  if (prefix === 'sale') {
+   const patientHint = document.createElement('p'); patientHint.id = 'salePatientHintV27'; patientHint.className = 'small';
+   patientHint.textContent = 'Пациент необязателен, в том числе при продаже в долг. Продажа без пациента сохранится в журнале смены и списке долгов.';
+   $('salePatient').after(patientHint);
+  }
   const paid = $(prefix + 'Paid'), host = document.createElement('div');
   host.id = prefix + 'ClinicalV10'; host.className = 'clinical-payment-v10';
   host.innerHTML = `<label for="${prefix}PaymentStatusV10">Вариант оплаты</label><select id="${prefix}PaymentStatusV10"><option value="paid">Полностью оплачено</option><option value="debt">В долг / частично оплачено</option><option value="free">Бесплатно</option></select><div id="${prefix}ReceivedBoxV10" class="hidden"><label for="${prefix}ReceivedV10">Оплачено сейчас, ₽</label><input id="${prefix}ReceivedV10" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div id="${prefix}DebtSummaryV10" class="small" role="status" aria-live="polite"></div><div id="${prefix}EditReasonBoxV10" class="hidden"><label for="${prefix}EditReasonV10">Что изменили и почему *</label><textarea id="${prefix}EditReasonV10"></textarea></div>`;
@@ -235,7 +240,7 @@
   host.prepend(correction);
   paid.after(host); paid.previousElementSibling.textContent = 'Индивидуальная стоимость, ₽'; paid.removeAttribute('oninput');
   $(prefix + 'PaymentCorrectionV22').addEventListener('change',() => correctionChanged(prefix));
-  $(prefix + 'PaymentStatusV10').add(new Option('Оплатит после процедуры','pending'),1);
+  $(prefix + 'PaymentStatusV10').add(new Option(prefix === 'sale' ? 'Оплатит позже' : 'Оплатит после процедуры','pending'),1);
   const debtHint = document.createElement('p'); debtHint.id = prefix + 'DebtHintV13'; debtHint.className = 'notice hidden';
   debtHint.textContent = 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentStatusV10').after(debtHint);
@@ -349,7 +354,7 @@
    if (!paymentCorrectionAllowed(s.edit,isManager()) || s.correctionActorV22 !== actorKey() || !$(prefix + 'PaymentCorrectionV22').checked) throw Error('Исправить ошибочную оплату может только администратор после подтверждения, что деньги не получены');
    if (cents($(prefix + 'Paid').value || '0') === 0) throw Error('Для сохранения в долг укажите стоимость больше нуля');
   }
-  return paymentModel({list:amount(listCents(prefix)),charge:$(prefix + 'Paid').value,previous:amount(s.previous || 0),received:amount(receivedCents(prefix)),status:$(prefix + 'PaymentStatusV10').value,reason:$(prefix + 'DiscountComment').value,patient:$(prefix + 'Patient').value});
+  return paymentModel({kind:prefix === 'sale' ? 'sale' : 'procedure',list:amount(listCents(prefix)),charge:$(prefix + 'Paid').value,previous:amount(s.previous || 0),received:amount(receivedCents(prefix)),status:$(prefix + 'PaymentStatusV10').value,reason:$(prefix + 'DiscountComment').value,patient:$(prefix + 'Patient').value});
  }
  function shortCashDiscount(prefix) {
   if (!state(prefix) || $(prefix + 'PaymentStatusV10').value !== 'paid') return null;
@@ -424,7 +429,7 @@
   $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',correcting || (paymentStatus !== 'debt' && !pendingSelected));
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
-  $(prefix + 'DebtHintV13').textContent = pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
+  $(prefix + 'DebtHintV13').textContent = prefix === 'sale' && pendingSelected ? 'Сохраните продажу с оплатой сейчас 0 ₽. Для оплаты позже откройте продажу в журнале смены и нажмите «Принять оплату». Пациента выбирать необязательно.' : pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
   $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
@@ -573,9 +578,9 @@
  function dateText(at) { return esc(new Date(at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})); }
  global.treatmentActionsHtmlV14 = function(event,fromJournal=false) {
   if (!event.id) return '';
-  const kind = event.kind === 'sale' ? 'sale' : 'procedure',remaining = financeEventAmountsV5(event).debt,patientId = event.patient_id || (!fromJournal ? currentPatientId : null);
+  const kind = event.kind === 'sale' ? 'sale' : 'procedure',remaining = financeEventAmountsV5(event).debt,patientId = event.patient_id || (kind === 'procedure' && !fromJournal ? currentPatientId : null);
   const edit = event.editable ? `<button type="button" class="btn secondary" onclick="editTreatmentV10('${esc(kind)}','${esc(event.id)}')">Редактировать</button>` : '';
-  const pay = remaining > 0 && patientId ? `<button type="button" class="btn primary" onclick="${fromJournal ? 'openJournalPaymentV14' : 'openSavedPaymentV14'}('${esc(kind)}','${esc(event.id)}',${remaining},'${esc(patientId)}',${event.payment_pending === true})">${event.payment_pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : '';
+  const pay = remaining > 0 && (patientId || kind === 'sale') ? `<button type="button" class="btn primary" onclick="${fromJournal ? 'openJournalPaymentV14' : 'openSavedPaymentV14'}('${esc(kind)}','${esc(event.id)}',${remaining},'${esc(patientId || '')}',${event.payment_pending === true})">${event.payment_pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : '';
   return edit || pay ? `<div class="treatment-actions-v14">${edit}${pay}</div>` : '';
  };
  global.loadPatientClinicalV10 = async function(id = currentPatientId) {
@@ -597,7 +602,7 @@
   let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
   host.dataset.kind = kind; host.dataset.recordId = id; host.dataset.debt = String(debt); host.dataset.patientId = patientId || ''; host.dataset.returnToDebts=String(returnToDebts);
   delete host.dataset.returnToJournal;
-  host.innerHTML = `<h1>Оплата долга</h1><div class="card"><p>Осталось оплатить: <b>${rub(debt)}</b></p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод владельцу</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10"><label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">Сохранить оплату долга</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':`openPatient('${esc(patientId)}')`}">${returnToDebts?'Назад к долгам':'Назад к пациенту'}</button>`;
+  host.innerHTML = `<h1>Оплата долга</h1><div class="card"><p>Осталось оплатить: <b>${rub(debt)}</b></p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод владельцу</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10"><label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">Сохранить оплату долга</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
   host.querySelectorAll('input,select').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   let tenderEdited = false;
   $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
@@ -616,7 +621,7 @@
  };
  global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
   global.openDebtPaymentV10(kind,id,amount,patientId);
-  if (pending) $('debtPaymentV10').querySelector('h1').textContent = 'Оплата процедуры';
+  if (pending) $('debtPaymentV10').querySelector('h1').textContent = kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры';
  };
  global.openJournalPaymentV14 = function(kind,id,amount,patientId,pending=false) {
   const date = $('journalDateV12')?.value;
@@ -647,8 +652,8 @@
    if(!quickNavigationCurrent4(navigation,currentStaff?.id))return;
    const success = 'Оплата сохранена. Осталось: ' + rub(receipt?.debt_total ?? (snapshot.remaining - snapshot.paid) / 100);
    try {
-    if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else await openPatient(patient);
-    if (actor === actorKey()) message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':'patientCardMessageV5',success,true);
+    if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else if(patient)await openPatient(patient);else{show('workspace');await refreshDashboard();}
+    if (actor === actorKey()) message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':patient?'patientCardMessageV5':'homeMessage',success,true);
    } catch (error) { if (actor === actorKey()) { show('workspace'); message('homeMessage',success + '. Не удалось обновить экран: ' + error.message,true); } }
   } catch (error) {
    if (actor === actorKey()) {
@@ -670,7 +675,7 @@
    const data = await clinicalRpc('debts');
    if (!isManager() || actor !== actorKey() || view !== debtView) return;
    const events = Array.isArray(data) ? data : data?.debts || data?.events || treatmentEvents(data), total = events.reduce((sum,event) => sum + Math.round(num(event.debt_total) * 100),0);
-   $('debtsBodyV10').innerHTML = `<div class="card">Всего к оплате: <b>${rub(total / 100)}</b></div>${events.map(event => `<div class="item clinical-history-v10"><strong>${esc(event.patient || event.patient_name || 'Пациент')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)} · ${esc(event.procedure_type || (event.kind === 'sale' ? 'Продажа' : 'Процедура'))}</div><div>Долг: <b>${rub(event.debt_total)}</b></div><button type="button" class="btn primary wide" onclick="openDebtPaymentV10('${esc(event.kind)}','${esc(event.id)}',${Number(event.debt_total)},'${esc(event.patient_id)}',true)">Принять оплату долга</button></div>`).join('') || '<p>Долгов нет.</p>'}`;
+   $('debtsBodyV10').innerHTML = `<div class="card">Всего к оплате: <b>${rub(total / 100)}</b></div>${events.map(event => `<div class="item clinical-history-v10"><strong>${esc(event.patient || event.patient_name || (event.kind === 'sale' ? 'Продажа без пациента' : 'Пациент'))}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)} · ${esc(event.procedure_type || (event.kind === 'sale' ? 'Продажа' : 'Процедура'))}</div><div>Долг: <b>${rub(event.debt_total)}</b></div><button type="button" class="btn primary wide" onclick="openDebtPaymentV10('${esc(event.kind)}','${esc(event.id)}',${Number(event.debt_total)},'${esc(event.patient_id || '')}',true)">Принять оплату долга</button></div>`).join('') || '<p>Долгов нет.</p>'}`;
    $('debtsMessageV10').textContent = '';
   } catch (error) { if (isManager() && actor === actorKey() && view === debtView) $('debtsMessageV10').innerHTML = `${esc(error.message)}<button type="button" class="btn secondary wide" onclick="openDebtsV10()">Повторить</button>`; }
  };

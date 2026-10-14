@@ -392,22 +392,23 @@ do $$declare a jsonb;payload jsonb;id_n uuid;req uuid:=gen_random_uuid();begin
  a:=public.crm_finance_v5('summary',jsonb_build_object('from','2096-09-05','to','2096-09-05','patient_id',current_setting('test.v22.patient')));
  if (a->'revenue'->>'total')::numeric is distinct from 200::numeric or (a->>'sales_count')::integer is distinct from 0
   or (a->>'debt_payments_count')::integer is distinct from 1 then raise exception 'Sale repayment lost actual financial period';end if;
- -- A sale with no identified patient cannot become a debt even for a manager.
+ -- After v27 an identified patient remains optional for a medication sale debt.
  a:=public.record_treatment_v5('sale',jsonb_build_object('shift_id',current_setting('test.v22.sale_collection_shift'),'nurse_id',current_setting('test.v22.nurse_staff'),
   'items',jsonb_build_array(jsonb_build_object('medication_id',current_setting('test.v22.sale_med'),'quantity',1)),
   'charge_total',9900,'paid_total',9900,'payment_status','paid','expected_stock_deducted',false,'payments',jsonb_build_object('cash',9900)),req);
  id_n:=(a->>'id')::uuid;perform set_config('test.v22.anonymous_sale',id_n::text,true);perform set_config('test.v22.anonymous_sale_request',req::text,true);
  payload:=jsonb_build_object('kind','sale','id',id_n,'expected_version',1,'expected_stock_deducted',false,'expected_received_total',9900,
-  'confirm_no_money_received',true,'correction_reason','TEST patient-less sale should stay paid','items',a->'items','charge_total',9900,
-  'paid_total',0,'payment_status','debt','payments',jsonb_build_object('cash',0),'edit_reason','TEST invalid patient-less debt');
- begin perform public.crm_payment_correction_v22(payload,gen_random_uuid());raise exception 'Patient-less sale was converted to debt';
- exception when sqlstate '22023' then null;end;
+  'confirm_no_money_received',true,'correction_reason','TEST patient-less sale payment marked by mistake','items',a->'items','charge_total',9900,
+  'paid_total',0,'payment_status','debt','payments',jsonb_build_object('cash',0),'edit_reason','TEST corrected patient-less debt');
+ req:=gen_random_uuid();a:=public.crm_payment_correction_v22(payload,req);
+ if (a->>'received_total')::numeric<>0 or (a->>'debt_total')::numeric<>9900 or a->>'patient_id' is not null then raise exception 'Patient-less sale correction failed';end if;
+ if public.crm_payment_correction_v22(payload,req) is distinct from a then raise exception 'Patient-less sale correction replay differs';end if;
 end $$;
 reset role;
 do $$begin
- if (select paid_total from public.sales where id=current_setting('test.v22.anonymous_sale')::uuid) is distinct from 9900::numeric
-  or (select version from public.sales where id=current_setting('test.v22.anonymous_sale')::uuid) is distinct from 1
-  or (select voided_at from private.crm_payment_allocations where id=current_setting('test.v22.anonymous_sale_request')::uuid) is not null then raise exception 'Rejected patient-less correction changed money or version';end if;
+ if (select paid_total from public.sales where id=current_setting('test.v22.anonymous_sale')::uuid) is distinct from 0::numeric
+  or (select version from public.sales where id=current_setting('test.v22.anonymous_sale')::uuid) is distinct from 2
+  or (select voided_at from private.crm_payment_allocations where id=current_setting('test.v22.anonymous_sale_request')::uuid) is null then raise exception 'Patient-less correction did not void the mistaken allocation';end if;
 end $$;
 select 'crm-payment-correction-v22 synthetic debt conversion, preserved history, exact replay, permissions, closed reports and repayment passed' as result;
 rollback;

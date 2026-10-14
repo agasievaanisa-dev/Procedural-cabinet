@@ -55,9 +55,9 @@ begin
  if public.record_treatment_v5('sale',p,sale_req) is distinct from a then raise exception 'Pending sale retry differs';end if;
  perform set_config('test.v14.sale',a->>'id',true);
  begin
-  perform public.record_treatment_v5('sale',p-'patient_id',gen_random_uuid());raise exception 'Anonymous pending sale unexpectedly allowed';
- exception when others then if sqlerrm<>'Для оплаты в долг выберите пациента' then raise;end if;end;
- -- A zero-cost anonymous legacy sale lets us test pending's patient guard on edit.
+  perform public.record_treatment_v5('procedure',p-'patient_id',gen_random_uuid());raise exception 'Anonymous pending procedure unexpectedly allowed';
+ exception when others then if sqlerrm<>'Выберите пациента' then raise;end if;end;
+ -- Sales have an optional patient after v27; procedures retain the patient guard.
  p:=p-'patient_id';p:=p||jsonb_build_object('charge_total',0,'payment_status','free','discount_reason','Бесплатно','discount_comment','TEST free anonymous sale');
  a:=public.record_treatment_v5('sale',p,gen_random_uuid());
  if (a->>'payment_pending')::boolean is distinct from false then raise exception 'Free sale was marked pending';end if;
@@ -119,9 +119,13 @@ begin
  if (a->>'payment_pending')::boolean is distinct from true then raise exception 'Sale pending transition failed';end if;
  original:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','sale','id',current_setting('test.v14.anonymous_sale')));
  p:=p||jsonb_build_object('id',original->>'id','expected_version',1,'charge_total',500,'items',original->'items');
- begin
-  perform public.crm_clinical_v10('treatment_edit',p,gen_random_uuid());raise exception 'Anonymous sale edited into pending';
- exception when others then if sqlerrm<>'Для оплаты после процедуры выберите пациента' then raise;end if;end;
+ a:=public.crm_clinical_v10('treatment_edit',p,gen_random_uuid());
+ if (a->>'payment_pending')::boolean is distinct from true or (a->>'debt_total')::numeric<>500
+  or a->>'patient_id' is not null then raise exception 'Anonymous sale pending edit failed';end if;
+ -- Restore this auxiliary fixture to free, keeping the original report totals.
+ a:=public.crm_clinical_v10('treatment_edit',p||jsonb_build_object('expected_version',2,'charge_total',0,'payment_status','free',
+  'discount_reason','Бесплатно','discount_comment','TEST restored free anonymous sale'),gen_random_uuid());
+ if (a->>'payment_pending')::boolean is distinct from false or (a->>'debt_total')::numeric<>0 then raise exception 'Anonymous pending sale cannot return to free';end if;
  original:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v14.foreign_procedure')));
  if (original->>'editable')::boolean is distinct from false then raise exception 'Other shift was marked editable';end if;
  p:=current_setting('test.v14.closed_payload')::jsonb||jsonb_build_object('id',original->>'id','patient_id',original->>'patient_id','shift_id',original->>'shift_id','nurse_id',original->>'nurse_id','expected_version',1);
