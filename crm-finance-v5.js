@@ -19,7 +19,7 @@ function isPaymentOnlyV5(prefix = null) {
 }
 function setAccountingModeV5(data) {
  if (typeof data?.payment_only !== 'boolean') throw Error('Не удалось проверить режим учёта. Повторите открытие формы.');
- financeAccountingMode5 = {payment_only:data.payment_only, stock_deducted:!data.payment_only};
+ financeAccountingMode5 = {payment_only:data.payment_only, stock_deducted:!data.payment_only,...(typeof data.partial_stock === 'boolean' ? {partial_stock:data.partial_stock,stock_mode:data.stock_mode} : {})};
  renderAccountingModeV5();
  return financeAccountingMode5;
 }
@@ -29,7 +29,8 @@ async function loadAccountingModeV5() {
  if (!actor || currentStaff?.id !== actor || token !== financeAccountingLoad5) throw Error('Учётная запись изменилась. Откройте форму заново.');
  return setAccountingModeV5(data);
 }
-function accountingNoticeHtmlV5(paymentOnly) {
+function accountingNoticeHtmlV5(paymentOnly, partial = false) {
+ if (partial) return '<strong>Поэтапный складской учёт</strong><p>Подключённые препараты списываются автоматически: из рабочего шкафа и при необходимости из запаса. Остальные учитываются по оплате. Расход без списания остаётся в списке для сверки.</p>'; 
  return paymentOnly ? '<strong>Учёт оплаты без списания со склада</strong><p>Процедуры и продажи учитываются по прайсу в кассе и смене. Остатки препаратов не меняются.</p>' : '<strong>Складской учёт включён</strong><p>Препараты списываются из раздела «В работе».</p>';
 }
 function renderAccountingModeV5() {
@@ -37,14 +38,14 @@ function renderAccountingModeV5() {
  if (home) {
   let banner = $('accountingModeBannerV5');
   if (!banner) { banner = document.createElement('div'); banner.id = 'accountingModeBannerV5'; banner.className = 'notice accounting-mode-v5'; banner.setAttribute('role','status'); home.querySelector('.sub')?.after(banner); }
-  banner.innerHTML = financeAccountingMode5 ? accountingNoticeHtmlV5(financeAccountingMode5.payment_only) : 'Режим учёта ещё не проверен. При открытии процедуры или продажи программа проверит его повторно.';
+  banner.innerHTML = financeAccountingMode5 ? accountingNoticeHtmlV5(financeAccountingMode5.payment_only,financeAccountingMode5.partial_stock) : 'Режим учёта ещё не проверен. При открытии процедуры или продажи программа проверит его повторно.';
  }
  for (const prefix of ['proc','sale']) {
   const screen = $(prefix === 'proc' ? 'procedure' : 'sale'); if (!screen) continue;
   let banner = $(prefix + 'AccountingModeV5');
   if (!banner) { banner = document.createElement('div'); banner.id = prefix + 'AccountingModeV5'; banner.className = 'notice accounting-mode-v5'; banner.setAttribute('role','status'); (screen.querySelector('.sub') || screen.querySelector('h1'))?.after(banner); }
   const mode = financeTreatmentMode5[prefix] || financeAccountingMode5;
-  banner.innerHTML = (mode ? accountingNoticeHtmlV5(mode.payment_only) : 'Проверяем режим учёта…') + (financeAccountingMismatch5[prefix] ? `<button type="button" class="btn secondary wide" onclick="refreshTreatmentAccountingV5('${prefix}')">Обновить режим учёта</button>` : '');
+  banner.innerHTML = (mode ? accountingNoticeHtmlV5(mode.payment_only,mode.partial_stock) : 'Проверяем режим учёта…') + (financeAccountingMismatch5[prefix] ? `<button type="button" class="btn secondary wide" onclick="refreshTreatmentAccountingV5('${prefix}')">Обновить режим учёта</button>` : '');
  }
  const reserveOption = $('reserveSaleOptionV5');
  if (reserveOption) reserveOption.classList.toggle('hidden', !isManager() || isPaymentOnlyV5('sale'));
@@ -64,6 +65,7 @@ async function refreshTreatmentAccountingV5(prefix) {
  } catch (e) { message(screen + 'Message',e.message); }
 }
 function financeStockBadgeV5(event) {
+ if (event.stock_mode === 'partial') { const s=event.stock_summary || {}; return `<span class="pill accounting-badge-v5 partial-stock-badge-v28">Склад: списано ${qty(s.deducted_quantity || 0)} · к сверке ${qty(s.pending_quantity || 0)}</span>`; }
  return event.stock_deducted === false ? '<span class="pill accounting-badge-v5">Без списания со склада</span>' : '';
 }
 function financePaymentOnlyNoteV5(data) {
@@ -251,6 +253,7 @@ treatmentRpc = async function(kind, payload) {
   const mode = financeTreatmentMode5[prefix];
   if (!mode) throw Error('Режим учёта не проверен. Откройте форму заново.');
   full.expected_stock_deducted = mode.stock_deducted;
+  if (typeof mode.partial_stock === 'boolean') full.expected_partial_stock = mode.partial_stock;
   if (!mode.payment_only && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) full.reserve_sale = true;
   full = JSON.parse(JSON.stringify(full));
  }

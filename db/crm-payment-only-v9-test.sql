@@ -45,7 +45,7 @@ begin
  r:=public.crm_finance_v5('settings_save','{"payment_only":true}');
  if r->'payment_only' is distinct from 'true'::jsonb then raise exception 'Owner enable failed';end if;
  r:=public.crm_finance_v5('accounting_mode');
- if r is distinct from '{"payment_only":true,"stock_deducted":false}'::jsonb then raise exception 'Mode API contract wrong: %',r;end if;
+ if r is distinct from '{"payment_only":true,"stock_deducted":false,"partial_stock":false,"stock_mode":"payment_only"}'::jsonb then raise exception 'Mode API contract wrong: %',r;end if;
  foreach bad in array array['{"payment_only":"true"}'::jsonb,'{"payment_only":null}'::jsonb,'{"payment_only":1}'::jsonb] loop
   failed:=false;
   begin perform public.crm_finance_v5('settings_save',bad);exception when raise_exception then failed:=true;end;
@@ -66,8 +66,8 @@ set local role authenticated;
 do $$ declare p jsonb; r jsonb; req uuid:=gen_random_uuid(); failed boolean; bad jsonb; report_n jsonb;
 begin
  r:=public.crm_finance_v5('accounting_mode');
- if r ? 'float_amount' or r ? 'revenue' or r is distinct from '{"payment_only":true,"stock_deducted":false}'::jsonb then raise exception 'Nurse safe mode API wrong';end if;
- failed:=false;begin perform public.crm_finance_v5('settings_save','{"payment_only":false}');exception when raise_exception then failed:=true;end;
+ if r ? 'float_amount' or r ? 'revenue' or r is distinct from '{"payment_only":true,"stock_deducted":false,"partial_stock":false,"stock_mode":"payment_only"}'::jsonb then raise exception 'Nurse safe mode API wrong';end if;
+ failed:=false;begin perform public.crm_finance_v5('settings_save','{"payment_only":false}');exception when raise_exception or insufficient_privilege then failed:=true;end;
  if not failed then raise exception 'Nurse changed global mode';end if;
  failed:=false;begin perform public.crm_finance_v5('settings_get');exception when raise_exception then failed:=true;end;
  if not failed then raise exception 'Nurse read private finance settings';end if;
@@ -114,8 +114,20 @@ begin
  failed:=false;begin perform public.record_treatment_v5('sale',p||'{"reserve_sale":true}',gen_random_uuid());exception when raise_exception then failed:=true;end;
  if not failed then raise exception 'Nurse reserve privilege bypassed';end if;
  report_n:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v9.shift')));
- if report_n ? 'revenue' or report_n ? 'payroll_total' or report_n->'procedures'->0 ? 'paid_total' or report_n->'stock'->0 ? 'reserve' then raise exception 'Payment-only nurse report leaks finances/reserve';end if;
- if jsonb_array_length(report_n->'used') is distinct from 0 or(report_n->>'payment_only_procedures_count')::integer is distinct from 1 or(report_n->>'payment_only_sales_count')::integer is distinct from 1 then raise exception 'Nurse report confuses billed and deducted drugs';end if;
+ -- Since v10 nurses explicitly see their own shift's money and salary. They
+ -- still receive no warehouse, reserve balance or purchasing information.
+ if (report_n->'revenue'->>'total')::numeric is distinct from 310::numeric
+  or (report_n->'revenue'->>'cash')::numeric is distinct from 50::numeric
+  or (report_n->'revenue'->>'terminal')::numeric is distinct from 160::numeric
+  or (report_n->'revenue'->>'owner_card')::numeric is distinct from 100::numeric
+  or (report_n->>'charge_total')::numeric is distinct from 310::numeric
+  or (report_n->>'debt_total')::numeric is distinct from 0::numeric
+  or not(report_n?'payroll_total') or not(report_n->'procedures'->0?'paid_total') then
+  raise exception 'Own-shift payment-only finances missing or incorrect: %',report_n;end if;
+ if report_n ?| array['stock','used','untracked','warnings','float_amount']
+  or report_n::text ~ '"(purchase_price|purchase_price_per_unit|reserve_qty|reserve_available|total_available)"[[:space:]]*:' then
+  raise exception 'Payment-only nurse report leaks warehouse or purchase cost';end if;
+ if (report_n->>'payment_only_procedures_count')::integer is distinct from 1 or(report_n->>'payment_only_sales_count')::integer is distinct from 1 then raise exception 'Nurse report confuses billed and deducted drugs';end if;
  r:=public.patient_history_v8(current_setting('test.v9.patient')::uuid);
  if not exists(select 1 from jsonb_array_elements(r->'procedures') e where e->>'id'=current_setting('test.v9.procedure') and e->'stock_deducted'='false'::jsonb) then raise exception 'Patient history lacks payment-only marker';end if;
 end $$;
@@ -130,7 +142,10 @@ do $$ begin
  if not exists(select 1 from public.procedures where id=current_setting('test.v9.procedure')::uuid and not stock_deducted and list_total=250 and paid_total=250) then raise exception 'Procedure mode snapshot or totals wrong';end if;
  if not exists(select 1 from public.sales where id=current_setting('test.v9.sale')::uuid and not stock_deducted and list_total=60 and paid_total=60) then raise exception 'Sale mode snapshot or totals wrong';end if;
  if(select count(*) from private.crm_payment_allocations where procedure_id=current_setting('test.v9.procedure')::uuid or sale_id=current_setting('test.v9.sale')::uuid)<>2 then raise exception 'Missing/duplicate allocation';end if;
- if not exists(select 1 from private.crm_audit_log where action='payment_recorded' and entity_id=current_setting('test.v9.procedure') and after_data->'stock_deducted'='false'::jsonb) then raise exception 'Audit omits boolean mode';end if;
+ if (select count(*) from private.crm_audit_log where action='treatment_recorded_v10' and entity_type='procedure'
+  and entity_id=current_setting('test.v9.procedure') and actor_user=current_setting('test.v9.nurse')::uuid
+  and after_data->'stock_deducted'='false'::jsonb and after_data->'payment_only'='true'::jsonb
+  and(after_data->>'paid_total')::numeric=250)<>1 then raise exception 'Treatment audit omits actor, payment amount or boolean mode, or is duplicated';end if;
  if(select sum(amount) from private.crm_shift_payroll where shift_id=current_setting('test.v9.shift')::uuid)<>4000 then raise exception 'Payment-only altered flat payroll';end if;
  perform private.assert_stock_v3(current_setting('test.v9.med')::uuid);
 end $$;

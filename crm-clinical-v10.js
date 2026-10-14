@@ -516,8 +516,9 @@
    if (!correcting || state(prefix) === s) { forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = ''; }
    if (!correcting || quickNavigationCurrent4(navigation,currentStaff?.id)) show('workspace');
    const success = correcting ? `Оплата исправлена. В долг: ${rub(receipt?.debt_total ?? model.debt / 100)}. Ошибочно отмеченная оплата убрана из выручки.` : `${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`;
-   message('homeMessage',success,true);
-   try { await refreshDashboard(); } catch (error) { if (actorKey() === actor) message('homeMessage',success + ' Не удалось обновить экран: ' + error.message,true); }
+   const stockText = typeof global.partialStockReceiptTextV28 === 'function' ? global.partialStockReceiptTextV28(receipt) : '';
+   message('homeMessage',success + stockText,true);
+   try { await refreshDashboard(); } catch (error) { if (actorKey() === actor) message('homeMessage',success + stockText + ' Не удалось обновить экран: ' + error.message,true); }
   } catch (error) {
    if (actorKey() === actor) {
     if (!saved && s && payload && (s.retry || financeRetryableErrorV16(error,error.status))) { s.retry = {payload,model}; error = saveError({...error,uncertain:true,message:error.message},error.status); }
@@ -552,7 +553,7 @@
    // Editing keeps the original shift rather than silently moving a visit to today.
    forms[prefix] = {chargeEdited:true,previous:cents(record.paid_total ?? 0),edit:record,medicationPrices:new Map((record.items || []).map(item => [item.medication_id,Math.round(num(item.unit_price ?? num(item.line_total) / num(item.quantity)) * 100)])),servicePrices:new Map((record.services || []).map(item => [item.service_id,Math.round(num(item.unit_price ?? (num(item.work_price) + num(item.consumables_price))) * 100)]))};
    install(prefix); await Promise.all([loadMeds(),loadPatients(),loadServices()]); assertActor(actor); if (version !== editorView || !quickNavigationCurrent4(navigation,currentStaff?.id)) return;
-   financeTreatmentMode5[prefix] = {payment_only:record.stock_deducted === false,stock_deducted:record.stock_deducted !== false};
+   financeTreatmentMode5[prefix] = {payment_only:record.stock_deducted === false,stock_deducted:record.stock_deducted !== false,...(record.stock_mode ? {partial_stock:record.stock_mode === 'partial',stock_mode:record.stock_mode} : {})};
    $(prefix + 'Patient').innerHTML = patientOptions(true); if (patientId && !patients.some(patient => patient.id === patientId)) $(prefix + 'Patient').add(new Option(record.patient || 'Пациент записи',patientId)); $(prefix + 'Patient').value = patientId || ''; $(prefix + 'Patient').disabled = true;
    resetVisitTime(prefix,record,patientId);
    $(prefix + 'Nurse').innerHTML = `<option value="${esc(record.nurse_id)}">${esc(record.nurse || 'Медсестра записи')}</option>`; $(prefix + 'Nurse').disabled = true;
@@ -685,4 +686,5 @@
  show = function(id) { if (id === 'debtsV10' && !isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); id = 'workspace'; } showBase(id); };
  const signOutBase = signOut;
  signOut = async function() { session++; patientView++; editorView++; debtView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10']) if ($(id)) $(id).innerHTML = ''; await signOutBase(); };
+ global.getClinicalStockRecordV28 = prefix => forms[prefix]?.edit || null;
 })(typeof window === 'object' ? window : globalThis);
