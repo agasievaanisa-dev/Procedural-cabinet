@@ -96,14 +96,15 @@ addMedRow=function(target,id='',amount=1,fallback=null){
   d.querySelector('.chosen-name').appendChild(dose);
   const quantity=d.querySelector('.medqty'),quantityLabel=document.createElement('label');quantityLabel.className='clinical-quantity-v24';quantityLabel.textContent='Кол-во, '+unit(m);quantity.before(quantityLabel);quantityLabel.appendChild(quantity);
  }
+ if(typeof configureMedicationQuantityV31==='function')configureMedicationQuantityV31(d.querySelector('.medqty'),m);
  $(target).appendChild(d);recalc();
 };
 const originalRowsV24=typeof rows==='function'?rows:null;
 rows=function(target){
- if(target!=='procMeds'&&originalRowsV24)return originalRowsV24(target);
- return [...$(target).querySelectorAll('.medrow')].filter(row=>row.querySelector('.medsel').value).map(row=>({medication_id:row.querySelector('.medsel').value,quantity:num(row.querySelector('.medqty').value),dose:row.querySelector('.meddose-v24')?.value.trim()||null}));
+ if(!['procMeds','saleMeds'].includes(target)&&originalRowsV24)return originalRowsV24(target);
+ return [...$(target).querySelectorAll('.medrow')].filter(row=>row.querySelector('.medsel').value).map(row=>({medication_id:row.querySelector('.medsel').value,quantity:Number(row.querySelector('.medqty').value.trim().replace(',','.')),...(target==='procMeds'?{dose:row.querySelector('.meddose-v24')?.value.trim()||null}:{})}));
 };
-chooseMedication=function(target,id){const row=[...$(target).querySelectorAll('.medrow')].find(r=>r.dataset.medicationId===id);if(row)row.querySelector('.medqty').value=num(row.querySelector('.medqty').value)+1;else addMedRow(target,id);recalc()};
+chooseMedication=function(target,id){const row=[...$(target).querySelectorAll('.medrow')].find(r=>r.dataset.medicationId===id);if(row)row.querySelector('.medqty').value=Number(row.querySelector('.medqty').value.trim().replace(',','.'))+1;else addMedRow(target,id);recalc()};
 const originalRecalc4=recalc;
 function renderTreatmentAvailability4(){for(const target of ['procMeds','saleMeds']){
  const paymentOnly=typeof isPaymentOnlyV5==='function'&&isPaymentOnlyV5(target==='procMeds'?'proc':'sale');

@@ -8,6 +8,11 @@
   if(!Number.isSafeInteger(number)||number<0)throw Error(label+': введите целое число от нуля');
   return number;
  }
+ function quantity(value,m,label){
+  if(typeof root.medicationQuantityV31!=='function')return whole(value,label);
+  try{return root.medicationQuantityV31(value,m,{allowZero:true});}catch(error){throw Error(label+': '+error.message);}
+ }
+ function combined(reserve,work,m){return quantity(root.isMeasuredQuantityV31?.(m)?Math.round((reserve+work)*1000)/1000:reserve+work,m,'Всего');}
  function expiry(value,today){
   const text=String(value||'').trim();
   let match=text.match(/^(\d{4})-(\d{2})-(\d{2})$/),year,month,day;
@@ -19,7 +24,7 @@
   if(today&&iso<today)throw Error('Срок годности уже истёк. Укажите действующий срок добавляемых препаратов.');
   return iso;
  }
- const helpers={whole,expiry};root.CrmStockTotalsV18=helpers;
+ const helpers={whole,quantity,combined,expiry};root.CrmStockTotalsV18=helpers;
  if(typeof module!=='undefined'&&module.exports)module.exports=helpers;
  if(typeof document==='undefined')return;
  const get=id=>document.getElementById(id);
@@ -53,10 +58,11 @@
   if(!current(state)||!get('stockTotalsPanelV18'))return;
   const m=inventory.find(row=>row.id===state.id),frozen=!!state.pending,blocked=warehouseBusy||!!otherDraft()||state.loading;
   let reserve,work,valid=true;
-  try{reserve=whole(get('stockTotalsReserveV18').value,'В запасе');work=whole(get('stockTotalsWorkV18').value,'В работе');whole(reserve+work,'Всего');}
+  for(const id of ['stockTotalsReserveV18','stockTotalsWorkV18'])root.configureMedicationQuantityV31?.(get(id),m,true);
+  try{reserve=quantity(get('stockTotalsReserveV18').value,m,'В запасе');work=quantity(get('stockTotalsWorkV18').value,m,'В работе');combined(reserve,work,m);}
   catch(error){valid=false;get('stockTotalsTotalV18').textContent=error.message;}
   if(valid){get('stockTotalsTotalV18').textContent='Всего: '+qty(reserve+work)+' '+unit(m);get('stockTotalsPackV18').textContent=packHint(reserve,m);}
-  const adding=valid&&reserve+work>state.reserve+state.work;
+  const adding=valid&&combined(reserve,work,m)>combined(state.reserve,state.work,m);
   get('stockTotalsExpiryBoxV18').classList.toggle('hidden',!adding);
   get('stockTotalsUnitV18').textContent='Количество указывается в '+unit(m)+'. Введите остаток целиком — сохранение заменит прежние числа.';
   for(const [id,label] of [['stockTotalsReserveV18','В запасе'],['stockTotalsWorkV18','В работе']])document.querySelector('label[for="'+id+'"]').textContent=label+', '+unit(m);
@@ -81,7 +87,7 @@
   if(!uncertain()||warehouseBusy)return false;
   show('medForm');state.navigation=navigation();mount(state);return true;
  }
- function snapshot(m){return {id:m.id,actor:actor(),view:medView,generation:++generation,navigation:navigation(),reserve:whole(m.reserve_qty??0,'В запасе'),work:whole(m.work_qty??0,'В работе'),stockTotalsReserveV18:String(m.reserve_qty??0),stockTotalsWorkV18:String(m.work_qty??0),stockTotalsExpiryV18:defaultExpiry(m),stockTotalsReasonV18:'Исправление общего остатка',pending:null,stale:false,refresh:false,message:'',success:false,loading:false};}
+ function snapshot(m){return {id:m.id,actor:actor(),view:medView,generation:++generation,navigation:navigation(),reserve:quantity(m.reserve_qty??0,m,'В запасе'),work:quantity(m.work_qty??0,m,'В работе'),stockTotalsReserveV18:String(m.reserve_qty??0),stockTotalsWorkV18:String(m.work_qty??0),stockTotalsExpiryV18:defaultExpiry(m),stockTotalsReasonV18:'Исправление общего остатка',pending:null,stale:false,refresh:false,message:'',success:false,loading:false};}
  function openStockTotalsV18(id,focus='reserve'){
   if(!manager()||warehouseBusy)return;
   if(otherDraft()){if(typeof warehouseResumeV16==='function')warehouseResumeV16();return;}
@@ -94,11 +100,14 @@
   get('stockTotalsPanelV18').scrollIntoView({block:'nearest',behavior:'smooth'});
  }
  function payload(){
-  const reserve=whole(get('stockTotalsReserveV18').value,'В запасе'),work=whole(get('stockTotalsWorkV18').value,'В работе');
-  const adding=whole(reserve+work,'Всего')>state.reserve+state.work;
+  const m=inventory.find(row=>row.id===state.id),reserve=quantity(get('stockTotalsReserveV18').value,m,'В запасе'),work=quantity(get('stockTotalsWorkV18').value,m,'В работе');
+  const adding=combined(reserve,work,m)>combined(state.reserve,state.work,m);
   return {id:state.id,expected_reserve:state.reserve,expected_work:state.work,reserve,work,expiry_date:adding?expiry(get('stockTotalsExpiryV18').value,localDateValue()):null,reason:get('stockTotalsReasonV18').value.trim()||'Исправление общего остатка'};
  }
- function isRow(row,id){return !!row&&row.id===id&&row.reserve_qty!==null&&row.work_qty!==null&&Number.isSafeInteger(Number(row.reserve_qty))&&Number(row.reserve_qty)>=0&&Number.isSafeInteger(Number(row.work_qty))&&Number(row.work_qty)>=0;}
+ function isRow(row,id){
+  if(!row||row.id!==id||row.reserve_qty===null||row.work_qty===null)return false;
+  const m=inventory.find(item=>item.id===id);try{quantity(row.reserve_qty,m,'В запасе');quantity(row.work_qty,m,'В работе');return true;}catch{return false;}
+ }
  function applyRow(row){
   const old=inventory.find(item=>item.id===row.id);if(!old)return;
   Object.assign(old,row);

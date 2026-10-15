@@ -138,3 +138,15 @@ test('a separate partial receipt restores the edit-reason requirement even if th
  await page.fill('#procEditReasonV10','Уточнено назначение после частичной оплаты');await page.locator('button[onclick="saveProcedure()"]') .click();
  await expect(page.locator('#workspace')).toBeVisible();expect((await writes(page))[0].args.p_payload).toMatchObject({paid_total:0,edit_reason:'Уточнено назначение после частичной оплаты'});expect(errors).toEqual([]);
 });
+
+
+for(const role of ['nurse','owner'])test(`${role} edits a saved measured quantity using the captured milligram price after catalog changes`,async({page})=>{
+ const errors=await boot(page,role);
+ await page.evaluate(()=>{
+  Object.assign(meds[0],{name:'Рета',consumption_unit:'мг',sale_price:9999});
+  const record=JSON.parse(JSON.stringify(__pendingSeed));Object.assign(record,{list_total:3900,charge_total:3900,debt_total:3900,items:[{medication_id:'med-1',name:'Рета',quantity:2.5,unit:'мг',unit_price:1500,line_total:3750}]});__pendingRecords.set(record.id,record);
+ });
+ await page.evaluate(()=>editTreatmentV10('procedure','procedure-1'));const row=page.locator('#procMeds [data-medication-id="med-1"]');await expect(row.locator('.medqty')).toHaveValue('2.5');await expect(row.locator('.medication-price-v31')).toContainText(/Цена:\s*1\s*500\s*₽\s*\/\s*мг/);await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('3900.00');
+ await row.locator('.medqty').fill('7,5');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('11400.00');await expect(page.locator('#procEditReasonBoxV10')).toBeHidden();await page.locator('#procedure button[onclick="saveProcedure()"]').click();await expect(page.locator('#workspace')).toBeVisible();
+ const saved=await writes(page);expect(saved).toHaveLength(1);expect(saved[0].args.p_payload).toMatchObject({id:'procedure-1',expected_version:3,charge_total:11400,paid_total:0,payment_status:'pending',items:[{medication_id:'med-1',quantity:7.5}]});expect(await page.evaluate(()=>__pendingRecords.get('procedure-1').items[0])).toMatchObject({quantity:7.5,unit_price:1500,line_total:11250});expect(await page.evaluate(()=>meds[0].sale_price)).toBe(9999);expect(errors).toEqual([]);
+});

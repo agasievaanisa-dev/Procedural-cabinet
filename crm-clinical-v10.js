@@ -37,17 +37,19 @@
   if (typeof value !== 'string' || value.trim().length > 200) throw Error('Доза для пациента: укажите текст длиной до 200 символов');
   return value.trim() || null;
  }
- function protocolItems(items) {
+ function protocolItems(items, medications = typeof meds === 'undefined' ? [] : meds) {
   if (!Array.isArray(items)) throw Error('Неверный состав шаблона');
   const combined = new Map();
   for (const item of items) {
    if (!item || typeof item.medication_id !== 'string' || !item.medication_id) throw Error('Выберите препарат шаблона');
-   const quantity = Number(item.quantity), dose = doseValue(item.dose);
-   if (!Number.isSafeInteger(quantity) || quantity < 1) throw Error('Количество препарата должно быть целым и больше нуля');
+   const medicine = medications.find(m => m.id === item.medication_id);
+   const quantity = typeof global.medicationQuantityV31 === 'function' ? global.medicationQuantityV31(item.quantity,medicine) : Number(item.quantity), dose = doseValue(item.dose);
+   if (typeof global.medicationQuantityV31 !== 'function' && (!Number.isSafeInteger(quantity) || quantity < 1)) throw Error('Количество препарата должно быть целым и больше нуля');
    const previous = combined.get(item.medication_id);
    if (previous && previous.dose !== dose) throw Error('У одного препарата указаны разные дозы. Скорректируйте дозу в процедуре или замените состав шаблоном');
-   const total = quantity + (previous?.quantity || 0);
-   if (!Number.isSafeInteger(total)) throw Error('Слишком большое количество препарата');
+   const total = Math.round((quantity + (previous?.quantity || 0))*1000)/1000;
+   if (typeof global.medicationQuantityV31 === 'function') global.medicationQuantityV31(total,medicine);
+   else if (!Number.isSafeInteger(total)) throw Error('Слишком большое количество препарата');
    combined.set(item.medication_id,{...item,medication_id:item.medication_id,quantity:total,dose});
   }
   return [...combined.values()];
@@ -182,15 +184,19 @@
    }
    const saved = state(prefix)?.medicationPrices?.has(id), medicine = meds.find(m => m.id === id);
    if (!saved && !(num(medicine?.sale_price) > 0)) { price.textContent = 'Цена не задана'; continue; }
-   const each = medicationPriceCents(prefix,id), quantity = Number(row.querySelector('.medqty')?.value);
-   const label = state(prefix)?.edit?.items?.find(item => item.medication_id === id)?.unit || unit(medicine || {});
-   price.textContent = `Цена: ${rub(each / 100)} / ${label} · Сумма: ${Number.isSafeInteger(quantity) && quantity > 0 ? rub(each * quantity / 100) : '—'}`;
+   const each = medicationPriceCents(prefix,id), original = state(prefix)?.edit?.items?.find(item => item.medication_id === id);
+   const label = original?.unit || unit(medicine || {}); let total = '—';
+   try {
+    const raw = row.querySelector('.medqty')?.value || '', quantity = typeof global.medicationQuantityV31 === 'function' ? global.medicationQuantityV31(raw,medicine || original) : Number(raw);
+    if (Number.isFinite(quantity) && quantity > 0) total = rub((typeof global.medicationLineCentsV31 === 'function' ? global.medicationLineCentsV31(each,quantity) : Math.round(each * quantity)) / 100);
+   } catch {}
+   price.textContent = `Цена: ${rub(each / 100)} / ${label} · Сумма: ${total}`;
   }
  }
  function listCents(prefix) {
   const medicines = rows(prefix + 'Meds').reduce((sum,item) => {
    const price = medicationPriceCents(prefix,item.medication_id);
-   return sum + price * Number(item.quantity);
+   return sum + (typeof global.medicationLineCentsV31 === 'function' ? global.medicationLineCentsV31(price,item.quantity) : Math.round(price * Number(item.quantity)));
   },0);
   return medicines + (prefix === 'proc' ? selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) : 0);
  }
@@ -501,7 +507,14 @@
    if (kind === 'procedure' && (!$('procPatient').value || !$('procService').value)) throw Error('Выберите пациента и услугу');
    const selected = rows(prefix + 'Meds').map(item => kind === 'procedure' ? {...item,dose:doseValue(item.dose)} : item);
    if (kind === 'sale' && !selected.length) throw Error('Добавьте препарат для продажи');
-   const totals = new Map(); selected.forEach(item => { positiveWhole(item.quantity,'Количество препарата'); totals.set(item.medication_id,(totals.get(item.medication_id) || 0) + item.quantity); });
+   const totals = new Map(); selected.forEach(item => {
+    const medicine = meds.find(m => m.id === item.medication_id) || s.edit?.items?.find(m => m.medication_id === item.medication_id);
+    const input = [...$(prefix + 'Meds').querySelectorAll('.medrow')].find(row => row.dataset.medicationId === item.medication_id)?.querySelector('.medqty');
+    if (typeof global.medicationQuantityV31 === 'function') global.medicationQuantityV31(input?.value ?? item.quantity,medicine); else positiveWhole(item.quantity,'Количество препарата');
+    const total = Math.round(((totals.get(item.medication_id) || 0) + item.quantity)*1000)/1000;
+    if (typeof global.medicationQuantityV31 === 'function') global.medicationQuantityV31(total,medicine);
+    totals.set(item.medication_id,total);
+   });
    const paymentOnly = s.edit ? s.edit.stock_deducted === false : isPaymentOnlyV5(prefix);
    for (const [id,quantity] of totals) {
     const med = meds.find(item => item.id === id), previous = s.edit?.items?.find(item => item.medication_id === id)?.quantity || 0;

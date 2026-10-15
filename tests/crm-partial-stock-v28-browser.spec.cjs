@@ -185,3 +185,42 @@ test('procedure selection shows every medicine price and line total alongside gr
  await tracked.locator('.meddose-v24').fill('50 мг');await expect(tracked.locator('.medication-price-v31')).toContainText(/Сумма:\s*400\s*₽/);await page.locator('#procMeds').screenshot({path:testInfo.outputPath('selected-prices-desktop.png')});
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);expect(errors).toEqual([]);
 });
+
+
+// A measured medicine is billed by milligrams; an ordinary ampoule is still a
+// whole container. These are synthetic billing fixtures, not dosing guidance.
+async function measuredCatalogV31(page,rows=[{id:'reta-mg',name:'Рета',sale_price:1500},{id:'mounjaro-mg',name:'Мунджаро',sale_price:1300}]){
+ await page.evaluate(async rows=>{
+  __partialData.push(...rows.map(row=>({...row,consumption_unit:'мг',units_per_package:1,work_qty:20,reserve_qty:0,work_available:20,reserve_available:0,total_available:20,total_qty:20,stock_tracking_enabled:true,active:true})));
+  await loadMeds();
+ },rows);
+}
+for(const [id,price] of [['reta-mg',1500],['mounjaro-mg',1300]])test(`measured sale ${id}: comma and dot quantities recalculate the displayed price and save numeric milligrams`,async({page})=>{
+ const errors=await boot(page);await measuredCatalogV31(page);await openSale(page);await choose(page,id,'2,5');
+ const row=page.locator(`#saleMeds [data-medication-id="${id}"]`),q=row.locator('.medqty');
+ await expect(q).toHaveAttribute('inputmode','decimal');
+ await expect(row.locator('.medication-price-v31')).toContainText(new RegExp('Сумма:\\s*'+(price*2.5).toLocaleString('ru-RU').replace(/\s/g,'\\s*')+'\\s*₽'));
+ await expect(page.locator('#saleChargeInPaymentV11')).toHaveValue((price*2.5).toFixed(2));
+ await q.fill('7.5');await expect(page.locator('#saleChargeInPaymentV11')).toHaveValue((price*7.5).toFixed(2));
+ await page.selectOption('#salePaymentStatusV10','debt');await saveSale(page);await expect(page.locator('#workspace')).toBeVisible();
+ const saved=await calls(page,'record_treatment_v5');expect(saved).toHaveLength(1);expect(saved[0].args.p_payload).toMatchObject({items:[{medication_id:id,quantity:7.5}],charge_total:price*7.5,paid_total:0,payment_status:'debt'});expect(typeof saved[0].args.p_payload.items[0].quantity).toBe('number');expect(errors).toEqual([]);
+});
+for(const [id,price] of [['reta-mg',1500],['mounjaro-mg',1300]])test(`pending procedure ${id} stores a comma-entered 2.5 mg quantity without rounding up to an ampoule`,async({page})=>{
+ const errors=await boot(page);await measuredCatalogV31(page);await page.evaluate(()=>openProcedure('patient-1'));await page.selectOption('#procService','service-1');await page.evaluate(id=>chooseMedication('procMeds',id),id);
+ await page.locator('#procMeds .medqty').fill('2,5');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue((150+price*2.5).toFixed(2));await page.click('#procSavePendingV14');await expect(page.locator('#workspace')).toBeVisible();
+ const saved=await calls(page,'record_treatment_v5');expect(saved).toHaveLength(1);expect(saved[0].args.p_payload).toMatchObject({items:[{medication_id:id,quantity:2.5}],services:[{service_id:'service-1',quantity:1}],charge_total:150+price*2.5,paid_total:0,payment_status:'pending'});expect(errors).toEqual([]);
+});
+test('fractional measured charges round each medicine line to kopecks before the bill is summed',async({page})=>{
+ const errors=await boot(page);await measuredCatalogV31(page,[{id:'micro-a',name:'Мерный А',sale_price:0.05},{id:'micro-b',name:'Мерный Б',sale_price:0.05}]);await openSale(page);await choose(page,'micro-a','0,333');await choose(page,'micro-b','0.333');
+ await expect(page.locator('#saleChargeInPaymentV11')).toHaveValue('0.04');await page.selectOption('#salePaymentStatusV10','debt');await saveSale(page);await expect(page.locator('#workspace')).toBeVisible();
+ const saved=await calls(page,'record_treatment_v5');expect(saved[0].args.p_payload).toMatchObject({items:[{medication_id:'micro-a',quantity:0.333},{medication_id:'micro-b',quantity:0.333}],charge_total:0.04});expect(errors).toEqual([]);
+});
+test('fractional ordinary ampoules remain invalid and never produce a sale RPC',async({page})=>{
+ const errors=await boot(page);await openSale(page);await choose(page,'tracked','0.5');await page.selectOption('#salePaymentStatusV10','debt');await saveSale(page);await expect(page.locator('#sale')).toBeVisible();await expect(page.locator('#saleMessage')).toContainText(/цел|количеств/i);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);expect(errors).toEqual([]);
+});
+for(const entry of ['own','service'])test(`fractional ${entry} counts remain whole-container counts despite milligram support`,async({page})=>{
+ const errors=await boot(page);await page.evaluate(()=>openProcedure('patient-1'));await page.selectOption('#procService','service-1');
+ if(entry==='own'){await page.click('#procAddOwnV10');await page.locator('.own-name-v10').fill('Свой препарат');await page.locator('.own-quantity-v10').fill('0.5')}
+ else {await page.click('#procAddServiceV10');await page.locator('.clinical-service-v10 select').selectOption('service-1');await page.locator('.clinical-service-v10 input').fill('0.5')}
+ await page.click('#procSavePendingV14');await expect(page.locator('#procedure')).toBeVisible();await expect(page.locator('#procedureMessage')).toContainText(/цел|количеств/i);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);expect(errors).toEqual([]);
+});

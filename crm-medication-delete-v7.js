@@ -18,11 +18,19 @@
   };
   send.clear=()=>requests.clear();return send;
  }
- function deletePayload(preview,reason){
+ function deletePayload(preview,reason,medication){
   const text=String(reason||'').trim();if(!text)throw Error('Укажите причину удаления');if(text.length>1000)throw Error('Причина: не более 1000 символов');
   if(!preview?.id)throw Error('Дождитесь проверки остатков');
-  const reserve=Number(preview.expected_reserve),work=Number(preview.expected_work);
-  if(!Number.isSafeInteger(reserve)||reserve<0||!Number.isSafeInteger(work)||work<0)throw Error('Не удалось проверить остатки. Обновите их перед удалением');
+  let reserve,work;const m=medication||{consumption_unit:preview.consumption_unit||preview.unit};
+  try{
+   if(preview.expected_reserve===null||preview.expected_reserve===undefined||preview.expected_work===null||preview.expected_work===undefined)throw Error('Нет проверенных остатков');
+   if(typeof root.medicationQuantityV31==='function'){
+    reserve=root.medicationQuantityV31(preview.expected_reserve,m,{allowZero:true});work=root.medicationQuantityV31(preview.expected_work,m,{allowZero:true});
+   }else{
+    reserve=Number(preview.expected_reserve);work=Number(preview.expected_work);
+    if(!Number.isSafeInteger(reserve)||reserve<0||!Number.isSafeInteger(work)||work<0)throw Error('Некорректные остатки');
+   }
+  }catch{throw Error('Не удалось проверить остатки. Обновите их перед удалением');}
   return {id:preview.id,expected_reserve:reserve,expected_work:work,reason:text};
  }
  const helpers={createRequester,deletePayload};
@@ -114,7 +122,7 @@
  }
  async function confirmDelete(){
   if(warehouseBusy)return;let payload;
-  try{requireOwner();payload=deletePayload(preview,get('medicationDeleteReasonV7')?.value);if(payload.id!==get('medId')?.value)throw Error('Откройте выбранный препарат заново');if(!get('medicationDeleteConfirmV7').checked)throw Error('Проверьте количество и отметьте подтверждение');}
+  try{requireOwner();payload=deletePayload(preview,get('medicationDeleteReasonV7')?.value,inventory.find(m=>m.id===get('medId')?.value));if(payload.id!==get('medId')?.value)throw Error('Откройте выбранный препарат заново');if(!get('medicationDeleteConfirmV7').checked)throw Error('Проверьте количество и отметьте подтверждение');}
   catch(error){if(isManager())status(error.message);else message('homeMessage',error.message);return;}
   const operation=capture(payload.id);busyOperation=operation;setWarehouseBusy(true);get('medicationDeleteReasonV7').disabled=true;status('Удаляем препарат…');
   let saved=false;

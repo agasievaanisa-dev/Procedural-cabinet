@@ -140,16 +140,23 @@ function openMedForm(id='',focus=''){
   message('stockOperationMessage','');receivePackages.value='';receivePrice.value=m?.purchase_price??0;
   openingQty.value='';openingLocation.value='reserve';openingPrice.value=m?.purchase_price??0;openingExpiry.value='';openingExpiry.min=localDateValue();openingComment.value='';
   receiveExpiry.value='';receiveExpiry.min=localDateValue();receiveComment.value='';transferQty.value='';transferMode.value='units';transferComment.value='';
+  for(const id of ['openingQty','returnQty','writeoffQty'])globalThis.configureMedicationQuantityV31?.($(id),m);
   batchList.innerHTML='';movementList.innerHTML='';show('medForm');updateStockPreview();
   if(m)loadStockDetails(id,medView);
   $('openingPanel').open=!!m&&stockFacts(m).total===0;$('receivePanel').open=focus==='receive';$('transferPanel').open=focus==='transfer';$('returnQty').value='';$('writeoffQty').value='';$('writeoffReason').value='';$('writeoffBatch').innerHTML='';if(focus==='receive')receivePackages.focus();else if(focus==='transfer')transferQty.focus();
   if(focus==='prices')focusMedicationPrices();return true;
 }
 function positiveWhole(value,label){const n=Number(value);if(!Number.isSafeInteger(n)||n<=0)throw new Error(label+': введите целое число больше нуля');return n}
+function stockQuantityV31(value,m,label){
+  if(typeof globalThis.medicationQuantityV31!=='function')return positiveWhole(value,label);
+  try{return globalThis.medicationQuantityV31(value,m)}catch(error){throw new Error(label+': '+error.message)}
+}
 function nonnegative(value,label){const n=Number(value);if(value===''||!Number.isFinite(n)||n<0)throw new Error(label+': введите число от нуля');return n}
 function updateStockPreview(){
   const m=inventory.find(x=>x.id===medId.value);if(!m)return;
-  const amount=Number(receivePackages.value),t=Number(transferQty.value)*(transferMode.value==='packs'?packSize(m):1);
+  globalThis.configureMedicationQuantityV31?.(transferQty,transferMode.value==='packs'?null:m);
+  const amount=Number(receivePackages.value);let t=0;
+  try{t=(transferMode.value==='packs'?positiveWhole(transferQty.value,'Количество упаковок'):stockQuantityV31(transferQty.value,m,'Количество'))*(transferMode.value==='packs'?packSize(m):1);}catch{}
   receivePreview.textContent=amount>0?`В запас поступит ${qty(amount*packSize(m))} ${unit(m)} Закупка: ${rub(amount*num(receivePrice.value))}.`:`В упаковке ${qty(packSize(m))} ${unit(m)}`;
   transferPreview.textContent=t>0?`Перевод: ${qty(t)} ${unit(m)} В запасе останется ${qty(num(m.reserve_qty)-t)}, в работе будет ${qty(num(m.work_qty)+t)} ${unit(m)}`:`Доступно в запасе: ${packLabel(m.reserve_qty,m)} (${qty(m.reserve_qty)} ${unit(m)}).`;
 }
@@ -255,7 +262,7 @@ async function transferToWork(){
   if(stockDraftV16?.action==='transfer')return stockMutation('transfer',stockDraftV16.payload,stockDraftV16.success);
   try{
     const m=inventory.find(x=>x.id===medId.value);if(!m)throw new Error('Выберите препарат');
-    const amount=positiveWhole(transferQty.value,'Количество'),n=amount*(transferMode.value==='packs'?packSize(m):1);
+    const amount=transferMode.value==='packs'?positiveWhole(transferQty.value,'Количество упаковок'):stockQuantityV31(transferQty.value,m,'Количество'),n=stockQuantityV31(amount*(transferMode.value==='packs'?packSize(m):1),m,'Количество');
     if(n>num(m.reserve_available??m.reserve_qty))throw new Error('Недостаточно годного препарата в запасе. Проверьте партии и сроки годности.');
     await stockMutation('transfer',{id:m.id,quantity:n,comment:transferComment.value.trim()},'Препарат переведён в рабочий шкаф. Общий остаток не изменился.');
   }catch(e){message('stockOperationMessage',e.message)}
@@ -284,7 +291,8 @@ async function loadStockDetails(id,view){
 async function saveOpeningStock(){
   if(stockDraftV16?.action==='opening')return stockMutation('opening',stockDraftV16.payload,stockDraftV16.success);
   try{
-    const quantity=positiveWhole(openingQty.value,'Количество'),price=nonnegative(openingPrice.value,'Цена');
+    const m=inventory.find(x=>x.id===medId.value);if(!m)throw new Error('Выберите препарат');
+    const quantity=stockQuantityV31(openingQty.value,m,'Количество'),price=nonnegative(openingPrice.value,'Цена');
     if(!openingExpiry.value||openingExpiry.value<localDateValue())throw new Error('Укажите действующий срок годности');
     await stockMutation('opening',{id:medId.value,quantity,price,location:openingLocation.value,expiry:openingExpiry.value,comment:openingComment.value.trim()},'Имеющийся остаток добавлен. Не вносите эту же партию повторно.');
   }catch(e){message('stockOperationMessage',e.message)}
@@ -292,13 +300,14 @@ async function saveOpeningStock(){
 
 async function returnToReserve(){
  if(stockDraftV16?.action==='return')return stockMutation('return',stockDraftV16.payload,stockDraftV16.success);
- try{await stockMutation('return',{id:medId.value,quantity:positiveWhole($('returnQty').value,'Количество')},'Препарат возвращён в запас. Общий остаток не изменился.')}catch(e){message('stockOperationMessage',e.message)}
+ try{const m=inventory.find(x=>x.id===medId.value);if(!m)throw new Error('Выберите препарат');await stockMutation('return',{id:medId.value,quantity:stockQuantityV31($('returnQty').value,m,'Количество')},'Препарат возвращён в запас. Общий остаток не изменился.')}catch(e){message('stockOperationMessage',e.message)}
 }
 async function writeOffStock(){
  if(stockDraftV16?.action==='writeoff')return stockMutation('writeoff',stockDraftV16.payload,stockDraftV16.success);
  try{const reason=$('writeoffReason').value.trim(),batch=$('writeoffBatch').value;
  if(!batch||!reason)throw new Error('Выберите партию и укажите причину списания');
- await stockMutation('writeoff',{id:medId.value,quantity:positiveWhole($('writeoffQty').value,'Количество'),batch_id:batch,location:$('writeoffLocation').value,comment:reason},'Списание сохранено в истории. Остаток уменьшен.');
+ const m=inventory.find(x=>x.id===medId.value);if(!m)throw new Error('Выберите препарат');
+ await stockMutation('writeoff',{id:medId.value,quantity:stockQuantityV31($('writeoffQty').value,m,'Количество'),batch_id:batch,location:$('writeoffLocation').value,comment:reason},'Списание сохранено в истории. Остаток уменьшен.');
  }catch(e){message('stockOperationMessage',e.message)}
 }
 

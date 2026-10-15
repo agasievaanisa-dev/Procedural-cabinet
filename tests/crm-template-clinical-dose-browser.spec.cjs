@@ -121,3 +121,10 @@ test('mixed payment of an increased individual charge saves exact receipt alloca
  await page.fill('#procPayCash','100');await page.fill('#procPayTerminal','200');await page.fill('#procPayOwnerCard','100');await page.fill('#procPayTender','100');await page.check('#procPayConfirmed');await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#workspace')).toBeVisible();
  expect((await writes(page))[0].args.p_payload).toMatchObject({charge_total:400,paid_total:400,payment_status:'paid',payments:{cash:100,terminal:200,owner_card:100,cash_received:100},own_medications:[{name:'Свой B12',quantity:1,unit:'амп.',source:'patient',dose:'500 мкг'}]});expect(await page.evaluate(()=>__visitRecords.get('procedure-1'))).toMatchObject({list_total:350,charge_total:400,debt_total:0});expect(errors).toEqual([]);
 });
+
+
+for(const role of ['nurse','admin'])test(role+' copies a fractional milligram protocol and can adjust it for one patient without changing the specimen',async({page})=>{
+ const errors=await boot(page,role);await page.evaluate(()=>{Object.assign(meds[0],{name:'Мунджаро',sale_price:1300,consumption_unit:'мг'});__doseTemplate.items=[{medication_id:'med-1',quantity:2.5,dose:'Индивидуально'}]});await procedure(page);await page.evaluate(()=>CrmClinicalV10.applyTemplate(__doseTemplate));
+ await expect(page.locator('#procMeds .medqty')).toHaveValue('2.5');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('3400.00');await page.locator('#procMeds .medqty').fill('7,5');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('9900.00');await page.click('#procSavePendingV14');await expect(page.locator('#workspace')).toBeVisible();
+ expect((await writes(page))[0].args.p_payload).toMatchObject({items:[{medication_id:'med-1',quantity:7.5,dose:'Индивидуально'}],charge_total:9900,paid_total:0,payment_status:'pending'});expect(await page.evaluate(()=>__doseTemplate.items)).toEqual([{medication_id:'med-1',quantity:2.5,dose:'Индивидуально'}]);expect(errors).toEqual([]);
+});

@@ -378,15 +378,18 @@ function searchTemplateMedicationV24(input){
 function addTemplateItemV5(id='',quantity=1,dose=null){
   if(!canManageTemplatesV24()||managementDraftsV16.template)return;const row=document.createElement('div');row.className='template-item-v5';
   row.innerHTML=`<div class="template-medication-v24"><label>Препарат</label><input class="template-med-search-v24" aria-label="Найти препарат в шаблоне" type="search" placeholder="Поиск препарата" oninput="searchTemplateMedicationV24(this)"><select class="template-med-v5" aria-label="Препарат шаблона">${templateMedicationOptionsV24(id)}</select></div><div class="template-count-v24"><label>Ампул / флаконов</label><input class="template-quantity-v5" aria-label="Количество ампул или флаконов" type="number" inputmode="numeric" min="1" step="1" value="${esc(quantity)}"></div><div class="template-dose-v24"><label>Доза для пациента</label><input class="template-dose-input-v24" aria-label="Доза для пациента" type="text" maxlength="200" placeholder="Например: 400 мг, 5 мл" value="${esc(dose||'')}"></div><button class="btn danger template-remove-v24" aria-label="Убрать препарат" onclick="this.parentElement.remove()">×</button>`;
-  row.querySelector('select').value=id;$('templateItemsV5').appendChild(row);
+  row.querySelector('select').value=id;
+  const quantityInput=row.querySelector('.template-quantity-v5'),select=row.querySelector('select');
+  const configure=()=>{const m=templateMedicationV5(select.value);if(typeof configureMedicationQuantityV31==='function')configureMedicationQuantityV31(quantityInput,m);row.querySelector('.template-count-v24 label').textContent='Количество, '+unit(m||{});quantityInput.setAttribute('aria-label','Количество ампул или флаконов');};
+  select.addEventListener('change',configure);configure();$('templateItemsV5').appendChild(row);
 }
 function templatePayloadV5(){
   const name=$('templateNameV5').value.trim();if(!name)throw Error('Укажите название шаблона');
   const items=[...$('templateItemsV5').querySelectorAll('.template-item-v5')].map(row=>{
-    const medication_id=row.querySelector('select').value,quantity=Number((row.querySelector('.template-quantity-v5')||row.querySelector('input')).value);
+    const medication_id=row.querySelector('select').value,rawQuantity=(row.querySelector('.template-quantity-v5')||row.querySelector('input')).value,medicine=templateMedicationV5(medication_id),quantity=typeof medicationQuantityV31==='function'?medicationQuantityV31(rawQuantity,medicine):Number(rawQuantity);
     const dose=(row.querySelector('.template-dose-input-v24')?.value||'').trim()||null;
     if(!medication_id)throw Error('Выберите препарат в каждой строке или уберите пустую строку');
-    if(!Number.isSafeInteger(quantity)||quantity<=0)throw Error('Количество препарата должно быть целым числом больше нуля в ампулах или флаконах');
+    if(typeof medicationQuantityV31!=='function'&&(!Number.isSafeInteger(quantity)||quantity<=0))throw Error('Количество препарата должно быть целым числом больше нуля в ампулах или флаконах');
     if(dose&&dose.length>200)throw Error('Доза для пациента должна быть не длиннее 200 символов');
     const m=templateMedicationV5(medication_id);if(!m||m.active===false)throw Error('В шаблоне есть недоступный препарат. Замените его или уберите.');
     return {medication_id,quantity,dose};
@@ -442,7 +445,8 @@ function checkedProcedureTemplateV24(id){
   for(const item of t.items||[]){
     const m=meds.find(row=>row.id===item.medication_id);if(!m||m.active===false)throw Error('Препарат из шаблона недоступен. Исправьте общий шаблон. Состав пациента не изменён.');
     if(m.sale_price===null||m.sale_price===undefined||!Number.isFinite(Number(m.sale_price))||Number(m.sale_price)<=0)throw Error('У препарата из шаблона не указана цена. Состав пациента не изменён.');
-    if(!Number.isSafeInteger(Number(item.quantity))||Number(item.quantity)<=0||item.dose!=null&&(typeof item.dose!=='string'||item.dose.length>200))throw Error('В шаблоне неверное количество или доза. Состав пациента не изменён.');
+    if(typeof medicationQuantityV31==='function')medicationQuantityV31(item.quantity,m);
+    if(typeof medicationQuantityV31!=='function'&&(!Number.isSafeInteger(Number(item.quantity))||Number(item.quantity)<=0)||item.dose!=null&&(typeof item.dose!=='string'||item.dose.length>200))throw Error('В шаблоне неверное количество или доза. Состав пациента не изменён.');
   }
   const draft=globalThis.CrmClinicalV10?.templateState?.();if(draft?.locked||draft?.busy||draft?.pending)throw Error('Сначала завершите сохранение текущей процедуры.');
   return JSON.parse(JSON.stringify(t));

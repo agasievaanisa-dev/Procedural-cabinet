@@ -6,18 +6,27 @@
   if(String(value??'').trim()===''||!Number.isSafeInteger(number)||number<min)throw Error(label+': введите целое число от '+min);
   return number;
  }
- function balance(batch,location){
-  if(!batch||!['reserve','work'].includes(location))throw Error('Выберите партию и место хранения');
-  return whole(location==='work'?batch.work_quantity:Number(batch.quantity_remaining)-Number(batch.work_quantity),0,'Текущий остаток');
+ function quantity(value,m,allowZero,label){
+  if(typeof root.medicationQuantityV31!=='function')return whole(value,allowZero?0:1,label);
+  try{return root.medicationQuantityV31(value,m,{allowZero});}catch(error){throw Error(label+': '+error.message);}
  }
- function inventoryResult(operation,before,value){
-  before=whole(before,0,'Текущий остаток');
+ function calculated(value,m){return root.isMeasuredQuantityV31?.(m)?Math.round(value*1000)/1000:value;}
+ function balance(batch,location,m){
+  if(!batch||!['reserve','work'].includes(location))throw Error('Выберите партию и место хранения');
+  const work=quantity(batch.work_quantity,m,true,'Текущий остаток');
+  if(location==='work')return work;
+  const total=quantity(batch.quantity_remaining,m,true,'Текущий остаток');
+  return quantity(calculated(total-work,m),m,true,'Текущий остаток');
+ }
+ function inventoryResult(operation,before,value,m){
+  before=quantity(before,m,true,'Текущий остаток');
   if(!['remove','add','set'].includes(operation))throw Error('Выберите: убрать, добавить или указать остаток');
-  const amount=whole(value,operation==='set'?0:1,operation==='remove'?'Сколько убрать':operation==='add'?'Сколько добавить':'Правильный остаток');
+  const amount=quantity(value,m,operation==='set',operation==='remove'?'Сколько убрать':operation==='add'?'Сколько добавить':'Правильный остаток');
   if(operation==='remove'&&amount>before)throw Error('Нельзя убрать больше, чем осталось: '+before);
-  const after=operation==='set'?amount:operation==='remove'?before-amount:before+amount;
-  if(!Number.isSafeInteger(after))throw Error('Количество слишком большое');
-  return {before,amount,after,difference:after-before};
+  const after=calculated(operation==='set'?amount:operation==='remove'?before-amount:before+amount,m);
+  if(!root.isMeasuredQuantityV31?.(m)&&!Number.isSafeInteger(after))throw Error('Количество слишком большое');
+  quantity(after,m,true,'Правильный остаток');
+  return {before,amount,after,difference:calculated(after-before,m)};
  }
  function payload(mode,values){
   const reason=String(values.reason||'').trim();
@@ -26,9 +35,9 @@
   if(!values.id)throw Error('Выберите препарат');
   if(mode==='package')return {id:values.id,units_per_package:whole(values.actual,1,'Количество в упаковке'),expected_units_per_package:whole(values.expected,1,'Текущее количество в упаковке'),reason};
   if(mode!=='inventory'||!values.batch_id||!['reserve','work'].includes(values.location))throw Error('Выберите партию и место хранения');
-  return {id:values.id,batch_id:values.batch_id,location:values.location,actual_quantity:whole(values.actual,0,'Фактический остаток'),expected_quantity:whole(values.expected,0,'Текущий остаток'),reason};
+  return {id:values.id,batch_id:values.batch_id,location:values.location,actual_quantity:quantity(values.actual,values.medication,true,'Фактический остаток'),expected_quantity:quantity(values.expected,values.medication,true,'Текущий остаток'),reason};
  }
- function createRequester(rpc,authorize,uuid){
+ function createRequester(rpc,authorize,uuid,medication=()=>null){
   const requests=new Map();
   const connectionMessage='Не получен ответ сервера. Значения сохранены в форме. Повторите сохранение — операция не продублируется.';
   const errorText=error=>!error?.code&&/fetch|network|timeout|connection|load failed/i.test(error?.message||'')?connectionMessage:error?.message||connectionMessage;
@@ -41,15 +50,16 @@
     if(typeof SaveRecoveryV16!=='undefined'?SaveRecoveryV16.isDefinitive(result.error,result.status):!result.error.uncertain&&!/^08/.test(result.error.code||'')&&/^[0-9A-Z]{5}$/.test(result.error.code||''))forget();
     const error=Error(errorText(result.error));Object.assign(error,result.error,{message:errorText(result.error)});throw error;
    }
-   const value=result?.data,field=action==='package'?'units_per_package':'quantity';
-   if(!value||typeof value!=='object'||Array.isArray(value)||value[field]===null||value[field]===undefined||!Number.isSafeInteger(Number(value[field]))||Number(value[field])<(action==='package'?1:0)){
+   const value=result?.data,field=action==='package'?'units_per_package':'quantity';let valid=false;
+   try{if(value&&typeof value==='object'&&!Array.isArray(value)&&value[field]!==null&&value[field]!==undefined){if(action==='package')whole(value[field],1,'Количество в упаковке');else quantity(value[field],medication(data),true,'Остаток');valid=true;}}catch{}
+   if(!valid){
     const error=Error(connectionMessage);error.uncertain=true;throw error;
    }
    forget();return value;
   };
   send.clear=()=>requests.clear();return send;
  }
- const helpers={whole,balance,inventoryResult,payload,createRequester};
+ const helpers={whole,quantity,balance,inventoryResult,payload,createRequester};
  if(typeof module!=='undefined'&&module.exports)module.exports=helpers;
  root.CrmStockCorrectionV6=helpers;
  if(typeof document==='undefined')return;
@@ -57,7 +67,7 @@
  const get=id=>document.getElementById(id);
  let generation=0,state=null,busyOperation=null,inventoryAction='remove';
  function requireOwner(){if(!isManager())throw Error('Исправление препаратов доступно только владельцу');}
- const request=createRequester((name,args)=>db.rpc(name,args),requireOwner,()=>crypto.randomUUID());
+ const request=createRequester((name,args)=>db.rpc(name,args),requireOwner,()=>crypto.randomUUID(),data=>inventory.find(m=>m.id===data.id));
  function currentMedication(){return inventory.find(m=>m.id===get('medId')?.value);}
  function currentView(id,view,token,actor){return isManager()&&(!actor||currentStaff?.id===actor)&&token===generation&&view===medView&&get('medId')?.value===id&&get('medForm')?.classList.contains('active');}
  function capture(id){return {id,view:medView,token:generation,actor:currentStaff?.id};}
@@ -98,16 +108,16 @@
   const m=currentMedication();if(!m||m.active===false)throw Error('Препарат недоступен');
   if(get('stockCorrectionModeV6').value==='package')return whole(m.units_per_package,1,'Количество в упаковке');
   if(!state?.loaded||state.id!==m.id||state.view!==medView)throw Error('Дождитесь загрузки партий');
-  return balance(state.batches.find(b=>b.id===get('stockCorrectionBatchV6').value),get('stockCorrectionLocationV6').value);
+  return balance(state.batches.find(b=>b.id===get('stockCorrectionBatchV6').value),get('stockCorrectionLocationV6').value,m);
  }
  function countedUnit(m){return {ampoule:'ампул','амп.':'ампул',ампула:'ампул',vial:'флаконов','фл.':'флаконов',флакон:'флаконов',tablet:'таблеток','таб.':'таблеток',таблетка:'таблеток'}[m?.consumption_unit]||unit(m);}
  function renderBatches(preferred='',keepZero=false){
   if(!state?.loaded)return;
-  const location=get('stockCorrectionLocationV6').value,batches=state.batches,suffix=unit(currentMedication());
-  const label=b=>`${b.batch_number?'№ '+b.batch_number:'Без номера'} · ${qty(balance(b,location))} ${suffix}${b.expiry_date?' · срок '+b.expiry_date.split('-').reverse().join('.'):''}`;
+  const location=get('stockCorrectionLocationV6').value,batches=state.batches,m=currentMedication(),suffix=unit(m);
+  const label=b=>`${b.batch_number?'№ '+b.batch_number:'Без номера'} · ${qty(balance(b,location,m))} ${suffix}${b.expiry_date?' · срок '+b.expiry_date.split('-').reverse().join('.'):''}`;
   get('stockCorrectionBatchV6').innerHTML=batches.map(b=>`<option value="${esc(b.id)}">${esc(label(b))}</option>`).join('')||'<option value="">Партий пока нет — внесите имеющийся остаток</option>';
-  const prior=batches.find(b=>b.id===preferred),available=batches.find(b=>balance(b,location)>0);
-  const selected=prior&&(keepZero||balance(prior,location)>0)?prior:available||prior||batches[0];
+  const prior=batches.find(b=>b.id===preferred),available=batches.find(b=>balance(b,location,m)>0);
+  const selected=prior&&(keepZero||balance(prior,location,m)>0)?prior:available||prior||batches[0];
   if(selected)get('stockCorrectionBatchV6').value=selected.id;
  }
  function update(resetConfirmation){
@@ -117,7 +127,8 @@
   get('stockCorrectionInventoryV6').classList.toggle('hidden',packageMode);get('stockCorrectionPackageNoteV6').classList.toggle('hidden',!packageMode);
   for(const button of get('stockCorrectionPanelV6').querySelectorAll('[data-stock-action]'))button.setAttribute('aria-pressed',String(button.dataset.stockAction===inventoryAction));
   get('stockCorrectionConfirmLabelV6').textContent=packageMode?'Правильное количество в упаковке — подтверждаю':'Проверила: столько должно остаться';
-  get('stockCorrectionActualV6').min=packageMode||inventoryAction!=='set'?'1':'0';get('stockCorrectionActualLabelV6').textContent=packageMode?'Правильное количество в упаковке':(inventoryAction==='remove'?'Сколько убрать':inventoryAction==='add'?'Сколько добавить':'Сколько должно остаться')+', '+countedUnit(m);
+  root.configureMedicationQuantityV31?.(get('stockCorrectionActualV6'),packageMode?null:m,!packageMode&&inventoryAction==='set');
+  if(packageMode||!root.isMeasuredQuantityV31?.(m))get('stockCorrectionActualV6').min=packageMode||inventoryAction!=='set'?'1':'0';get('stockCorrectionActualLabelV6').textContent=packageMode?'Правильное количество в упаковке':(inventoryAction==='remove'?'Сколько убрать':inventoryAction==='add'?'Сколько добавить':'Сколько должно остаться')+', '+countedUnit(m);
   get('stockCorrectionSaveV6').textContent=packageMode?'Сохранить количество в упаковке':inventoryAction==='remove'?'Убрать лишнее':inventoryAction==='add'?'Добавить':'Сохранить остаток';
   let before;try{before=expected();}catch(error){get('stockCorrectionActualV6').removeAttribute('max');get('stockCorrectionCurrentV6').textContent=error.message;get('stockCorrectionPreviewV6').textContent='';get('stockCorrectionSaveV6').disabled=true;return;}
   if(!packageMode&&inventoryAction==='remove')get('stockCorrectionActualV6').max=String(before);else get('stockCorrectionActualV6').removeAttribute('max');
@@ -125,7 +136,7 @@
   get('stockCorrectionCurrentV6').textContent=`${where} сейчас: ${qty(before)} ${suffix}`;
   let after,amount;try{
    if(packageMode)after=whole(get('stockCorrectionActualV6').value,1,'Количество в упаковке');
-   else({after,amount}=inventoryResult(inventoryAction,before,get('stockCorrectionActualV6').value));
+   else({after,amount}=inventoryResult(inventoryAction,before,get('stockCorrectionActualV6').value,m));
   }catch(error){get('stockCorrectionPreviewV6').textContent=error.message;get('stockCorrectionSaveV6').disabled=true;return;}
   get('stockCorrectionPreviewV6').textContent=packageMode?`В упаковке было: ${qty(before)} ${suffix}\nПравильное количество: ${qty(after)} ${suffix}`:`Было: ${qty(before)} ${suffix}\n${inventoryAction==='remove'?'Убираем':inventoryAction==='add'?'Добавляем':'Указываем остаток'}: ${qty(amount)} ${suffix}\nОстанется: ${qty(after)} ${suffix}`;
   if(!packageMode)get('stockCorrectionSaveV6').textContent=inventoryAction==='set'?'Сохранить остаток '+qty(after)+' '+suffix:(inventoryAction==='remove'?'Убрать ':'Добавить ')+qty(amount)+' '+suffix;
@@ -149,7 +160,7 @@
    const batches=await warehouseRpc('batches',{id});if(!currentView(id,view,token,actor))return;
    ensurePanel();const preferred=state?.preferredBatchId,location=state?.preferredLocation;state={id,view,batches:Array.isArray(batches)?batches:[],loaded:true};
    if(location)get('stockCorrectionLocationV6').value=location;
-   else if(!state.batches.some(b=>balance(b,'reserve')>0)&&state.batches.some(b=>balance(b,'work')>0))get('stockCorrectionLocationV6').value='work';
+   else if(!state.batches.some(b=>balance(b,'reserve',currentMedication())>0)&&state.batches.some(b=>balance(b,'work',currentMedication())>0))get('stockCorrectionLocationV6').value='work';
    renderBatches(preferred,!!preferred);
    update(false);
   }catch(error){if(currentView(id,view,token,actor)){state={id,view,batches:[],loaded:false};status('Не удалось загрузить партии: '+error.message);get('stockCorrectionReloadV6').classList.remove('hidden');update(false);}}
@@ -158,9 +169,9 @@
   if(mode==='package'){m.units_per_package=Number(result?.units_per_package??data.units_per_package);get('medUnitsPerPack').value=m.units_per_package;}
   else{
    const b=state?.batches.find(item=>item.id===data.batch_id),difference=Number(result?.difference??data.actual_quantity-data.expected_quantity);
-   if(b){b.quantity_remaining=Number(b.quantity_remaining)+difference;if(data.location==='work')b.work_quantity=Number(b.work_quantity)+difference;}
-   const key=data.location==='work'?'work_qty':'reserve_qty';m[key]=Number(m[key]||0)+difference;
-   const available=data.location==='work'?'work_available':'reserve_available';if(b?.expiry_date&&b.expiry_date>=localDateValue()&&m[available]!==undefined)m[available]=Number(m[available])+difference;
+   if(b){b.quantity_remaining=calculated(Number(b.quantity_remaining)+difference,m);if(data.location==='work')b.work_quantity=calculated(Number(b.work_quantity)+difference,m);}
+   const key=data.location==='work'?'work_qty':'reserve_qty';m[key]=calculated(Number(m[key]||0)+difference,m);
+   const available=data.location==='work'?'work_available':'reserve_available';if(b?.expiry_date&&b.expiry_date>=localDateValue()&&m[available]!==undefined)m[available]=calculated(Number(m[available])+difference,m);
   }
   if(mode==='inventory')renderBatches(data.batch_id,true);
   get('medStockSummary').innerHTML=stockCells(m);updateStockPreview();
@@ -176,8 +187,8 @@
   let mode,data,m;
   try{
    requireOwner();m=currentMedication();mode=get('stockCorrectionModeV6').value;
-   const before=expected(),actual=mode==='package'?get('stockCorrectionActualV6').value:inventoryResult(inventoryAction,before,get('stockCorrectionActualV6').value).after;
-   data=payload(mode,{id:m?.id,batch_id:get('stockCorrectionBatchV6').value,location:get('stockCorrectionLocationV6').value,actual,expected:before,reason:get('stockCorrectionReasonV6').value});
+   const before=expected(),actual=mode==='package'?get('stockCorrectionActualV6').value:inventoryResult(inventoryAction,before,get('stockCorrectionActualV6').value,m).after;
+   data=payload(mode,{id:m?.id,medication:m,batch_id:get('stockCorrectionBatchV6').value,location:get('stockCorrectionLocationV6').value,actual,expected:before,reason:get('stockCorrectionReasonV6').value});
    if(!get('stockCorrectionConfirmV6').checked)throw Error('Проверьте числа и отметьте подтверждение перед сохранением');
   }catch(error){if(isManager())status(error.message);else message('homeMessage',error.message);return;}
   const operation=capture(data.id),choice=choices();busyOperation=operation;setWarehouseBusy(true);get('stockCorrectionReasonV6').disabled=true;status('Сохраняем исправление…');get('stockCorrectionReloadV6').classList.add('hidden');
