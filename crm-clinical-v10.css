@@ -5,3 +5,4 @@
 .clinical-visit-time-v23{margin:18px 0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}.clinical-visit-time-v23 h2{margin:0 0 6px}.clinical-visit-time-v23 p{margin:0 0 12px}.clinical-visit-time-v23 .grid2>div{min-width:0}.clinical-visit-time-v23 input{width:100%;min-width:0;box-sizing:border-box}
 .clinical-dose-v24{display:block;margin:10px 0 0;font-size:13px;color:var(--muted)}.clinical-dose-v24 .meddose-v24{display:block;width:100%;min-width:0;box-sizing:border-box;margin-top:5px;padding:9px 8px;font-size:14px;min-height:42px;background:white}.clinical-dose-v24 .meddose-v24:focus{outline:2px solid var(--accent);outline-offset:1px}
 .clinical-quantity-v24{min-width:0;font-size:12px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}.clinical-quantity-v24 .medqty{display:block;margin-top:5px;width:100%;box-sizing:border-box}
+.medrow .chosen-name .medication-price-v31{font-weight:700;color:var(--text);line-height:1.4}

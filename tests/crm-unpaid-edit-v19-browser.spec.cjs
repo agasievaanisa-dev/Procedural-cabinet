@@ -90,6 +90,7 @@ for (const role of ['nurse','owner']) test(`${role} repeatedly reopens an unpaid
   meds[0].sale_price=9999;services[0].work_price=9999;services[0].consumables_price=0;
  });
  await page.evaluate(()=>editTreatmentV10('procedure','procedure-1'));
+ await expect(page.locator('#procMeds [data-medication-id="med-1"] .medication-price-v31')).toContainText(/Цена:\s*20\s*₽\s*\/\s*компл\..*Сумма:\s*40\s*₽/);
  await expect(page.locator('#procEditReasonBoxV10')).toBeHidden();
  await page.evaluate(()=>chooseMedication('procMeds','med-2'));
  await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('200.00');
@@ -100,6 +101,7 @@ for (const role of ['nurse','owner']) test(`${role} repeatedly reopens an unpaid
  await page.evaluate(()=>{meds[1].sale_price=7777;return editTreatmentV10('procedure','procedure-1')});
  await expect(page.locator('#procEditReasonBoxV10')).toBeHidden();
  await page.locator('#procMeds .medrow[data-medication-id="med-2"] .medqty').fill('2');
+ await expect(page.locator('#procMeds [data-medication-id="med-2"] .medication-price-v31')).toContainText(/Цена:\s*10\s*₽\s*\/\s*амп\..*Сумма:\s*20\s*₽/);
  await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('210.00');
  await page.locator('button[onclick="saveProcedure()"]') .click();
  await expect(page.locator('#workspace')).toBeVisible();

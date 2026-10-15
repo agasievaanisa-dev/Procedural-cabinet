@@ -162,3 +162,26 @@ test('older backend retains payment-only controls and does not send an unsupport
 test('strict stock mode still blocks selling a zero-stock medicine before any save RPC',async({page})=>{
  const errors=await boot(page,{mode:'strict'});await openSale(page);await expect(page.locator('#saleAccountingModeV5')).toContainText('Складской учёт включён');await choose(page,'untracked',1);await saveSale(page);await expect(page.locator('#sale')).toBeVisible();await expect(page.locator('#saleMessage')).toContainText(/Недостаточно препарата|Не хватает/);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);expect(errors).toEqual([]);
 });
+
+for(const mode of ['partial','finance','strict']) test(`selected sale prices stay visible in ${mode} mode and follow quantity without stock changes`,async({page})=>{
+ const errors=await boot(page,{mode});await page.evaluate(()=>__partialData[0].sale_price=200.25);await openSale(page);await choose(page,'tracked',3);
+ const row=page.locator('#saleMeds [data-medication-id="tracked"]');
+ await expect(row.locator('.medication-price-v31')).toContainText(/Цена:\s*200,25\s*₽\s*\/\s*амп\..*Сумма:\s*600,75\s*₽/);
+ await expect(page.locator('#saleList')).toContainText(/600,75\s*₽/);await expect(row.locator('.stock-hint')).not.toBeEmpty();
+ await row.locator('.medqty').fill('2');await expect(row.locator('.medication-price-v31')).toContainText(/Сумма:\s*400,5\s*₽/);
+ expect(await page.evaluate(()=>__partialData[0].total_qty)).toBe(3);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);expect(errors).toEqual([]);
+});
+
+test('procedure selection shows every medicine price and line total alongside gradual stock labels',async({page},testInfo)=>{
+ await page.setViewportSize({width:1440,height:1000});
+ const errors=await boot(page);await page.evaluate(()=>openProcedure('patient-1'));await expect(page.locator('#procedure')).toBeVisible();await page.selectOption('#procService','service-1');
+ await page.evaluate(()=>{chooseMedication('procMeds','tracked');chooseMedication('procMeds','untracked')});
+ const tracked=page.locator('#procMeds [data-medication-id="tracked"]'),untracked=page.locator('#procMeds [data-medication-id="untracked"]');
+ await tracked.locator('.medqty').fill('2');await untracked.locator('.medqty').fill('3');
+ await expect(tracked.locator('.medication-price-v31')).toContainText(/Цена:\s*200\s*₽.*Сумма:\s*400\s*₽/);
+ await expect(untracked.locator('.medication-price-v31')).toContainText(/Цена:\s*100\s*₽.*Сумма:\s*300\s*₽/);
+ await expect(untracked.locator('.stock-hint')).toContainText('Поэтапный учёт');await expect(page.locator('#procList')).toContainText(/850\s*₽/);
+ await tracked.locator('.meddose-v24').fill('50 мг');await expect(tracked.locator('.medication-price-v31')).toContainText(/Сумма:\s*400\s*₽/);await page.locator('#procMeds').screenshot({path:testInfo.outputPath('selected-prices-desktop.png')});
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);expect(errors).toEqual([]);
+});

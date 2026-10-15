@@ -168,9 +168,28 @@
   const primary = $('procService')?.value;
   return mergeServices((primary ? [{service_id:primary,quantity:1}] : []).concat([...$('procAdditionalServicesV10').querySelectorAll('.clinical-service-v10')].map(row => ({service_id:row.querySelector('select').value,quantity:Number(row.querySelector('input').value)}))));
  }
+ function medicationPriceCents(prefix, id) {
+  return state(prefix)?.medicationPrices?.get(id) ?? Math.round(num(meds.find(m => m.id === id)?.sale_price) * 100);
+ }
+ function renderMedicationPrices(prefix) {
+  for (const row of $(prefix + 'Meds')?.querySelectorAll('.medrow') || []) {
+   const id = row.dataset.medicationId, name = row.querySelector('.chosen-name');
+   if (!name) continue;
+   let price = name.querySelector('.medication-price-v31');
+   if (!price) {
+    price = document.createElement('small'); price.className = 'medication-price-v31';
+    const hint = name.querySelector('.stock-hint'); if (hint) hint.before(price); else name.appendChild(price);
+   }
+   const saved = state(prefix)?.medicationPrices?.has(id), medicine = meds.find(m => m.id === id);
+   if (!saved && !(num(medicine?.sale_price) > 0)) { price.textContent = 'Цена не задана'; continue; }
+   const each = medicationPriceCents(prefix,id), quantity = Number(row.querySelector('.medqty')?.value);
+   const label = state(prefix)?.edit?.items?.find(item => item.medication_id === id)?.unit || unit(medicine || {});
+   price.textContent = `Цена: ${rub(each / 100)} / ${label} · Сумма: ${Number.isSafeInteger(quantity) && quantity > 0 ? rub(each * quantity / 100) : '—'}`;
+  }
+ }
  function listCents(prefix) {
   const medicines = rows(prefix + 'Meds').reduce((sum,item) => {
-   const price = state(prefix)?.medicationPrices?.get(item.medication_id) ?? Math.round(num(meds.find(m => m.id === item.medication_id)?.sale_price) * 100);
+   const price = medicationPriceCents(prefix,item.medication_id);
    return sum + price * Number(item.quantity);
   },0);
   return medicines + (prefix === 'proc' ? selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) : 0);
@@ -296,6 +315,7 @@
  function readOwn() { return ownedItems([...$('procOwnMedsV10').querySelectorAll('.clinical-own-v10')].map(row => ({name:row.querySelector('.own-name-v10').value,quantity:row.querySelector('.own-quantity-v10').value,unit:row.querySelector('.own-unit-v10').value,source:row.querySelector('.own-source-v10').value,dose:row.querySelector('.own-dose-v24').value}))); }
  function calculate(prefix, update = true) {
   const s = state(prefix); if (!s) return;
+  renderMedicationPrices(prefix);
   let total;
   try { total = listCents(prefix); }
   catch (error) { message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',error.message); return; }
