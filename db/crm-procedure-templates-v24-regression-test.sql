@@ -216,6 +216,8 @@ do $$declare kind_n text;a jsonb;p jsonb;before_n jsonb;failed boolean;begin
   if (a->>'list_total')::numeric is distinct from (case when kind_n='procedure' then 2600::numeric else 500::numeric end)
    or (a->>'charge_total')::numeric is distinct from (case when kind_n='procedure' then 3300::numeric else 750::numeric end)
    or (a->>'debt_total')::numeric is distinct from (case when kind_n='procedure' then 3300::numeric else 125::numeric end)
+   or (a->>'loan_debt_total')::numeric is distinct from (case when kind_n='procedure' then 0::numeric else 125::numeric end)
+   or (a->>'pending_total')::numeric is distinct from (case when kind_n='procedure' then 3300::numeric else 0::numeric end)
    or (a->>'received_total')::numeric is distinct from (case when kind_n='procedure' then 0::numeric else 625::numeric end)
    or (a->>'discount_amount')::numeric is distinct from 0::numeric or (a->>'discount_percent')::numeric is distinct from 0::numeric
    then raise exception 'Higher % correction changed list, charge, receipts or discount',kind_n;end if;
@@ -230,8 +232,13 @@ do $$declare kind_n text;a jsonb;p jsonb;before_n jsonb;failed boolean;begin
   end if;
  end loop;
  a:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v24.shift')));
- if (a->'revenue'->>'cash')::numeric is distinct from 600::numeric or (a->'revenue'->>'terminal')::numeric is distinct from 25::numeric
-  or (a->'revenue'->>'total')::numeric is distinct from 625::numeric then raise exception 'Unpaid higher charges fabricated revenue: %',a;end if;
+ -- The additional 25 settles a true loan in the separate ledger. Only the
+ -- original 600 belongs to shift income; the unpaid procedure is still waiting.
+ if (a->'revenue'->>'cash')::numeric is distinct from 600::numeric or (a->'revenue'->>'terminal')::numeric is distinct from 0::numeric
+  or (a->'revenue'->>'total')::numeric is distinct from 600::numeric
+  or (a->>'debt_total')::numeric is distinct from 125::numeric or (a->>'loan_debt_total')::numeric is distinct from 125::numeric
+  or (a->>'pending_total')::numeric is distinct from 3300::numeric or jsonb_array_length(a->'receipts') is distinct from 0
+  then raise exception 'Higher charges mixed shift income, loan repayments or waiting payments: %',a;end if;
 end $$;
 
 -- Price deviations still require both explanations; invalid amounts roll back entirely.
@@ -310,6 +317,8 @@ do $$declare a jsonb:=pg_temp.v24_regression_state();baseline jsonb:=current_set
   then raise exception 'Mixed-payment create replay duplicated allocation';end if;
  if (select paid_total from public.sales where id=current_setting('test.v24.regression_sale')::uuid)<>600
   or (select count(*) from private.crm_receipts_v10 where sale_id=current_setting('test.v24.regression_sale')::uuid)<>1
+  or not exists(select 1 from private.crm_receipts_v10 where sale_id=current_setting('test.v24.regression_sale')::uuid
+   and is_debt_repayment and shift_id is null and terminal=25 and cash=0 and owner_card=0 and voided_at is null)
   then raise exception 'Higher debt correction rewrote original money or duplicated later receipt';end if;
 end $$;
 

@@ -71,7 +71,7 @@ test('finance report recovers from Safari Load failed with one read retry on a p
   };
   return openReportsV5();
  });
- await expect(page.locator('#reportsV5Body')).toContainText('Общая выручка');
+ await expect(page.locator('#reportsV5Body')).toContainText('Получено за период');
  expect(await page.evaluate(()=>window.__summaryAttempts)).toBe(2);
  await expect(page.locator('#reportsV5Message')).toBeEmpty();
  await expect(page.locator('#reportsV5Print')).toBeEnabled();
@@ -214,7 +214,7 @@ test('terminal payment and failed save preserve every allocation and request ide
  expect(calls[1].args.p_payload.payments).toEqual({cash:0,terminal:120,owner_card:0,cash_received:0});expect(errors).toEqual([]);
 });
 
-test('nurse can record a discounted receipt and sees own-shift finance without payroll or warehouse',async({page})=>{
+test('nurse can record a discounted receipt and sees own-shift receipts and salary without warehouse details',async({page})=>{
  const errors=await boot(page,'nurse');await expect(page.locator('#workspace .home-actions>button')).toHaveCount(7);
  await expect(page.locator('#ownerDashboardV5')).toHaveCount(0);await noOverflow(page);await procedure(page);
  await expect(page.locator('#procPaid')).toBeEditable();
@@ -226,7 +226,7 @@ test('nurse can record a discounted receipt and sees own-shift finance without p
  const report=await page.locator('#reportBody').innerText();
  expect(report).toContain('Наталья');expect(report).toContain('Самыр');
  expect(report).toContain('120');
- for(const forbidden of ['Зарплата','Заработная','запас:','В работе:','4 000','4000'])expect(report).not.toContain(forbidden);
+ expect(report).toContain('Зарплата за смену');expect(report).toMatch(/4\s*000/);await expect(page.locator('#reportBody input[id^="salaryAmount5-"]')).toHaveCount(0);for(const forbidden of ['запас:','В работе:'])expect(report).not.toContain(forbidden);
  await page.evaluate(()=>show('cashV5'));await expect(page.locator('#workspace')).toBeVisible();
  expect(await page.evaluate(()=>window.__crmCalls.filter(x=>x.name==='crm_finance_v5'&&x.args.p_action==='summary').length)).toBe(0);
  await noOverflow(page);expect(errors).toEqual([]);
@@ -235,9 +235,9 @@ test('nurse can record a discounted receipt and sees own-shift finance without p
 test('cash separates float from receipts; summary distinguishes historic unknown and entity-filter inapplicable wages',async({page})=>{
  const errors=await boot(page);await page.evaluate(()=>openCashV5());await expect(page.locator('#cashV5')).toBeVisible();
  await expect(page.locator('#cashV5Body')).toContainText('Разменный фонд');await expect(page.locator('#cashV5Body')).toContainText('50');
- await expect(page.locator('#cashV5Body')).toContainText('не включается');await noOverflow(page);
+ await expect(page.locator('#cashV5Body')).toContainText('не является оплатой пациентов');await noOverflow(page);
  await page.evaluate(()=>{window.__crmSummaryOverrides={cash_after_salary:null,payroll_unknown:1,payroll_complete:false};return openReportsV5()});
- await expect(page.locator('#reportsV5Body')).toContainText('Не рассчитан: укажите зарплату за прошлые смены');
+ await expect(page.locator('#reportsV5Body')).toContainText('Не рассчитан: укажите остаток на начало смены');
  await page.evaluate(()=>{window.__crmSummaryOverrides={cash_after_salary:null,payroll_total:null,payroll_closed:null,payroll_open:null,payroll_unknown:null,payroll_complete:null,payroll_scope:'not_applicable_to_entity_filter',has_open_shifts:false,days_complete:true};return loadFinanceSummaryV5('reportsV5')});
  await expect(page.locator('#reportsV5Body')).toContainText('Не применяется к этому фильтру');
  expect(await page.locator('#reportsV5Body').innerText()).not.toContain('Есть незакрытые смены');

@@ -84,9 +84,9 @@ test('clinical edits lock the uncertain draft and replay the original snapshot e
  await f.c.saveTreatment('procedure');assert.deepEqual(f.calls[0].args,f.calls[1].args);assert.equal(f.c.screen,'workspace');
 });
 
-test('an uncertain later payment freezes amount, method and comment and reuses the receipt UUID',async()=>{
+test('an uncertain ordinary after-procedure payment freezes amount, method and comment and reuses the receipt UUID',async()=>{
  const f=fixture(true);let attempts=0;
- Object.assign(f.el('debtPaymentV10').dataset,{kind:'procedure',recordId:'procedure-1',debt:'100',patientId:'patient-1'});
+ Object.assign(f.el('debtPaymentV10').dataset,{kind:'procedure',recordId:'procedure-1',debt:'100',patientId:'patient-1',pending:'true'});
  const fields=[f.el('debtAmountV10'),f.el('debtMethodV10'),f.el('debtTenderV10'),f.el('debtNoteV10'),f.el('debtConfirmV10'),f.el('debtSaveButton')];
  f.el('debtPaymentV10').querySelectorAll=()=>fields;f.el('debtSaveButton').tagName='BUTTON';
  f.el('debtAmountV10').value='50';f.el('debtMethodV10').value='cash';f.el('debtTenderV10').value='50';f.el('debtNoteV10').value='Original';f.el('debtConfirmV10').checked=true;
@@ -97,7 +97,7 @@ test('an uncertain later payment freezes amount, method and comment and reuses t
 });
 
 test('a confirmed payment whose patient refresh fails reports saved money on an existing screen',async()=>{
- const f=fixture(true);Object.assign(f.el('debtPaymentV10').dataset,{kind:'procedure',recordId:'procedure-1',debt:'100',patientId:'patient-1'});
+ const f=fixture(true);Object.assign(f.el('debtPaymentV10').dataset,{kind:'procedure',recordId:'procedure-1',debt:'100',patientId:'patient-1',pending:'true'});
  f.el('debtAmountV10').value='50';f.el('debtMethodV10').value='cash';f.el('debtTenderV10').value='50';f.el('debtConfirmV10').checked=true;
  f.setRpc(async()=>({data:{id:'receipt-1',debt_total:50}}));f.c.openPatient=async()=>{throw Error('Refresh failed');};
  await f.c.saveDebtPaymentV10();const last=f.messages.at(-1);
@@ -115,14 +115,14 @@ test('anonymous sale collection is available in the journal and never borrows th
 test('collecting anonymous sale debt keeps the receipt on the sale and returns without a patient lookup',async()=>{
  const f=fixture(true);let patientLookups=0,refreshes=0;
  Object.assign(f.el('debtPaymentV10').dataset,{kind:'sale',recordId:'sale-1',debt:'100',patientId:''});
- f.el('debtAmountV10').value='60';f.el('debtMethodV10').value='cash';f.el('debtTenderV10').value='60';f.el('debtConfirmV10').checked=true;
+ f.el('debtAmountV10').value='60';f.el('debtDateV29').value='2026-10-12';f.el('debtPurposeV29').value='Продажа без пациента';f.el('debtConfirmV10').checked=true;
  f.c.openPatient=async()=>{patientLookups++;};f.c.refreshDashboard=async()=>{refreshes++;};
  f.setRpc(async()=>({data:{id:'receipt-1',debt_total:40}}));
  await f.c.saveDebtPaymentV10();
  assert.equal(f.calls.length,1);assert.equal(f.calls[0].args.p_action,'debt_payment');assert.equal(f.calls[0].args.p_payload.kind,'sale');assert.equal(f.calls[0].args.p_payload.id,'sale-1');
- assert.equal(f.calls[0].args.p_payload.payments.cash,60);assert.equal('patient_id' in f.calls[0].args.p_payload,false);
+ assert.equal(f.calls[0].args.p_payload.amount,60);assert.equal(f.calls[0].args.p_payload.paid_on,'2026-10-12');assert.equal(f.calls[0].args.p_payload.purpose,'Продажа без пациента');assert.equal('payments' in f.calls[0].args.p_payload,false);assert.equal('shift_id' in f.calls[0].args.p_payload,false);assert.equal('patient_id' in f.calls[0].args.p_payload,false);
  assert.equal(patientLookups,0);assert.equal(refreshes,1);assert.equal(f.c.screen,'workspace');
- assert.equal(f.messages.at(-1).id,'homeMessage');assert.match(f.messages.at(-1).text,/Оплата сохранена.*40/);
+ assert.equal(f.messages.at(-1).id,'homeMessage');assert.match(f.messages.at(-1).text,/Погашение долга сохранено отдельно от смены.*40/);
 });
 
 test('a closed shift remains visibly confirmed if refreshing the shift menu fails',async()=>{

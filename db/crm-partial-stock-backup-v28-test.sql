@@ -72,6 +72,7 @@ do $$declare export_n record;tables_n jsonb;row_n jsonb;name_n text;count_n inte
   'medication_favorites','warehouse_requests','crm_audit_log','crm_templates','crm_procedure_templates',
   'crm_finance_settings','crm_payment_allocations','crm_shift_payroll','crm_shift_reports','crm_deleted_medications_v7',
   'crm_treatment_services','crm_own_medications','crm_receipts_v10','crm_stock_returns_v10','crm_patient_delete_requests_v10',
+  'crm_cash_openings_v30','crm_cash_movements_v30','crm_cash_requests_v30',
   'crm_partial_stock_tracking_v28','crm_partial_stock_records_v28','crm_partial_stock_lines_v28','crm_partial_stock_requests_v28'];
 begin
  if not exists(select 1 from private.crm_partial_stock_tracking_v28 where medication_id=current_setting('test.v28backup.medication')::uuid and enabled and source='auto')

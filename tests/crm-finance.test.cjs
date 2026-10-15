@@ -61,22 +61,22 @@ function payment(prefix,total){
  const reserve=calls.filter(x=>x.name==='record_treatment_v5').at(-1);assert.equal(reserve.args.p_payload.reserve_sale,true);
  c.currentStaff.role='nurse';c.items=[{medication_id:'m1',quantity:2}];payment('proc',120);
  const report={shift:{date:'2026-10-06',status:'open'},staff:[{id:'n1',full_name:'<script>name',amount:2000}],patients_count:1,procedures_count:1,sales_count:1,
-  revenue:{cash:9999,terminal:22,owner_card:33,total:10054},payroll_total:2000,cash_after_salary:8054,
+  revenue:{cash:9999,terminal:22,owner_card:33,total:10054},payroll_total:2000,payroll_complete:true,cash_after_salary:8054,cash_drawer:{opening_confirmed:true,opening:500,received_cash:9999,salary_paid:1000,cash_in:0,cash_out:300,balance:9199},
   procedures:[{at:'2026-10-06T10:00:00Z',patient:'<img src=x onerror=alert(1)>',paid_total:777,type:'Укол',items:[{name:'Ампула',quantity:1,line_total:777}]}],
   stock:[{name:'Препарат',work:2,reserve:99999}],used:[]};
  c.renderShiftReportV5(report);const nurseHtml=el('reportBody').innerHTML;
  for(const receipt of ['9999','10054','777'])assert.ok(nurseHtml.includes(receipt),'Nurse own-shift report omits '+receipt);
- for(const allowed of ['2000','8054','Зарплаты'])assert.ok(nurseHtml.includes(allowed),'Nurse own-shift payroll missing '+allowed);
+ for(const allowed of ['2000','9199','Зарплата за смену'])assert.ok(nurseHtml.includes(allowed),'Nurse own-shift payroll missing '+allowed);
  for(const secret of ['99999','В работе:','запас:'])assert.ok(!nurseHtml.includes(secret),'Nurse report leaks private field '+secret);
  assert.ok(nurseHtml.includes('&lt;img'));assert.ok(!nurseHtml.includes('<script>'));
  const ownerCallCount=calls.length;await c.openReportsV5();assert.equal(calls.length,ownerCallCount,'Nurse cannot request owner summary');
- c.currentStaff.role='owner';c.renderShiftReportV5(report);assert.ok(el('reportBody').innerHTML.includes('2000'));assert.ok(el('reportBody').innerHTML.includes('Выручка после зарплаты'));
- const unknown={...report,cash_after_salary:null,payroll_unknown:1,payroll_complete:false,staff:[{id:'n1',full_name:'Наталья',amount:null}]};
- c.renderShiftReportV5(unknown);assert.ok(el('reportBody').innerHTML.includes('Не задана'));assert.ok(el('reportBody').innerHTML.includes('Не рассчитана: зарплата не задана полностью'));
- assert.ok(c.renderFinanceSummaryV5({...unknown,rows:[],shifts:[]},'reportsV5').includes('Не рассчитан: укажите зарплату за прошлые смены'));
- assert.ok(c.buildFinanceCsvV5(unknown).includes('Не рассчитан: укажите зарплату за прошлые смены'));
+ c.currentStaff.role='owner';c.renderShiftReportV5(report);assert.ok(el('reportBody').innerHTML.includes('2000'));assert.ok(el('reportBody').innerHTML.includes('Остаток наличных в кассе'));
+ const unknown={...report,cash_after_salary:null,cash_drawer:{opening_confirmed:false,balance:null},payroll_unknown:1,payroll_complete:false,staff:[{id:'n1',full_name:'Наталья',amount:null}]};
+ c.renderShiftReportV5(unknown);assert.ok(el('reportBody').innerHTML.includes('Не задана'));assert.ok(el('reportBody').innerHTML.includes('Не рассчитан: укажите остаток на начало смены'));
+ assert.ok(c.renderFinanceSummaryV5({...unknown,rows:[],shifts:[]},'reportsV5').includes('Не рассчитан: укажите остаток на начало смены'));
+ assert.ok(c.buildFinanceCsvV5(unknown).includes('Не рассчитан'));
  const csv=c.buildFinanceCsvV5({from:'2026-10-01',to:'2026-10-06',revenue:{total:10},rows:[{label:'=IMPORTXML("x")',revenue:{total:10}}]});
- assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.includes('"\'=IMPORTXML(""x"")"'));assert.ok(csv.includes('Денежный остаток после выплаты зарплаты'));
+ assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.includes('"\'=IMPORTXML(""x"")"'));assert.ok(csv.includes('Остаток наличных в кассе'));
  assert.ok(messages.some(x=>x[1]==='Недостаточно'));
  console.log('PASS: exact payment cents/splits/tender, explicit confirmation, replay and concurrent-save guards, preserved failed editor, duplicate stock checks, owner reserve-sale, nurse own-shift receipts and private payroll/stock separation, escaped names and CSV formula safety');
 })().catch(error=>{console.error(error);process.exitCode=1});

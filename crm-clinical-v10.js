@@ -84,7 +84,7 @@
  if (typeof module === 'object' && module.exports) module.exports = helpers;
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
- const forms = {proc:null,sale:null}, requests = new Map(), ambiguousRequests16 = new Set(), pendingPayments16 = new Map();
+ const forms = {proc:null,sale:null}, requests = new Map(), ambiguousRequests16 = new Set(), pendingPayments16 = new Map(), debtPurposes29 = new Map();
  let session = 0, patientView = 0, editorView = 0, debtBusy = false;
  const amount = value => (value / 100).toFixed(2);
  const state = prefix => forms[prefix];
@@ -253,7 +253,7 @@
   $(prefix + 'DiscountReason').addEventListener('change',() => { clearConfirmation(prefix); discountVisibility(prefix); syncPaymentV5(prefix); });
   $(prefix + 'DiscountComment').previousElementSibling.textContent = 'Почему стоимость отличается от прайса / бесплатно *';
   const inline = document.createElement('div'); inline.className = 'clinical-discount-inline-v11';
-  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">Индивидуальная стоимость (включая долг), ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: индивидуальная цена согласована"></textarea></div>`;
+  inline.innerHTML = `<label for="${prefix}ChargeInPaymentV11">Индивидуальная стоимость, ₽</label><input id="${prefix}ChargeInPaymentV11" type="number" inputmode="decimal" min="0" step="0.01"><div id="${prefix}DiscountInPaymentBoxV11" class="hidden"><label for="${prefix}DiscountInPaymentV11">Причина изменения стоимости / бесплатно *</label><textarea id="${prefix}DiscountInPaymentV11" placeholder="Например: индивидуальная цена согласована"></textarea></div>`;
   $(prefix + 'PaymentV5').querySelector('h2').after(inline);
   const shortCash = document.createElement('div'); shortCash.id = prefix + 'ShortCashBoxV11'; shortCash.className = 'clinical-short-cash-v11 hidden';
   shortCash.innerHTML = `<p id="${prefix}ShortCashHintV11" class="small"></p><button id="${prefix}ApplyDiscountV11" type="button" class="btn secondary wide">Учесть разницу как скидку</button><div id="${prefix}ApplyDiscountMessageV11" role="alert"></div>`;
@@ -429,9 +429,9 @@
   $(prefix + 'ReceivedBoxV10').classList.toggle('hidden',correcting || (paymentStatus !== 'debt' && !pendingSelected));
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
-  $(prefix + 'DebtHintV13').textContent = prefix === 'sale' && pendingSelected ? 'Сохраните продажу с оплатой сейчас 0 ₽. Для оплаты позже откройте продажу в журнале смены и нажмите «Принять оплату». Пациента выбирать необязательно.' : pendingSelected ? 'Сохраните процедуру с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда пациент оплатит, откройте журнал смены или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
+  $(prefix + 'DebtHintV13').textContent = prefix === 'sale' && pendingSelected ? 'Продажа ожидает расчёта — это не долг. Сохраните с оплатой сейчас 0 ₽. Для расчёта откройте её в журнале смены и нажмите «Принять оплату». Пациента выбирать необязательно.' : pendingSelected ? 'Пациент ожидает расчёта после процедуры — это не долг. Сохраните с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда он оплатит, откройте журнал или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
   $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
-  $(prefix + 'PayConfirmed').nextElementSibling.textContent = 'Подтверждаю стоимость, оплату и остаток долга';
+  $(prefix + 'PayConfirmed').nextElementSibling.textContent = pendingSelected ? 'Подтверждаю стоимость. Пациент ожидает расчёта после процедуры' : 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
   const saveButton = document.querySelector('#' + kind + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]');
   if (saveButton) saveButton.textContent = correcting ? 'Исправить оплату и сохранить в долг' : pendingSelected && total === 0 ? 'Сохранить без оплаты' : prefix === 'proc' ? (debtSelected ? 'Сохранить процедуру в долг' : 'Сохранить процедуру') : (debtSelected ? 'Сохранить продажу в долг' : 'Сохранить продажу');
@@ -579,6 +579,7 @@
  function dateText(at) { return esc(new Date(at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})); }
  global.treatmentActionsHtmlV14 = function(event,fromJournal=false) {
   if (!event.id) return '';
+  rememberDebtPurposeV29(event);
   const kind = event.kind === 'sale' ? 'sale' : 'procedure',remaining = financeEventAmountsV5(event).debt,patientId = event.patient_id || (kind === 'procedure' && !fromJournal ? currentPatientId : null);
   const edit = event.editable ? `<button type="button" class="btn secondary" onclick="editTreatmentV10('${esc(kind)}','${esc(event.id)}')">Редактировать</button>` : '';
   const pay = remaining > 0 && (patientId || kind === 'sale') ? `<button type="button" class="btn primary" onclick="${fromJournal ? 'openJournalPaymentV14' : 'openSavedPaymentV14'}('${esc(kind)}','${esc(event.id)}',${remaining},'${esc(patientId || '')}',${event.payment_pending === true})">${event.payment_pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : '';
@@ -593,36 +594,51 @@
    if (version !== patientView || id !== currentPatientId || actor !== actorKey()) return;
    const events = treatmentEvents(data);
    host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div>${financeEventPaymentHtmlV5(event)}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)}${item.dose ? ' · Доза: ' + esc(item.dose) : ''} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}${global.treatmentActionsHtmlV14(event)}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
+   const historyButton = document.createElement('button'); historyButton.type = 'button'; historyButton.className = 'btn secondary wide no-print'; historyButton.id = 'patientDebtHistoryV29'; historyButton.textContent = 'Погашения долгов пациента'; historyButton.onclick = () => global.openDebtHistoryV29(id); host.appendChild(historyButton);
   } catch (error) { if (version === patientView && id === currentPatientId && actor === actorKey()) host.innerHTML = `<div class="notice">${esc(error.message)}<button type="button" class="btn secondary wide" onclick="loadPatientClinicalV10()">Повторить</button></div>`; }
  };
  const openPatientBase = openPatient;
  openPatient = async function(id) { const actor = actorKey(); await openPatientBase(id); if (actor === actorKey() && currentPatientId === id && $('patientCard').classList.contains('active')) await global.loadPatientClinicalV10(id); };
- global.openDebtPaymentV10 = function(kind,id,debt,patientId=currentPatientId,returnToDebts=false) {
+ function rememberDebtPurposeV29(event) {
+  if (!event?.id) return;
+  const kind = event.kind === 'sale' ? 'sale' : 'procedure';
+  const description = [kind === 'sale' ? 'Продажа препарата' : event.procedure_type || event.type || event.service_name || 'Процедура',...(event.items || []).map(item => [item.name,item.dosage,item.quantity != null ? '× ' + qty(item.quantity) + ' ' + (item.unit || '') : ''].filter(Boolean).join(' '))].filter(Boolean).join(' · ');
+  debtPurposes29.set(kind + ':' + event.id,description.slice(0,1000));
+ }
+ global.openDebtPaymentV10 = function(kind,id,debt,patientId=currentPatientId,returnToDebts=false,paymentPending=false) {
   if (debtBusy) return;
   beginQuickNavigation4();
-  let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
-  host.dataset.kind = kind; host.dataset.recordId = id; host.dataset.debt = String(debt); host.dataset.patientId = patientId || ''; host.dataset.returnToDebts=String(returnToDebts);
-  delete host.dataset.returnToJournal;
-  host.innerHTML = `<h1>Оплата долга</h1><div class="card"><p>Осталось оплатить: <b>${rub(debt)}</b></p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод владельцу</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10"><label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">Сохранить оплату долга</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
-  host.querySelectorAll('input,select').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
-  let tenderEdited = false;
-  $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
-  $('debtAmountV10').addEventListener('input',() => { if (!tenderEdited) $('debtTenderV10').value = $('debtAmountV10').value; });
-  $('debtMethodV10').addEventListener('change',() => { const cash = $('debtMethodV10').value === 'cash'; $('debtTenderV10').classList.toggle('hidden',!cash); $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!cash); $('debtConfirmV10').checked = false; });
   const retry = pendingPayments16.get(JSON.stringify([actorKey(),kind,id]));
+  const pending = retry ? retry.pending === true : paymentPending === true;
+  let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
+  host.dataset.kind = kind; host.dataset.recordId = id; host.dataset.debt = String(debt); host.dataset.patientId = patientId || ''; host.dataset.returnToDebts=String(returnToDebts); host.dataset.pending = String(pending);
+  delete host.dataset.returnToJournal;
+  const title = pending ? kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры' : 'Погашение долга';
+  const purpose = debtPurposes29.get(kind + ':' + id) || (kind === 'sale' ? 'Продажа препарата' : 'Процедура');
+  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
+  host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
+  if (pending) {
+   let tenderEdited = false;
+   $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
+   $('debtAmountV10').addEventListener('input',() => { if (!tenderEdited) $('debtTenderV10').value = $('debtAmountV10').value; });
+   $('debtMethodV10').addEventListener('change',() => { const cash = $('debtMethodV10').value === 'cash'; $('debtTenderV10').classList.toggle('hidden',!cash); $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!cash); $('debtConfirmV10').checked = false; });
+  }
   if (retry) {
-   const payments = retry.payload.payments;
-   $('debtAmountV10').value = amount(retry.paid); $('debtTenderV10').value = String(payments.cash_received);
-   $('debtMethodV10').value = payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
-   $('debtNoteV10').value = retry.payload.comment || ''; $('debtConfirmV10').checked = true;
-   host.querySelectorAll('input,select').forEach(input => input.disabled = true);
+   $('debtAmountV10').value = amount(retry.paid);
+   if (pending) {
+    const payments = retry.payload.payments;
+    $('debtTenderV10').value = String(payments.cash_received);
+    $('debtMethodV10').value = payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
+    $('debtNoteV10').value = retry.payload.comment || '';
+   } else { $('debtDateV29').value = retry.payload.paid_on; $('debtPurposeV29').value = retry.payload.purpose; }
+   $('debtConfirmV10').checked = true;
+   host.querySelectorAll('input,select,textarea').forEach(input => input.disabled = true);
    message('debtMessageV10','Предыдущее сохранение оплаты ещё не подтверждено. Повторите сохранение — отправим первоначальную оплату без дубля.');
   }
   show('debtPaymentV10');
  };
  global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
-  global.openDebtPaymentV10(kind,id,amount,patientId);
-  if (pending) $('debtPaymentV10').querySelector('h1').textContent = kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры';
+  global.openDebtPaymentV10(kind,id,amount,patientId,false,pending);
  };
  global.openJournalPaymentV14 = function(kind,id,amount,patientId,pending=false) {
   const date = $('journalDateV12')?.value;
@@ -637,21 +653,33 @@
   try {
    snapshot = pendingPayments16.get(key);
    if (!snapshot) {
-    if (!shift?.id) throw Error('Для приёма оплаты откройте свою смену');
-    const paid = cents($('debtAmountV10').value), remaining = cents(host.dataset.debt), method = $('debtMethodV10').value;
-    if (!paid || paid > remaining) throw Error('Укажите оплату больше нуля и не больше оставшегося долга');
+    const pending = host.dataset.pending === 'true';
+    const paid = cents($('debtAmountV10').value), remaining = cents(host.dataset.debt);
+    if (!paid || paid > remaining) throw Error('Укажите оплату больше нуля и не больше оставшейся суммы');
     if (!$('debtConfirmV10').checked) throw Error('Проверьте оплату и отметьте подтверждение');
-    const tender = method === 'cash' ? cents($('debtTenderV10').value,'Получено наличными') : 0;
-    if (method === 'cash' && tender < paid) throw Error('Получено наличными меньше суммы оплаты');
-    const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
-    snapshot = {paid,remaining,payload:{kind:host.dataset.kind,id:host.dataset.recordId,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null}};
+    let payload = {kind:host.dataset.kind,id:host.dataset.recordId};
+    if (pending) {
+     if (!shift?.id) throw Error('Для обычной оплаты после процедуры откройте свою смену');
+     const method = $('debtMethodV10').value, tender = method === 'cash' ? cents($('debtTenderV10').value,'Получено наличными') : 0;
+     if (method === 'cash' && tender < paid) throw Error('Получено наличными меньше суммы оплаты');
+     const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
+     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
+    } else {
+     const paidOn = $('debtDateV29').value, purpose = $('debtPurposeV29').value.trim();
+     const parsedDate = new Date(paidOn + 'T12:00:00Z');
+     const validDate = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) && Number.isFinite(+parsedDate) && parsedDate.toISOString().slice(0,10) === paidOn;
+     if (!validDate) throw Error('Укажите корректную дату погашения');
+     if (!purpose || purpose.length > 1000) throw Error('Укажите, за что получена оплата (до 1000 символов)');
+     payload = {...payload,amount:paid / 100,paid_on:paidOn,purpose};
+    }
+    snapshot = {paid,remaining,pending,payload};
    }
-   debtBusy = true; host.querySelectorAll('button,input,select').forEach(input => input.disabled = true);
+   debtBusy = true; host.querySelectorAll('button,input,select,textarea').forEach(input => input.disabled = true);
    const receipt = await clinicalRpc('debt_payment',snapshot.payload,true);
    assertActor(actor); committed = true; pendingPayments16.delete(key); $('debtConfirmV10').checked = false;
    const patient = host.dataset.patientId, returnToDebts=host.dataset.returnToDebts==='true',returnToJournal=host.dataset.returnToJournal; host.innerHTML = '';
    if(!quickNavigationCurrent4(navigation,currentStaff?.id))return;
-   const success = 'Оплата сохранена. Осталось: ' + rub(receipt?.debt_total ?? (snapshot.remaining - snapshot.paid) / 100);
+   const success = (snapshot.pending ? 'Оплата сохранена в смене.' : 'Погашение долга сохранено отдельно от смены.') + ' Осталось: ' + rub(receipt?.debt_total ?? (snapshot.remaining - snapshot.paid) / 100);
    try {
     if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else if(patient)await openPatient(patient);else{show('workspace');await refreshDashboard();}
     if (actor === actorKey()) message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':patient?'patientCardMessageV5':'homeMessage',success,true);
@@ -662,29 +690,59 @@
     message(committed ? 'homeMessage' : 'debtMessageV10',committed ? 'Оплата сохранена. Не удалось обновить экран: ' + error.message : error.message);
    }
   }
-  finally { debtBusy = false; if (actor === actorKey()) host.querySelectorAll('button,input,select').forEach(input => input.disabled = pendingPayments16.has(key) && input.tagName !== 'BUTTON'); }
+  finally { debtBusy = false; if (actor === actorKey()) host.querySelectorAll('button,input,select,textarea').forEach(input => input.disabled = pendingPayments16.has(key) && input.tagName !== 'BUTTON'); }
  };
  function treatmentEvents(data) { return Array.isArray(data) ? data : data?.events || [...(data?.procedures || []).map(event => ({...event,kind:'procedure'})),...(data?.sales || []).map(event => ({...event,kind:'sale'}))].sort((a,b) => new Date(b.at || b.visit_at || b.sold_at) - new Date(a.at || a.visit_at || a.sold_at)); }
- let debtView = 0;
+ let debtView = 0, debtHistoryView = 0;
+ function debtHistoryDateV29(value) {
+  const date = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split('-').reverse().join('.') : 'Дата не указана';
+ }
+ global.openDebtHistoryV29 = async function(patientId = null) {
+  const scopedPatient = typeof patientId === 'string' && patientId ? patientId : null;
+  if (!currentStaff?.id || (!isManager() && !scopedPatient)) {
+   if ($('debtHistoryV29Screen')?.classList.contains('active')) show('workspace');
+   message('homeMessage','Полная история погашений доступна только владельцу. Историю пациента можно открыть в его карточке.'); return;
+  }
+  const navigation = beginQuickNavigation4(), actor = actorKey(), view = ++debtHistoryView;
+  let host = $('debtHistoryV29Screen'); if (!host) { host = document.createElement('section'); host.id = 'debtHistoryV29Screen'; host.className = 'screen debt-history-v29'; $('workspace').parentElement.appendChild(host); }
+  host.dataset.patientId = scopedPatient || '';
+  host.innerHTML = '<div class="row between"><h1>Погашения долгов</h1><button type="button" id="debtHistoryBackV29" class="btn secondary">Назад</button></div><p class="small">Погашения учитываются отдельно от дохода и кассы смены.</p><div id="debtHistoryMessageV29" role="status" aria-live="polite">Загружаем…</div><div id="debtHistoryBodyV29"></div>';
+  $('debtHistoryBackV29').onclick = () => scopedPatient ? openPatient(scopedPatient) : global.openDebtsV10();
+  show('debtHistoryV29Screen');
+  const current = () => actor === actorKey() && view === debtHistoryView && quickNavigationCurrent4(navigation,currentStaff?.id) && (isManager() || !!scopedPatient);
+  try {
+   const data = await clinicalRpc('debt_history',scopedPatient ? {patient_id:scopedPatient} : {});
+   if (!current()) return;
+   const items = Array.isArray(data) ? data : data?.items || [];
+   $('debtHistoryBodyV29').innerHTML = items.map(item => `<article class="item"><div class="row between"><strong>${esc(rub(item.amount ?? item.paid_total))}</strong><time>${esc(debtHistoryDateV29(item.paid_on))}</time></div><p>${esc(item.purpose || 'Назначение не указано')}</p></article>`).join('') || '<p class="small">Погашений пока нет.</p>';
+   $('debtHistoryMessageV29').textContent = '';
+  } catch (error) {
+   if (!current()) return;
+   $('debtHistoryMessageV29').textContent = error.message;
+   const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'btn secondary wide'; retry.textContent = 'Повторить'; retry.onclick = () => global.openDebtHistoryV29(scopedPatient); $('debtHistoryMessageV29').appendChild(retry);
+  }
+ };
  global.openDebtsV10 = async function() {
   if (!isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); return; }
   beginQuickNavigation4(); const actor = actorKey(), view = ++debtView;
   let host = $('debtsV10'); if (!host) { host = document.createElement('section'); host.id = 'debtsV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
-  host.innerHTML = '<div class="row between"><h1>Долги пациентов</h1><button type="button" class="btn secondary" onclick="show(\'workspace\')">Назад</button></div><div id="debtsMessageV10" role="status">Загружаем…</div><div id="debtsBodyV10"></div>';
+  host.innerHTML = '<div class="row between"><h1>Долги</h1><button type="button" class="btn secondary" onclick="show(\'workspace\')">Назад</button></div><div id="debtsMessageV10" role="status">Загружаем…</div><div id="debtsBodyV10"></div>';
   show('debtsV10');
   try {
    const data = await clinicalRpc('debts');
    if (!isManager() || actor !== actorKey() || view !== debtView) return;
-   const events = Array.isArray(data) ? data : data?.debts || data?.events || treatmentEvents(data), total = events.reduce((sum,event) => sum + Math.round(num(event.debt_total) * 100),0);
-   $('debtsBodyV10').innerHTML = `<div class="card">Всего к оплате: <b>${rub(total / 100)}</b></div>${events.map(event => `<div class="item clinical-history-v10"><strong>${esc(event.patient || event.patient_name || (event.kind === 'sale' ? 'Продажа без пациента' : 'Пациент'))}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)} · ${esc(event.procedure_type || (event.kind === 'sale' ? 'Продажа' : 'Процедура'))}</div><div>Долг: <b>${rub(event.debt_total)}</b></div><button type="button" class="btn primary wide" onclick="openDebtPaymentV10('${esc(event.kind)}','${esc(event.id)}',${Number(event.debt_total)},'${esc(event.patient_id || '')}',true)">Принять оплату долга</button></div>`).join('') || '<p>Долгов нет.</p>'}`;
+   const events = (Array.isArray(data) ? data : data?.debts || data?.events || treatmentEvents(data)).filter(event => event.payment_pending !== true), total = events.reduce((sum,event) => sum + Math.round(num(event.debt_total) * 100),0);
+   events.forEach(rememberDebtPurposeV29);
+   $('debtsBodyV10').innerHTML = `<button type="button" id="debtHistoryOpenV29" class="btn secondary wide" onclick="openDebtHistoryV29()">Погашения долгов</button><div class="card">Всего в долг: <b>${rub(total / 100)}</b></div>${events.map(event => `<div class="item clinical-history-v10"><strong>${esc(event.patient || event.patient_name || (event.kind === 'sale' ? 'Продажа без пациента' : 'Пациент'))}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)} · ${esc(event.procedure_type || (event.kind === 'sale' ? 'Продажа' : 'Процедура'))}</div><div>Долг: <b>${rub(event.debt_total)}</b></div><button type="button" class="btn primary wide" onclick="openDebtPaymentV10('${esc(event.kind)}','${esc(event.id)}',${Number(event.debt_total)},'${esc(event.patient_id || '')}',true)">Принять оплату долга</button></div>`).join('') || '<p>Долгов нет.</p>'}`;
    $('debtsMessageV10').textContent = '';
   } catch (error) { if (isManager() && actor === actorKey() && view === debtView) $('debtsMessageV10').innerHTML = `${esc(error.message)}<button type="button" class="btn secondary wide" onclick="openDebtsV10()">Повторить</button>`; }
  };
  const homeBase = renderCabinetHomeV5;
- renderCabinetHomeV5 = function() { homeBase(); if (!isManager()) return; const actions = $('workspace').querySelector('.home-actions'); if (actions && !$('homeDebtsV10')) { const button = document.createElement('button'); button.id = 'homeDebtsV10'; button.innerHTML = '<span>🧾</span><strong>Долги пациентов</strong>'; button.onclick = global.openDebtsV10; actions.appendChild(button); } };
+ renderCabinetHomeV5 = function() { homeBase(); if (!isManager()) return; const actions = $('workspace').querySelector('.home-actions'); if (actions && !$('homeDebtsV10')) { const button = document.createElement('button'); button.id = 'homeDebtsV10'; button.innerHTML = '<span>🧾</span><strong>Долги и погашения</strong>'; button.onclick = global.openDebtsV10; actions.appendChild(button); } };
  const showBase = show;
- show = function(id) { if (id === 'debtsV10' && !isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); id = 'workspace'; } showBase(id); };
+ show = function(id) { if (id === 'debtsV10' && !isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); id = 'workspace'; } if (id === 'debtHistoryV29Screen' && (!currentStaff?.id || (!isManager() && !$('debtHistoryV29Screen')?.dataset.patientId))) id = 'workspace'; showBase(id); };
  const signOutBase = signOut;
- signOut = async function() { session++; patientView++; editorView++; debtView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10']) if ($(id)) $(id).innerHTML = ''; await signOutBase(); };
+ signOut = async function() { session++; patientView++; editorView++; debtView++; debtHistoryView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); debtPurposes29.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10','debtHistoryV29Screen']) if ($(id)) { $(id).innerHTML = ''; delete $(id).dataset.patientId; } await signOutBase(); };
  global.getClinicalStockRecordV28 = prefix => forms[prefix]?.edit || null;
 })(typeof window === 'object' ? window : globalThis);

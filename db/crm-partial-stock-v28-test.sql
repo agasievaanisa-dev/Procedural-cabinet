@@ -325,7 +325,8 @@ do $$declare a jsonb;bad jsonb;failed boolean;begin
  a:=public.crm_partial_stock_v28('mode_set','{"enabled":false}',gen_random_uuid());
  a:=public.crm_partial_stock_v28('mode_set','{"enabled":true}',gen_random_uuid());
  a:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v28.shift')));
- if (a->'revenue'->>'total')::numeric is distinct from 500 or (a->>'charge_total')::numeric is distinct from 2650 or (a->>'debt_total')::numeric is distinct from 2150
+ -- v29 excludes the 300 true-debt repayment from ordinary shift income.
+ if (a->'revenue'->>'total')::numeric is distinct from 200 or (a->>'charge_total')::numeric is distinct from 2650 or (a->>'debt_total')::numeric is distinct from 2150
   or (a->>'partial_stock_pending_quantity')::numeric is distinct from 11 or (a->>'partial_stock_sales_count')::integer is distinct from 5
   or (a->>'partial_stock_procedures_count')::integer is distinct from 1 then raise exception 'Partial-stock shift report changed money, debt or operation counts: %',a;end if;
  if (select coalesce(sum((x->>'quantity')::numeric),0) from jsonb_array_elements(a->'used')x)<>11 then

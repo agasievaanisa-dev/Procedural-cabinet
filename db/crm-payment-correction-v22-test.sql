@@ -1,4 +1,4 @@
--- Run after crm-payment-correction-v22.sql. All identities and business rows are
+-- Run after v22, v29 and v30. All identities and business rows are
 -- synthetic. The entire transaction, including helper functions, is rolled back.
 begin;
 
@@ -61,7 +61,8 @@ do $$declare a jsonb;begin
  a:=public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.v22.shift')));
  if (a->'revenue'->>'total')::numeric is distinct from 24300::numeric then raise exception 'Original-shift money fixture failed';end if;
  a:=public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.v22.receipt_shift')));
- if (a->'revenue'->>'total')::numeric is distinct from 4300::numeric then raise exception 'Receipt-shift money fixture failed';end if;
+ -- The 4300 legacy-method true-debt receipt is separate from shift income.
+ if (a->'revenue'->>'total')::numeric is distinct from 0::numeric then raise exception 'Separate debt receipt entered shift income';end if;
 end $$;
 reset role;
 -- Current prices cannot replace the captured prices of the historical treatment.
@@ -175,14 +176,18 @@ do $$declare before_state jsonb:=current_setting('test.v22.before')::jsonb;after
   or report_n->'untracked' is distinct from original_report->'untracked' or report_n->'warnings' is distinct from original_report->'warnings'
   or report_n->'staff' is distinct from original_report->'staff' or report_n->'payroll_total' is distinct from original_report->'payroll_total'
   or report_n->'float_amount' is distinct from original_report->'float_amount' then raise exception 'Closed warehouse or payroll snapshot was overwritten';end if;
+ -- Configured wages do not establish a payout or an opening cash balance.
+ -- These fixtures leave the v30 physical drawer unconfirmed and unknown.
  if (report_n->'revenue'->>'total')::numeric is distinct from 10000::numeric or (report_n->'revenue'->>'cash')::numeric is distinct from 10000::numeric
   or (report_n->'revenue'->>'terminal')::numeric is distinct from 0::numeric or (report_n->'revenue'->>'owner_card')::numeric is distinct from 0::numeric
   or (report_n->>'procedures_total')::numeric is distinct from 10000::numeric or (report_n->>'sales_total')::numeric is distinct from 0::numeric
-  or (report_n->>'cash_total')::numeric is distinct from 10000::numeric or (report_n->>'cash_after_salary')::numeric is distinct from 7500::numeric then raise exception 'Closed initial-payment totals were not recalculated';end if;
+  or (report_n->>'cash_total')::numeric is distinct from 10000::numeric
+  or (report_n->>'cash_after_salary')::numeric is distinct from null::numeric
+  or (report_n->'cash_drawer'->>'opening_confirmed')::boolean is distinct from false then raise exception 'Closed initial-payment totals or unknown physical cash are wrong';end if;
 end $$;
 
--- Administrators also correct erroneous later receipts, including their closed
--- collection shift. The initial allocation and all old numeric fields remain.
+-- Administrators also correct erroneous later receipts in the separate debt
+-- ledger. Closed shift snapshots retain inventory and configured wages.
 select set_config('request.jwt.claim.sub',current_setting('test.v22.admin'),true);
 select set_config('request.jwt.claims',jsonb_build_object('sub',current_setting('test.v22.admin'),'role','authenticated')::text,true);
 set local role authenticated;
@@ -210,7 +215,8 @@ do $$declare before_state jsonb:=current_setting('test.v22.before')::jsonb;recei
  select value->'report' into original_report from jsonb_array_elements(before_state->'reports') where value->>'shift_id'=current_setting('test.v22.receipt_shift');
  if (report_n->'revenue'->>'total')::numeric is distinct from 0::numeric or (report_n->>'cash_total')::numeric is distinct from 0::numeric
   or (report_n->>'debt_receipts_total')::numeric is distinct from 0::numeric or jsonb_array_length(report_n->'receipts')<>0
-  or (report_n->>'cash_after_salary')::numeric is distinct from -1700::numeric then raise exception 'Closed receipt shift still counts the voided money';end if;
+  or (report_n->>'cash_after_salary')::numeric is distinct from null::numeric
+  or (report_n->'cash_drawer'->>'opening_confirmed')::boolean is distinct from false then raise exception 'Closed receipt shift counts debt money or invents physical cash';end if;
  if report_n->'stock' is distinct from original_report->'stock' or report_n->'staff' is distinct from original_report->'staff'
   or report_n->'payroll_total' is distinct from original_report->'payroll_total' then raise exception 'Receipt correction overwrote closed captured payroll or inventory';end if;
  select report into report_n from private.crm_shift_reports where shift_id=current_setting('test.v22.shift')::uuid;
@@ -256,7 +262,8 @@ end $$;
 reset role;
 update public.staff set role='owner' where id=current_setting('test.v22.owner_staff')::uuid;
 
--- A subsequent genuine payment is a new, non-void receipt in its actual shift.
+-- A subsequent genuine payment is a new, non-void separate debt receipt.
+-- Legacy clients retain their method amounts without attaching shift income.
 set local role authenticated;
 do $$declare p jsonb;a jsonb;req uuid:=gen_random_uuid();begin
  if public.crm_payment_correction_v22(current_setting('test.v22.payload')::jsonb,current_setting('test.v22.request')::uuid) is distinct from current_setting('test.v22.result')::jsonb then raise exception 'Restored manager cannot replay original correction';end if;
@@ -272,7 +279,8 @@ reset role;
 update private.crm_receipts_v10 set created_at=timestamptz '2096-09-03 10:00+03' where id=current_setting('test.v22.actual_receipt')::uuid;
 do $$begin
  if not exists(select 1 from private.crm_receipts_v10 where id=current_setting('test.v22.actual_receipt')::uuid and voided_at is null
-  and voided_by is null and void_reason is null and void_request_id is null and cash=1000 and terminal=2500 and owner_card=500 and change_amount=100) then raise exception 'New genuine payment inherited void metadata or changed amounts';end if;
+  and voided_by is null and void_reason is null and void_request_id is null and cash=1000 and terminal=2500 and owner_card=500 and change_amount=100
+  and is_debt_repayment and shift_id is null) then raise exception 'New genuine payment inherited void metadata, changed amounts or entered a shift';end if;
  if has_function_privilege('anon','public.crm_payment_correction_v22(jsonb,uuid)','EXECUTE')
   or has_function_privilege('authenticated','private.crm_payment_correction_v22(jsonb,uuid)','EXECUTE') then raise exception 'Correction grants expose an internal or anonymous entrypoint';end if;
 end $$;
@@ -284,12 +292,12 @@ do $$declare a jsonb;begin
  a:=public.crm_finance_v5('summary',jsonb_build_object('from','2096-09-02','to','2096-09-02','group_by','day','patient_id',current_setting('test.v22.patient')));
  if (a->'revenue'->>'total')::numeric is distinct from 0::numeric or (a->>'debt_payments_count')::integer is distinct from 0 then raise exception 'Voided later receipts remain in their financial period';end if;
  a:=public.crm_finance_v5('summary',jsonb_build_object('from','2096-09-03','to','2096-09-03','group_by','day','patient_id',current_setting('test.v22.patient')));
- if (a->'revenue'->>'total')::numeric is distinct from 4000::numeric or (a->'revenue'->>'cash')::numeric is distinct from 1000::numeric
-  or (a->'revenue'->>'terminal')::numeric is distinct from 2500::numeric or (a->'revenue'->>'owner_card')::numeric is distinct from 500::numeric
-  or (a->>'debt_payments_count')::integer is distinct from 1 or (a->>'procedures_count')::integer is distinct from 0 then raise exception 'Actual repayment lost its date or payment method';end if;
+ if (a->'revenue'->>'total')::numeric is distinct from 0::numeric or (a->'revenue'->>'cash')::numeric is distinct from 0::numeric
+  or (a->'revenue'->>'terminal')::numeric is distinct from 0::numeric or (a->'revenue'->>'owner_card')::numeric is distinct from 0::numeric
+  or (a->>'debt_payments_count')::integer is distinct from 0 or (a->>'procedures_count')::integer is distinct from 0 then raise exception 'Separate debt repayment entered ordinary period income';end if;
  a:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v22.collection_shift')));
- if (a->'revenue'->>'total')::numeric is distinct from 4000::numeric or (a->>'cash_total')::numeric is distinct from 4000::numeric
-  or jsonb_array_length(a->'receipts')<>1 then raise exception 'Actual collection shift counts voids or misses genuine payment';end if;
+ if (a->'revenue'->>'total')::numeric is distinct from 0::numeric or (a->>'cash_total')::numeric is distinct from 0::numeric
+  or jsonb_array_length(a->'receipts')<>0 then raise exception 'Separate debt repayment entered ordinary shift income';end if;
 end $$;
 reset role;
 do $$declare before_state jsonb:=current_setting('test.v22.before')::jsonb;after_state jsonb:=pg_temp.v22_state();begin
@@ -382,16 +390,17 @@ reset role;
 update private.crm_receipts_v10 set created_at=timestamptz '2096-09-05 10:00+03' where id=current_setting('test.v22.sale_real_receipt')::uuid;
 do $$begin
  if not exists(select 1 from private.crm_receipts_v10 where id=current_setting('test.v22.sale_real_receipt')::uuid and sale_id=current_setting('test.v22.sale')::uuid
-  and terminal=200 and voided_at is null and voided_by is null and void_reason is null and void_request_id is null) then raise exception 'True sale repayment inherited void metadata';end if;
+  and terminal=200 and voided_at is null and voided_by is null and void_reason is null and void_request_id is null
+  and is_debt_repayment and shift_id is null) then raise exception 'True sale repayment inherited void metadata or entered a shift';end if;
 end $$;
 set local role authenticated;
 do $$declare a jsonb;payload jsonb;id_n uuid;req uuid:=gen_random_uuid();begin
  a:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v22.sale_collection_shift')));
- if (a->'revenue'->>'total')::numeric is distinct from 200::numeric or (a->>'cash_total')::numeric is distinct from 200::numeric
-  or (a->'revenue'->>'terminal')::numeric is distinct from 200::numeric or jsonb_array_length(a->'receipts')<>1 then raise exception 'Sale repayment absent from actual collection shift';end if;
+ if (a->'revenue'->>'total')::numeric is distinct from 0::numeric or (a->>'cash_total')::numeric is distinct from 0::numeric
+  or (a->'revenue'->>'terminal')::numeric is distinct from 0::numeric or jsonb_array_length(a->'receipts')<>0 then raise exception 'Separate sale repayment entered ordinary shift income';end if;
  a:=public.crm_finance_v5('summary',jsonb_build_object('from','2096-09-05','to','2096-09-05','patient_id',current_setting('test.v22.patient')));
- if (a->'revenue'->>'total')::numeric is distinct from 200::numeric or (a->>'sales_count')::integer is distinct from 0
-  or (a->>'debt_payments_count')::integer is distinct from 1 then raise exception 'Sale repayment lost actual financial period';end if;
+ if (a->'revenue'->>'total')::numeric is distinct from 0::numeric or (a->>'sales_count')::integer is distinct from 0
+  or (a->>'debt_payments_count')::integer is distinct from 0 then raise exception 'Separate sale repayment entered ordinary period income';end if;
  -- After v27 an identified patient remains optional for a medication sale debt.
  a:=public.record_treatment_v5('sale',jsonb_build_object('shift_id',current_setting('test.v22.sale_collection_shift'),'nurse_id',current_setting('test.v22.nurse_staff'),
   'items',jsonb_build_array(jsonb_build_object('medication_id',current_setting('test.v22.sale_med'),'quantity',1)),

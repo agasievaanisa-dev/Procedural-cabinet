@@ -65,8 +65,8 @@ test('journal explains 14300 captured list minus 2800 discount as 11500 payable 
   __journalByDate['2026-10-11']={date:'2026-10-11',time_zone:'Europe/Moscow',reports:[{...__journalMorning,procedures:[event],sales:[]}]};
  });
  await page.click('#homeJournalV12');await expect(rows(page)).toHaveCount(1);const entry=rows(page);await expect(entry).toHaveAttribute('data-event-id','discounted-unpaid');
- for(const amount of [/По прайсу:\s*14\s*300\s*₽/,/Скидка:\s*2\s*800\s*₽/,/К оплате:\s*11\s*500\s*₽/,/Оплачено(?: всего)?:\s*0\s*₽/,/В долг:\s*11\s*500\s*₽/])await expect(entry).toContainText(amount);
- expect(await entry.innerText()).toMatch(/По прайсу:[\s\S]*Скидка:[\s\S]*К оплате:[\s\S]*Оплачено(?: всего)?:[\s\S]*В долг:/);
+ for(const amount of [/По прайсу:\s*14\s*300\s*₽/,/Скидка:\s*2\s*800\s*₽/,/К оплате:\s*11\s*500\s*₽/,/Оплачено(?: всего)?:\s*0\s*₽/,/Долг:\s*11\s*500\s*₽/])await expect(entry).toContainText(amount);
+ expect(await entry.innerText()).toMatch(/По прайсу:[\s\S]*Скидка:[\s\S]*К оплате:[\s\S]*Оплачено(?: всего)?:[\s\S]*Долг:/);
  await expect(entry).toContainText(/Препарат с сохранённой ценой\s*×\s*2\s*фл\./);await expect(entry).toContainText('Капельница по сохранённому прайсу');await expect(entry).toContainText('Скидка 2 800 ₽ согласована начальником');
  for(const changed of ['Услуга после изменения прайса','Переименованный препарат','99 997','99 998'])await expect(entry).not.toContainText(changed);
  await expect(entry).not.toContainText('Бесплатно');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1)).toBe(true);await noUnexpected(page);expect(errors).toEqual([]);

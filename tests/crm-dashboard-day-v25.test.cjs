@@ -1,7 +1,7 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const {test}=require('node:test');
 const clone=value=>JSON.parse(JSON.stringify(value));
-function sample(){return {date:'2026-10-13',time_zone:'Europe/Moscow',working_day:{patients_count:14,procedures_count:18,sales_count:0,revenue:{cash:31500,terminal:3800,owner_card:0,total:35300},charge_total:35300,debt_total:0,debt_created_total:3800,debt_payments_total:3800,payroll_total:4000,payroll_unknown:0,payroll_complete:true,cash_after_salary:31300,has_open_shifts:true},receipts_day:{revenue:{cash:51100,terminal:9000,owner_card:0,total:60100},debt_payments_total:11300,breakdown:{current_day_shifts:{total:35300},previous_day_shifts:{total:24800}}}};}
+function sample(){return {date:'2026-10-13',time_zone:'Europe/Moscow',working_day:{patients_count:14,procedures_count:18,sales_count:0,revenue:{cash:31500,terminal:3800,owner_card:0,total:35300},charge_total:35300,debt_total:0,debt_created_total:3800,debt_payments_total:3800,payroll_total:4000,payroll_unknown:0,payroll_complete:true,cash_after_salary:31300,cash_drawer:{opening_confirmed:true,opening:500,received_cash:31500,salary_paid:2000,cash_in:0,cash_out:300,balance:29700},has_open_shifts:true},receipts_day:{revenue:{cash:51100,terminal:9000,owner_card:0,total:60100},debt_payments_total:11300,breakdown:{current_day_shifts:{total:35300},previous_day_shifts:{total:24800}}}};}
 function boot(role='admin'){
  const elements=new Map(),calls=[];
  const element=id=>{if(!elements.has(id))elements.set(id,{id,innerHTML:'',classList:{contains:()=>false},appendChild(node){elements.set(node.id,node)}});return elements.get(id)};
@@ -22,19 +22,19 @@ test('dashboard separates distinct shift patients, repeated procedures and calen
  const {c}=boot(),html=c.financeDashboardHtmlV25(sample());
  assert.match(html,/Смены за 13\.10\.2026/);assert.match(html,/data-dashboard-stat="patients">Пациентов<b>14<\/b>/);
  assert.match(html,/data-dashboard-stat="procedures">Процедур<b>18<\/b>/);
- assert.match(html,/data-dashboard-stat="revenue">Выручка смен<b>35300 ₽<\/b>/);
- assert.match(html,/Поступления за календарный день · 13\.10\.2026/);
- assert.match(html,/В сменах прошлых дней<\/span><b>24800 ₽/);
- for(const text of ['60100 ₽','11300 ₽ · уже включены','Первоначально не оплачено','31300 ₽','Зарплата за эти смены: 4000 ₽','Каждый пациент учитывается один раз','Погашение старого долга не добавляет пациента'])assert.ok(html.includes(text),text);
+ assert.match(html,/data-summary-key="revenue"><span>Получено за смены<\/span><b>35300 ₽<\/b>/);
+ assert.match(html,/Подробнее: оплаты за календарный день/);
+ assert.match(html,/Обычные оплаты по дате получения/);
+ for(const text of ['60100 ₽','29700 ₽','Зарплата за смены','4000 ₽','Каждый пациент учитывается один раз','Погашения долгов сюда не входят'])assert.ok(html.includes(text),text);
  assert.ok(!html.includes('56100 ₽'),'Calendar cash must not be presented as the shift remainder');
- assert.ok(!html.includes('data-dashboard-stat="sales"'));
+ assert.ok(html.includes('data-dashboard-stat="sales"'));
 });
 test('unknown payroll, sales and future/legacy shift contributions stay explicit and escaped',()=>{
- const {c}=boot(),data=sample();Object.assign(data.working_day,{sales_count:2,payroll_complete:false,payroll_unknown:1,cash_after_salary:null});
+ const {c}=boot(),data=sample();Object.assign(data.working_day,{sales_count:2,payroll_complete:false,payroll_unknown:1,cash_after_salary:null,cash_drawer:{opening_confirmed:false,balance:null}});
  data.receipts_day.breakdown.other_day_shifts={total:100};data.date='<img src=x onerror=bad()>';
  const html=c.financeDashboardHtmlV25(data);
- assert.ok(html.includes('Продаж<b>2</b>'));assert.ok(html.includes('В других сменах'));
- assert.ok(html.includes('Не рассчитан: укажите зарплату за прошлые смены'));assert.ok(html.includes('Не задана зарплата для 1'));
+ assert.ok(html.includes('Продаж<b>2</b>'));assert.ok(html.includes('Ожидание оплаты после процедуры не считается долгом'));
+ assert.ok(html.includes('Не рассчитан: укажите остаток на начало смены'));assert.ok(html.includes('Не задана полностью'));
  assert.ok(html.includes('&lt;img'));assert.ok(!html.includes('<img'));
 });
 test('owner dashboard requests scoped read-only RPC while normal summaries stay unchanged',async()=>{

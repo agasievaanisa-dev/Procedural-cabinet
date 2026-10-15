@@ -1,6 +1,6 @@
 -- Genuine transaction regression: deferred payment, peer edits and later receipts.
 -- Synthetic fixtures only; all patients, requests, receipts and flags roll back.
--- Run after crm-payment-pending-v14.sql and the existing patient-save-v11 migration.
+-- Run after v14 and patient-save-v11; report expectations include v29 debt separation.
 begin;
 select set_config('test.v14.manager',(select auth_user_id::text from public.staff where active and role in ('owner','admin') and auth_user_id is not null order by id limit 1),true);
 select set_config('test.v14.nurse',(select auth_user_id::text from public.staff where active and role='nurse' and auth_user_id is not null order by id limit 1),true);
@@ -133,8 +133,10 @@ begin
   perform public.crm_clinical_v10('treatment_edit',p,gen_random_uuid());raise exception 'Nurse edited another shift';
  exception when others then if sqlerrm<>'Редактировать можно записи своей открытой смены. Другие записи исправляет владелец' then raise;end if;end;
  report:=public.crm_finance_v5('shift_report',jsonb_build_object('shift_id',current_setting('test.v14.shift')));
+ -- v29 keeps ordinary waiting balances separate from true loan debt.
  if (report->'revenue'->>'total')::numeric is distinct from 0::numeric or (report->>'charge_total')::numeric is distinct from 3200::numeric
-  or (report->>'debt_total')::numeric is distinct from 3200::numeric or jsonb_array_length(report->'receipts')<>0
+  or (report->>'debt_total')::numeric is distinct from 0::numeric or (report->>'pending_total')::numeric is distinct from 3200::numeric
+  or jsonb_array_length(report->'receipts')<>0
   or (report->'procedures'->0->>'payment_pending')::boolean is distinct from true then raise exception 'Pending report lost flag or fabricated receipts';end if;
  report:=public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.v14.shift')));
  original:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v14.procedure')));
@@ -160,7 +162,7 @@ begin
  perform set_config('test.v14.full_request',req::text,true);
  begin
   perform public.crm_clinical_v10('debt_payment',p,gen_random_uuid());raise exception 'Settled pending bill received money twice';
- exception when others then if sqlerrm<>'Оплата должна быть больше нуля и не превышать остаток долга' then raise;end if;end;
+ exception when others then if sqlerrm<>'Оплата не должна превышать остаток долга' then raise;end if;end;
  p:=p||jsonb_build_object('kind','sale','id',current_setting('test.v14.sale'),'payments',jsonb_build_object('owner_card',900));
  a:=public.crm_clinical_v10('debt_payment',p,gen_random_uuid());
  if (a->>'payment_pending')::boolean is distinct from false or (a->>'debt_total')::numeric is distinct from 0::numeric or (a->>'initial_paid_total')::numeric is distinct from 0::numeric then raise exception 'Pending sale settlement failed';end if;
