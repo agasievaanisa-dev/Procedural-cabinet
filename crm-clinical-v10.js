@@ -326,7 +326,7 @@
   try { total = listCents(prefix); }
   catch (error) { message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',error.message); return; }
   $(prefix + 'List').textContent = rub(total / 100);
-  if ((!s.chargeEdited && update) || $(prefix + 'Paid').value === '') $(prefix + 'Paid').value = amount(total);
+  if (!s.chargeEdited && (update || $(prefix + 'Paid').value === '')) $(prefix + 'Paid').value = amount(total);
   if (prefix === 'proc') $('servicePriceInfo').textContent = 'Работа и расходники выбранных процедур: ' + rub(selectedServices().reduce((sum,item) => sum + servicePrice(prefix,item.service_id) * item.quantity,0) / 100);
   discountVisibility(prefix); syncPaymentV5(prefix);
  }

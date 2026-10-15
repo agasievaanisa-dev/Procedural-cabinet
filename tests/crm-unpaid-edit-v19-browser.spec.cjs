@@ -150,3 +150,11 @@ for(const role of ['nurse','owner'])test(`${role} edits a saved measured quantit
  await row.locator('.medqty').fill('7,5');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('11400.00');await expect(page.locator('#procEditReasonBoxV10')).toBeHidden();await page.locator('#procedure button[onclick="saveProcedure()"]').click();await expect(page.locator('#workspace')).toBeVisible();
  const saved=await writes(page);expect(saved).toHaveLength(1);expect(saved[0].args.p_payload).toMatchObject({id:'procedure-1',expected_version:3,charge_total:11400,paid_total:0,payment_status:'pending',items:[{medication_id:'med-1',quantity:7.5}]});expect(await page.evaluate(()=>__pendingRecords.get('procedure-1').items[0])).toMatchObject({quantity:7.5,unit_price:1500,line_total:11250});expect(await page.evaluate(()=>meds[0].sale_price)).toBe(9999);expect(errors).toEqual([]);
 });
+
+test('saved unpaid individual charge stays empty through deletion and recalculation until retyped',async({page})=>{
+ const errors=await boot(page,'owner');await page.evaluate(()=>{const record=JSON.parse(JSON.stringify(__pendingSeed));__pendingRecords.set(record.id,record);return editTreatmentV10('procedure',record.id)});
+ const charge=page.locator('#procPaid');await charge.focus();await charge.press('ControlOrMeta+A');await charge.press('Backspace');await expect(charge).toHaveValue('');
+ await page.locator('#procMeds .medqty').fill('3');await expect(charge).toHaveValue('');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue('');
+ await charge.pressSequentially('210');await expect(charge).toHaveValue('210');await page.locator('button[onclick="saveProcedure()"]' ).click();await expect(page.locator('#workspace')).toBeVisible();
+ const mutations=await writes(page);expect(mutations).toHaveLength(1);expect(mutations[0].args.p_payload).toMatchObject({id:'procedure-1',charge_total:210,paid_total:0,payment_status:'pending',edit_reason:null});expect(errors).toEqual([]);
+});

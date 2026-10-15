@@ -80,3 +80,25 @@ test('nurse shift report shows billed medicines, receipts and read-only shift sa
  const errors=await boot(page);await page.evaluate(()=>openReport());await expect(page.locator('#reportBody')).toContainText('Самыр из прайса');await expect(page.locator('#reportBody')).not.toContainText('Без списания со склада');await expect(page.locator('#reportBody')).not.toContainText('Реально списанный препарат');
  await page.locator('#reportBody details').evaluateAll(nodes=>nodes.forEach(node=>node.open=true));const report=await page.locator('#reportBody').innerText();for(const receipt of ['250','190'])expect(report).toContain(receipt);expect(report).toContain('Зарплата за смену');expect(report).toMatch(/4\s*000/);await expect(page.locator('#reportBody input[id^="salaryAmount5-"]')).toHaveCount(0);for(const secret of ['В работе:','запас:'])expect(report).not.toContain(secret);await noOverflow(page);expect(errors).toEqual([]);
 });
+
+for(const prefix of ['proc','sale'])for(const place of ['main','payment'])test(`${prefix} ${place} individual charge can be deleted, left blank, then typed digit by digit`,async({page})=>{
+ const errors=await boot(page);const kind=prefix==='proc'?'procedure':'sale';
+ await page.evaluate(prefix=>{meds[0].sale_price=prefix==='proc'?3600:3750},prefix);
+ await page.evaluate(prefix=>prefix==='proc'?openProcedure('patient-1'):openSale('patient-1'),prefix);await expect(page.locator('#'+kind)).toBeVisible();
+ if(prefix==='proc')await page.selectOption('#procService','service-1');await page.evaluate(prefix=>chooseMedication(prefix+'Meds','med-1'),prefix);
+ await expect(page.locator('#'+prefix+'Paid')).toHaveValue('3750.00');
+ const field=page.locator('#'+prefix+(place==='main'?'Paid':'ChargeInPaymentV11'));
+ await field.focus();await field.press('ControlOrMeta+A');await field.press('Delete');
+ await expect(field).toHaveValue('');await page.locator('#'+prefix+'Notes').click();
+ for(const id of ['Paid','ChargeInPaymentV11'])await expect(page.locator('#'+prefix+id)).toHaveValue('');
+ await page.locator('#'+prefix+'Meds .medqty').fill('2');
+ for(const id of ['Paid','ChargeInPaymentV11'])await expect(page.locator('#'+prefix+id)).toHaveValue('');
+ await page.locator('#'+prefix+'Meds .medqty').fill('1');
+ await page.locator('#'+kind+' button[onclick="'+(prefix==='proc'?'saveProcedure()':'saveSale()')+'"]' ).click();
+ await expect(page.locator('#'+kind+'Message')).toContainText(/укажите сумму/i);expect(await page.evaluate(()=>__records.length)).toBe(0);
+ await field.focus();await field.pressSequentially('3200');
+ for(const id of ['Paid','ChargeInPaymentV11'])await expect(page.locator('#'+prefix+id)).toHaveValue('3200');
+ await page.fill('#'+prefix+'DiscountComment','Индивидуальная скидка согласована');await page.check('#'+prefix+'PayConfirmed');
+ await page.locator('#'+kind+' button[onclick="'+(prefix==='proc'?'saveProcedure()':'saveSale()')+'"]' ).click();await expect(page.locator('#workspace')).toBeVisible();
+ const saved=await page.evaluate(()=>__records[0]);expect(saved.p_payload).toMatchObject({charge_total:3200,paid_total:3200,payments:{cash:3200}});expect(errors).toEqual([]);
+});
