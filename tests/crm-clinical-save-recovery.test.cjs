@@ -127,6 +127,7 @@ test('collecting anonymous sale debt keeps the receipt on the sale and returns w
 
 test('a closed shift remains visibly confirmed if refreshing the shift menu fails',async()=>{
  const f=fixture();vm.runInContext("financeReportId5='shift-1'",f.c);
+ f.el('report').classList.add('active');
  f.c.renderShiftReportV5=()=>{};f.c.loadQuickContext=async()=>{throw Error('Refresh failed');};f.setRpc(async()=>({data:{shift:{id:'shift-1',status:'closed'}}}));
  await f.c.closeShift();assert.equal(f.c.shift,null);assert.match(f.el('reportBody').innerHTML,/Смена закрыта.*Не удалось обновить экран/);assert.equal(f.calls.length,1);
 });

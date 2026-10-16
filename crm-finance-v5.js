@@ -539,17 +539,21 @@ closeShift = async function() {
  if (financeBusy5 || !financeReportId5) return;
  financeBusy5 = true;
  let committed = false;
- const actor = currentStaff?.id;
+ const actor = currentStaff?.id,role = currentStaff?.role,session = financeSession5,navigation = quickNavigation4,view = financeView5;
+ const sameActor = () => currentStaff?.id === actor && currentStaff?.role === role && financeSession5 === session;
+ const sameView = () => sameActor() && quickNavigationCurrent4(navigation,actor) && financeView5 === view && $('report')?.classList.contains('active');
  const button = $('report').querySelector('button[onclick="closeShift()"]'); if (button) button.disabled = true;
  try {
   const id = financeReportId5, data = await crmFinanceRpcV5('close', {shift_id:id});
-  if (currentStaff?.id !== actor) return;
+  if (!sameActor()) return;
+  if (data?.shift?.id !== id || data.shift.status !== 'closed') throw Error('Закрытие смены не подтверждено. Обновите отчёт и проверьте статус смены.');
   committed = true;
   if (shift?.id === id) shift = null;
+  if (!sameView()) return;
   renderShiftReportV5(data, true); await loadQuickContext();
-  if (isManager()) await refreshOwnerDashboardV5();
- } catch (e) { if (currentStaff?.id === actor) $('reportBody').insertAdjacentHTML('afterbegin', `<div class="notice">${esc(committed ? 'Смена закрыта. Не удалось обновить экран: ' + e.message : e.message)}</div>`); }
- finally { financeBusy5 = false; if (button) button.disabled = false; }
+  if (sameView() && isManager()) await refreshOwnerDashboardV5();
+ } catch (e) { if (sameView()) $('reportBody').insertAdjacentHTML('afterbegin', `<div class="notice">${esc(committed ? 'Смена закрыта. Не удалось обновить экран: ' + e.message : e.message)}</div>`); }
+ finally { if (sameActor()) financeBusy5 = false; if (button) button.disabled = false; }
 };
 async function saveSalaryV5(staffId) {
  if (financeBusy5) return;
@@ -677,6 +681,22 @@ function buildFinanceCsvV5(data) {
   if (!data.cash_drawer.opening_confirmed) rows.splice(rows.length - 1,0,['Пояснение к наличным','Наличные на начало смены не указаны и в сумму не включены.']);
   if (data.cash_drawer.scope === 'latest_shift') rows.splice(rows.length - 1,0,['Пояснение к кассе','Остаток наличных относится к последней смене выбранного периода.']);
  }
+ const reconciliation = data.payroll_scope !== 'not_applicable_to_entity_filter' ? data.cash_drawer?.reconciliation_v37 : null;
+ if (reconciliation) {
+  const count = reconciliation.count;
+  rows.splice(rows.length - 1,0,['Сверка наличных',!count ? 'Не проведена' : reconciliation.stale ? 'Устарела: после сверки были изменения' : 'Проведена']);
+  if (count) {
+   for (const row of [
+    ['Фактически пересчитано наличными',count.counted_cash],
+    ['Ожидаемый фактический остаток на момент сверки',count.expected_cash],
+    ['Расхождение: излишек (+) / недостача (−)',count.difference],
+    ['Зарплата подтверждена как выданная полностью',count.salary_confirmed ? 'Да' : 'Нет / не полностью'],
+    ['Сверку внёс сотрудник',count.staff_name || 'Сотрудник'],
+    ['Время сохранения сверки (Москва)',financeDateTimeV5(count.created_at)],
+    ['Комментарий к сверке',count.reason || '']
+   ]) rows.splice(rows.length - 1,0,row);
+  }
+ }
  for (const row of data.rows || []) rows.push([row.label,row.patients_count,row.procedures_count,row.sales_count,row.quantity ?? '',row.revenue?.cash,row.revenue?.terminal,row.revenue?.owner_card,row.revenue?.total,financeDebtAmountV29(row),row.pending_total || 0]);
  return '\uFEFF' + rows.map(row => row.map(financeCsvCellV5).join(';')).join('\r\n');
 }
@@ -745,6 +765,7 @@ enterApp = async function(user) {
 };
 signOut = async function() {
  financeSession5++;
+ financeBusy5 = false;
  financeDashboardReadV25++;
  financeShiftSnapshot5 = null;clearShiftPrintV5();
  financeAccountingLoad5++; financeAccountingMode5 = null;
