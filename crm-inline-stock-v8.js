@@ -8,7 +8,8 @@
  function owner(){return typeof isManager==='function'&&isManager()&&!!currentStaff?.id;}
  function requireOwner(){if(!owner())throw Error('Изменение количества доступно только владельцу');}
  function medication(id){return inventory.find(item=>item.id===id&&item.active!==false);}
- function requester(){return helpers.createRequester((name,args)=>db.rpc(name,args),requireOwner,()=>crypto.randomUUID());}
+ function requester(){return helpers.createRequester((name,args)=>db.rpc(name,args),requireOwner,()=>crypto.randomUUID(),data=>medication(data.id));}
+ function calculated(value,m){return root.isMeasuredQuantityV31?.(m)?Math.round(value*1000)/1000:value;}
  function labelDate(value){return value?value.split('-').reverse().join('.'):'Срок не указан';}
  function batchLabel(batch){return (batch.expiry_date?'Годен до '+labelDate(batch.expiry_date):'Срок не указан')+(batch.batch_number?' · партия № '+batch.batch_number:'')+' · поступление '+labelDate(batch.received_date);}
  function key(batchId,location){return batchId+':'+location;}
@@ -26,11 +27,11 @@
  function capture(state,editor){return {state,editor,actor:state.actor,epoch:state.epoch,view:state.view,generation:state.generation};}
  function matches(operation,visible=true){return (visible?current(operation.state):belongs(operation.state))&&operation.actor===currentStaff.id&&operation.epoch===epoch&&operation.view===operation.state.view&&operation.generation===operation.state.generation&&(!operation.editor||operation.state.editors.get(key(operation.editor.batchId,operation.editor.location))===operation.editor);}
  function hasRetry(state){return [...state.editors.values()].some(editor=>editor.retryData);}
- function draftChanged(editor){try{return helpers.whole(editor.draft,0,'Количество')!==editor.before;}catch{return true;}}
+ function draftChanged(state,editor){try{return helpers.quantity(editor.draft,medication(state.id),true,'Количество')!==editor.before;}catch{return true;}}
  function editorFor(state,batch,location){
-  const id=key(batch.id,location),before=helpers.balance(batch,location);let editor=state.editors.get(id);
+  const id=key(batch.id,location),before=helpers.balance(batch,location,medication(state.id));let editor=state.editors.get(id);
   if(!editor){editor={batchId:batch.id,location,before,draft:String(before),retryData:null,requestSnapshot:null,stale:false,refresh:false,status:'',success:false,node:null};state.editors.set(id,editor);}
-  else if(!draftChanged(editor)&&!editor.retryData&&!editor.stale){editor.before=before;editor.draft=String(before);}
+  else if(!draftChanged(state,editor)&&!editor.retryData&&!editor.stale){editor.before=before;editor.draft=String(before);}
   return editor;
  }
  function editorHtml(state,batch){
@@ -43,8 +44,8 @@
  function syncEditor(state,editor){
   const row=editor.node;if(!row?.isConnected)return;
   const input=row.querySelector('[data-inline-stock-quantity-v8]'),save=row.querySelector('[data-inline-stock-save-v8]'),preview=row.querySelector('[data-inline-stock-preview-v8]'),status=row.querySelector('[data-inline-stock-status-v8]'),reload=row.querySelector('[data-inline-stock-reload-v8]');
-  let actual,valid=true;try{actual=helpers.whole(editor.draft,0,'Количество');}catch(error){valid=false;preview.textContent=error.message;}
-  if(valid){const delta=actual-editor.before;preview.textContent=delta===0?'Замените число на правильный остаток':`Было ${qty(editor.before)} → останется ${qty(actual)} ${unit(medication(state.id))}. ${delta<0?'Убрать '+qty(-delta):'Добавить '+qty(delta)}.`;}
+  const m=medication(state.id);let actual,valid=true;try{actual=helpers.quantity(editor.draft,m,true,'Количество');}catch(error){valid=false;preview.textContent=error.message;}
+  if(valid){const delta=calculated(actual-editor.before,m);preview.textContent=delta===0?'Замените число на правильный остаток':`Было ${qty(editor.before)} → останется ${qty(actual)} ${unit(m)}. ${delta<0?'Убрать '+qty(-delta):'Добавить '+qty(delta)}.`;}
   const uncertain=hasRetry(state);
   input.disabled=warehouseBusy||state.loading||editor.stale||uncertain;
   save.disabled=warehouseBusy||state.loading||editor.stale||(!editor.retryData&&(!valid||actual===editor.before||uncertain));
@@ -63,7 +64,8 @@
  function bindEditor(state,batch,container){
   for(const location of ['reserve','work']){
    const editor=editorFor(state,batch,location),row=container.querySelector(`[data-inline-stock-location-v8="${location}"]`);editor.node=row;
-   row.querySelector('[data-inline-stock-quantity-v8]').oninput=event=>{editor.draft=event.target.value;editor.status='';editor.success=false;syncEditor(state,editor);};
+   const input=row.querySelector('[data-inline-stock-quantity-v8]');root.configureMedicationQuantityV31?.(input,medication(state.id),true);
+   input.oninput=event=>{editor.draft=event.target.value;editor.status='';editor.success=false;syncEditor(state,editor);};
    row.querySelector('[data-inline-stock-save-v8]').onclick=()=>saveInlineStockV8(state.id,batch.id,location,state.scope);
    row.querySelector('[data-inline-stock-reload-v8]').onclick=()=>reloadInlineStockV8(state.id,state.scope);
    syncEditor(state,editor);
@@ -76,7 +78,8 @@
   if(!state.batches.length){panel.innerHTML='<p class="small">Партий пока нет. Внесите имеющийся остаток или оформите приход.</p>';return;}
   if(state.batches.length===1)state.selected=state.batches[0].id;
   if(!state.batches.some(batch=>batch.id===state.selected))state.selected='';
-  panel.innerHTML=`<h3>Количество по сроку годности</h3>${state.batches.length>1?`<label for="inline-stock-batch-${esc(state.id)}-v8">С какого срока годности исправить количество?</label><select id="inline-stock-batch-${esc(state.id)}-v8" data-inline-stock-batch-v8><option value="">Выберите срок годности / партию</option>${state.batches.map(batch=>`<option value="${esc(batch.id)}">${esc(batchLabel(batch))} · запас ${qty(helpers.balance(batch,'reserve'))}, в работе ${qty(helpers.balance(batch,'work'))}</option>`).join('')}</select>`:`<p class="inline-stock-batch-label-v8">${esc(batchLabel(state.batches[0]))}</p>`}<p class="small inline-stock-message-v8" data-inline-stock-message-v8 role="status">${esc(state.message)}</p><div data-inline-stock-selected-v8></div>`;
+  const m=medication(state.id);
+  panel.innerHTML=`<h3>Количество по сроку годности</h3>${state.batches.length>1?`<label for="inline-stock-batch-${esc(state.id)}-v8">С какого срока годности исправить количество?</label><select id="inline-stock-batch-${esc(state.id)}-v8" data-inline-stock-batch-v8><option value="">Выберите срок годности / партию</option>${state.batches.map(batch=>`<option value="${esc(batch.id)}">${esc(batchLabel(batch))} · запас ${qty(helpers.balance(batch,'reserve',m))}, в работе ${qty(helpers.balance(batch,'work',m))}</option>`).join('')}</select>`:`<p class="inline-stock-batch-label-v8">${esc(batchLabel(state.batches[0]))}</p>`}<p class="small inline-stock-message-v8" data-inline-stock-message-v8 role="status">${esc(state.message)}</p><div data-inline-stock-selected-v8></div>`;
   const select=panel.querySelector('[data-inline-stock-batch-v8]');if(select){select.value=state.selected;select.onchange=()=>{state.selected=select.value;state.message='';renderPanel(state);};}
   const batch=state.batches.find(item=>item.id===state.selected);
   if(batch){const selected=panel.querySelector('[data-inline-stock-selected-v8]');selected.innerHTML=editorHtml(state,batch);bindEditor(state,batch,selected);}
@@ -130,16 +133,16 @@
   if(busyOperation!==operation)return;busyOperation=null;setWarehouseBusy(false);restoreFieldLocks();syncControls();
  }
  function setBatchBalance(batch,data){
-  const before=helpers.balance(batch,data.location),difference=data.actual_quantity-before;
-  batch.quantity_remaining=Number(batch.quantity_remaining)+difference;
+  const m=medication(data.id),before=helpers.balance(batch,data.location,m),difference=calculated(data.actual_quantity-before,m);
+  batch.quantity_remaining=calculated(Number(batch.quantity_remaining)+difference,m);
   if(data.location==='work')batch.work_quantity=data.actual_quantity;
-  if(difference>0)batch.quantity_received=Number(batch.quantity_received)+difference;
+  if(difference>0)batch.quantity_received=calculated(Number(batch.quantity_received)+difference,m);
  }
  function updateSnapshots(data){
   for(const state of [...states.values(),cardState].filter(Boolean)){
    if(!sameOwner(state)||state.id!==data.id)continue;
    const batch=state.batches.find(item=>item.id===data.batch_id);if(batch)setBatchBalance(batch,data);
-   const editor=state.editors.get(key(data.batch_id,data.location));if(editor&&!draftChanged(editor)&&!editor.retryData&&!editor.stale){editor.before=data.actual_quantity;editor.draft=String(data.actual_quantity);if(editor.node?.isConnected)editor.node.querySelector('[data-inline-stock-quantity-v8]').value=editor.draft;}
+   const editor=state.editors.get(key(data.batch_id,data.location));if(editor&&!draftChanged(state,editor)&&!editor.retryData&&!editor.stale){editor.before=data.actual_quantity;editor.draft=String(data.actual_quantity);if(editor.node?.isConnected)editor.node.querySelector('[data-inline-stock-quantity-v8]').value=editor.draft;}
   }
   if(typeof medicationBatchesExtraV5!=='undefined'){
    const batch=medicationBatchesExtraV5.get(data.id)?.find(item=>item.id===data.batch_id);if(batch)setBatchBalance(batch,data);
@@ -152,8 +155,8 @@
    // Batch totals confirm the current stock even if the separate catalogue refresh fails.
    const med=medication(data.id),today=localDateValue();
    for(const location of ['reserve','work']){
-    med[location==='work'?'work_qty':'reserve_qty']=rows.reduce((sum,batch)=>sum+helpers.balance(batch,location),0);
-    med[location==='work'?'work_available':'reserve_available']=rows.filter(batch=>batch.expiry_date&&batch.expiry_date>=today).reduce((sum,batch)=>sum+helpers.balance(batch,location),0);
+    med[location==='work'?'work_qty':'reserve_qty']=calculated(rows.reduce((sum,batch)=>sum+helpers.balance(batch,location,med),0),med);
+    med[location==='work'?'work_available':'reserve_available']=calculated(rows.filter(batch=>batch.expiry_date&&batch.expiry_date>=today).reduce((sum,batch)=>sum+helpers.balance(batch,location,med),0),med);
    }
    for(const state of [...states.values(),cardState].filter(Boolean)){
     if(!sameOwner(state)||state.id!==data.id)continue;
@@ -161,7 +164,7 @@
     for(const batch of state.batches)for(const location of ['reserve','work'])editorFor(state,batch,location);
    }
    const batch=operation.state.batches.find(item=>item.id===data.batch_id);
-   if(batch&&helpers.balance(batch,data.location)!==data.actual_quantity)editor.status=`Сохранение подтверждено. Текущий остаток: ${qty(helpers.balance(batch,data.location))} ${unit(medication(data.id))}.`;
+   if(batch&&helpers.balance(batch,data.location,med)!==data.actual_quantity)editor.status=`Сохранение подтверждено. Текущий остаток: ${qty(helpers.balance(batch,data.location,med))} ${unit(med)}.`;
    if(cardState?.id===data.id&&current(cardState))renderCard(cardState);
    renderInventory();
    return true;
@@ -177,16 +180,16 @@
    requireOwner();state=scope==='card'?cardState:states.get(id);if(!state||state.id!==id||!current(state)||!state.loaded||state.loading)throw Error('Откройте строку препарата и дождитесь загрузки партии');
    editor=state.editors.get(key(batchId,location));if(!editor||!editor.node?.isConnected||editor.stale)throw Error('Обновите количество выбранной партии');
    if(hasRetry(state)&&!editor.retryData)throw Error('Сначала повторите сохранение, ответ на которое не был получен');
-   data=editor.retryData||helpers.payload('inventory',{id,batch_id:batchId,location,actual:editor.draft,expected:editor.before,reason:'Исправление ошибки ввода'});
+   data=editor.retryData||helpers.payload('inventory',{id,batch_id:batchId,location,actual:editor.draft,expected:editor.before,medication:medication(id),reason:'Исправление ошибки ввода'});
    if(data.actual_quantity===data.expected_quantity)return;
    if(!editor.retryData)editor.requestSnapshot={medication:medication(id),quantity:Number(medication(id)[location==='work'?'work_qty':'reserve_qty']||0)};
    operation=capture(state,editor);busyOperation=operation;setWarehouseBusy(true);editor.status='Сохраняем количество…';editor.success=false;syncControls();
    const replay=!!editor.retryData,result=await state.request('inventory',data);if(!matches(operation,false))return;saved=true;
-   const difference=Number(result?.difference??data.actual_quantity-data.expected_quantity),m=medication(id),batch=state.batches.find(item=>item.id===batchId);
+   const m=medication(id),difference=calculated(Number(result?.difference??data.actual_quantity-data.expected_quantity),m),batch=state.batches.find(item=>item.id===batchId);
    const stockKey=location==='work'?'work_qty':'reserve_qty',availableKey=location==='work'?'work_available':'reserve_available';
    // A catalogue refresh may already include an uncertain earlier commit.
    // Apply a difference only to the exact unchanged snapshot used to save it.
-   if(!replay&&m===editor.requestSnapshot?.medication&&Number(m[stockKey]||0)===editor.requestSnapshot.quantity){m[stockKey]=Number(m[stockKey]||0)+difference;if(batch?.expiry_date&&batch.expiry_date>=localDateValue()&&m[availableKey]!==undefined)m[availableKey]=Number(m[availableKey])+difference;}
+   if(!replay&&m===editor.requestSnapshot?.medication&&Number(m[stockKey]||0)===editor.requestSnapshot.quantity){m[stockKey]=calculated(Number(m[stockKey]||0)+difference,m);if(batch?.expiry_date&&batch.expiry_date>=localDateValue()&&m[availableKey]!==undefined)m[availableKey]=calculated(Number(m[availableKey])+difference,m);}
    if(!replay)updateSnapshots(data);editor.before=data.actual_quantity;editor.draft=String(data.actual_quantity);editor.retryData=null;editor.requestSnapshot=null;editor.stale=false;editor.refresh=false;editor.status=`Сохранено: ${qty(data.actual_quantity)} ${unit(m)}.`;editor.success=true;
    if(editor.node?.isConnected)editor.node.querySelector('[data-inline-stock-quantity-v8]').value=editor.draft;
    if(cardState?.id===id&&current(cardState)){get('medStockSummary').innerHTML=stockCells(m);installCardEntry(id);for(const b of cardState.batches){const total=cardState.node.querySelector(`[data-inline-stock-batch-row-v8="${b.id}"] [data-inline-stock-batch-total-v8]`);if(total)total.textContent=`Всего ${qty(b.quantity_remaining)} из ${qty(b.quantity_received)} ${unit(m)} · закупка ${rub(b.purchase_price_per_unit)}/${unit(m)}`;}updateStockPreview();}

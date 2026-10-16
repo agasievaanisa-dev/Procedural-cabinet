@@ -64,6 +64,7 @@ async function warehouseRpc(action,payload={},write=false){
   if(!isManager())throw new Error('Нет доступа к складу');
   const actor=warehouseActorV16();payload=warehouseFrozenPayloadV16(action,payload);
   const key=JSON.stringify([actor,action,payload]);
+  const receiptQuantity=action==='receive'?Math.round(Number(payload.packages)*Number(payload.units_per_package??inventory.find(m=>m.id===payload.id)?.units_per_package)*1000)/1000:Number(payload.quantity??Number(payload.packages)*Number(payload.units_per_package));
   if(write&&!stockRequests.has(key))stockRequests.set(key,crypto.randomUUID());
   const requestId=write?stockRequests.get(key):null;
   let response;
@@ -78,6 +79,7 @@ async function warehouseRpc(action,payload={},write=false){
     failure.code=error?.code;failure.status=error?.status||response?.status;failure.uncertain=error?.uncertain;failure.definitive=definitive;throw failure;
   }
   if(write&&(!data||typeof data!=='object'||Array.isArray(data)||action==='save'&&!data.id||['archive','restore'].includes(action)&&data.active!==(action==='restore'))){const failure=Error('Ответ о сохранении не получен. Повторите сохранение — операция не продублируется.');failure.uncertain=true;throw failure}
+  if(write&&['receive','opening'].includes(action)&&(!Number.isFinite(receiptQuantity)||receiptQuantity<=0||!['number','string'].includes(typeof data.quantity)||String(data.quantity).trim()===''||Number(data.quantity)!==receiptQuantity||typeof data.batch_id!=='string'||!data.batch_id.trim()||action==='opening'&&data.location!==payload.location)){const failure=Error('Ответ о сохранении прихода не подтверждён. Повторите сохранение — операция не продублируется.');failure.uncertain=true;throw failure}
   if(write&&stockRequests.get(key)===requestId)stockRequests.delete(key);
   return data;
 }

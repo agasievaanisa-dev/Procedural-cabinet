@@ -15,9 +15,9 @@ async function setup(page){
     if(['save','receive','transfer'].includes(action)){
      if(!receipts.has(args.p_request_id)){
       const med=medData.find(m=>m.id===p.id);if(action==='save')Object.assign(med,p,{manufacturer_country:p.country,consumption_unit:p.unit});
-      if(action==='receive'){med.reserve_qty+=p.packages*med.units_per_package;med.reserve_available=med.reserve_qty;partiesAdded++}
+      if(action==='receive'){med.units_per_package=p.units_per_package??med.units_per_package;med.reserve_qty+=p.packages*med.units_per_package;med.reserve_available=med.reserve_qty;partiesAdded++}
       if(action==='transfer'){med.reserve_qty-=p.quantity;med.work_qty+=p.quantity;med.reserve_available=med.reserve_qty;med.work_available=med.work_qty}
-      receipts.set(args.p_request_id,{id:p.id});
+      receipts.set(args.p_request_id,action==='receive'?{quantity:p.packages*med.units_per_package,batch_id:'44444444-4444-4444-8444-444444444444'}:{id:p.id});
      }
      return failWrites?{error:{message:'Load failed'},status:0}:{data:receipts.get(args.p_request_id)};
     }

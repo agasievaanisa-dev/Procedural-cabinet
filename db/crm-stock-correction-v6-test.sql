@@ -1,6 +1,9 @@
 -- Run after crm-stock-correction-v6.sql. All fixtures and changes roll back.
 -- Existing staff login metadata is used; existing patients / stock are untouched.
 begin;
+-- This scenario asserts a real stock deduction; make it independent of the
+-- cabinet's current payment-only or gradual stock setting. The change rolls back.
+update private.crm_finance_settings set payment_only=false,partial_stock=false where id;
 select set_config('test.v6.manager',(select auth_user_id::text from public.staff where active and role in ('owner','admin') and auth_user_id is not null limit 1),true);
 select set_config('test.v6.nurse',(select auth_user_id::text from public.staff where active and role='nurse' and auth_user_id is not null limit 1),true);
 select set_config('request.jwt.claim.sub',current_setting('test.v6.manager'),true);
