@@ -308,16 +308,47 @@ saveTreatment = async function(kind) {
 function financeRevenueHtmlV5(revenue = {}) {
  return `<div class="finance-totals-v5">${[['total','Получено'],['terminal','Оплата терминалом'],['owner_card','Переводы на карту'],['cash','Наличные']].map(([key,label]) => `<div class="stat"><span>${label}</span><b>${rub(revenue[key])}</b></div>`).join('')}</div>` + (num(revenue.unclassified) ? `<p class="notice">У оплат на ${rub(revenue.unclassified)} не указан способ. Они включены в полученную сумму.</p>` : '');
 }
+function financeCashBalanceV36(data) {
+ const drawer = data.cash_drawer;
+ return drawer?.salary_auto === true ? drawer.cash_after_salary_auto ?? null : drawer?.balance ?? null;
+}
+function financeRemainingLabelV36(data) {
+ const drawer = data.cash_drawer,latest = drawer?.scope === 'latest_shift';
+ if (drawer?.salary_auto === true) return drawer.opening_confirmed ? 'Остаток наличных' + (latest ? ' последней смены' : '') + ' после зарплаты' : 'Наличные ' + (latest ? 'последней смены' : 'смены') + ' после зарплаты';
+ return 'Остаток наличных в кассе' + (latest ? ' последней смены' : '');
+}
+function financeSalaryValueV36(data) {
+ if (data.payroll_scope === 'not_applicable_to_entity_filter') return null;
+ if (data.salary_auto === true && data.salary_auto_total != null) return num(data.salary_auto_total);
+ if (data.cash_drawer_period_totals?.salary_auto === true && data.cash_drawer_period_totals.salary_auto_total != null) return num(data.cash_drawer_period_totals.salary_auto_total);
+ if (data.cash_drawer?.salary_auto === true && data.cash_drawer.scope !== 'latest_shift' && data.cash_drawer.salary_auto_total != null) return num(data.cash_drawer.salary_auto_total);
+ return data.payroll_complete === false ? null : num(data.payroll_total);
+}
 function financeRemainingTextV5(data) {
  if (data.payroll_scope === 'not_applicable_to_entity_filter') return 'Не применяется к этому фильтру';
- return data.cash_drawer?.balance != null ? rub(data.cash_drawer.balance) : 'Не рассчитан: укажите остаток на начало смены';
+ const value = financeCashBalanceV36(data);
+ return value != null ? rub(value) : 'Не рассчитан: укажите остаток на начало смены';
 }
 function financePayrollTextV5(data) {
- return data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : data.payroll_complete === false ? 'Не задана полностью' : rub(data.payroll_total);
+ const value = financeSalaryValueV36(data);
+ return data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : value == null ? 'Не задана полностью' : rub(value);
 }
 function financePayrollNoteV5(data) {
  if (data.payroll_scope === 'not_applicable_to_entity_filter') return '<p class="small">Зарплата и касса учитываются по сменам, а этот фильтр показывает отдельного пациента, препарат или услугу.</p>';
+ if (data.salary_auto === true || data.cash_drawer?.salary_auto === true) return '<p class="small">Зарплата учитывается автоматически; отмеченные выплаты повторно не вычитаются.</p>';
  return data.payroll_complete === false ? `<p class="notice">Не задана зарплата для ${num(data.payroll_unknown)} сотрудников. В кассе учитывается только фактически выплаченная наличными зарплата.</p>` : '';
+}
+function financePayrollDetailsHtmlV36(data) {
+ if (data.payroll_scope === 'not_applicable_to_entity_filter' || data.cash_drawer?.salary_auto !== true) return '';
+ const drawer = data.cash_drawer,people = drawer.salary_auto_payroll || drawer.payroll || [];
+ return people.length ? `<div class="finance-payroll-details-v36"><p class="small">Зарплата ${drawer.scope === 'latest_shift' ? 'последней смены ' : ''}по сотрудникам</p>${people.map(person => `<div class="shift-summary-row-v16"><span>${esc(person.staff_name || person.full_name || 'Сотрудник')}</span><b>${person.configured == null ? 'Не задана' : esc(rub(person.configured))}</b></div>`).join('')}</div>` : '';
+}
+function financeShiftSalaryStaffV36(data) {
+ const payroll = data.cash_drawer?.salary_auto === true ? data.cash_drawer.salary_auto_payroll || data.cash_drawer.payroll || [] : [];
+ return (data.staff || []).map(person => {
+  const target = payroll.find(row => row.staff_id === person.id);
+  return target?.configured != null ? {...person,amount:target.configured} : person;
+ });
 }
 function financeWarningHtmlV5(warnings = []) {
  return warnings.length ? `<h2>Предупреждения</h2>${warnings.map(w => `<div class="notice finance-warning-v5"><strong>${esc(w.name || 'Препарат')}</strong> · ${esc(w.message || ({expired:'Есть просроченная партия',expiring:'Истекает срок годности',low_stock:'Минимальный остаток',low_work:'Мало в рабочем шкафу'}[w.type]) || w.type || 'Проверьте остатки')}${w.expiry_date ? ' · ' + esc(w.expiry_date) : ''}</div>`).join('')}` : '<p class="small">Предупреждений по остаткам нет.</p>';
@@ -395,15 +426,16 @@ function financeShiftSummaryAmountsV16(data = {}) {
  const pending = cents(data.pending_total ?? events.reduce((value,event) => value + (event.payment_pending ? financeEventAmountsV5(event).debt : 0),0));
  const debt = cents(totals.debt),staff = data.staff || [];
  const loan = financeDebtAmountV29(data);
- const payrollUnknown = num(data.payroll_unknown ?? staff.filter(person => person.amount == null).length);
- const payrollComplete = data.payroll_complete ?? (staff.length > 0 && payrollUnknown === 0);
- const payroll = cents(data.payroll_total ?? staff.reduce((value,person) => value + num(person.amount),0));
+ const automaticSalary = data.salary_auto === true || data.cash_drawer?.salary_auto === true;
+ const payrollUnknown = automaticSalary ? 0 : num(data.payroll_unknown ?? staff.filter(person => person.amount == null).length);
+ const payrollComplete = automaticSalary ? true : data.payroll_complete ?? (staff.length > 0 && payrollUnknown === 0);
+ const payroll = cents(automaticSalary ? financeSalaryValueV36(data) : data.payroll_total ?? staff.reduce((value,person) => value + num(person.amount),0));
  return {total:total / 100,procedures:procedureIncome / 100,sales:saleIncome / 100,receipts:laterIncome / 100,
   other:Math.max(0,total - categorized) / 100,categoriesMatch:categorized <= total,
   cash:num(revenue.cash),terminal:num(revenue.terminal),ownerCard:num(revenue.owner_card),unclassified:num(revenue.unclassified),
   charge:totals.charge,debt:debt / 100,pending:pending / 100,loan:num(loan),
   payroll:payroll / 100,payrollUnknown,payrollComplete,
-  afterSalary:data.cash_drawer?.balance ?? null};
+  afterSalary:financeCashBalanceV36(data)};
 }
 function financeShiftReceiptsV29(data = {}) {
  return (data.receipts || []).filter(receipt => receipt.receipt_kind !== 'debt_repayment' && receipt.payment_kind !== 'debt_repayment' && receipt.is_debt_repayment !== true && receipt.payment_scope !== 'debt');
@@ -415,14 +447,14 @@ function financeDebtAmountV29(data = {}) {
  return Math.max(0,num(data.debt_total));
 }
 function financeSimpleSummaryHtmlV29(data = {},scope = 'период') {
- const revenue = data.revenue || {},suffix = 'за ' + scope;
- const rows = [['revenue','Получено ' + suffix,rub(revenue.total)],['terminal','Оплата терминалом',rub(revenue.terminal)],['owner-card','Переводы на карту',rub(revenue.owner_card)],['loan','Долг',rub(financeDebtAmountV29(data))],['cash','Наличные ' + suffix,rub(revenue.cash)],['payroll-total','Зарплата ' + suffix,financePayrollTextV5(data)],['cash-balance','Остаток наличных в кассе',financeRemainingTextV5(data)]];
- return `<section class="finance-simple-summary-v29" aria-label="Финансовые итоги"><div class="finance-totals-v5">${rows.map(([key,label,value]) => `<div class="stat" data-summary-key="${key}"><span>${label}</span><b>${esc(value)}</b>${key === 'payroll-total' && data.cash_drawer ? `<small>Из кассы выплачено ${esc(rub(data.cash_drawer.salary_paid))}</small>` : ''}</div>`).join('')}</div><p class="small">Оплата после процедуры входит в полученную сумму. Погашения долгов учитываются отдельно.</p>${num(data.pending_total) ? `<p class="notice" data-summary-key="pending">Ожидают оплаты после процедуры: <b>${esc(rub(data.pending_total))}</b>. Это не долг.</p>` : ''}${data.cash_drawer?.balance == null && data.payroll_scope !== 'not_applicable_to_entity_filter' ? '<p class="small">Для остатка в кассе укажите начальные наличные и движения кассы. Терминал и переводы в наличные не входят.</p>' : ''}${data.has_open_shifts === true ? '<p class="small">Есть открытые смены: суммы ещё могут измениться.</p>' : ''}</section>`;
+ const revenue = data.revenue || {},suffix = 'за ' + scope,drawer = data.cash_drawer,automaticSalary = drawer?.salary_auto === true,applicable = data.payroll_scope !== 'not_applicable_to_entity_filter';
+ const rows = [['revenue','Получено ' + suffix,rub(revenue.total)],['terminal','Оплата терминалом',rub(revenue.terminal)],['owner-card','Переводы на карту',rub(revenue.owner_card)],['loan','Долг',rub(financeDebtAmountV29(data))],['cash','Наличные ' + suffix,rub(revenue.cash)],['payroll-total','Зарплата ' + suffix,financePayrollTextV5(data)],['cash-balance',financeRemainingLabelV36(data),financeRemainingTextV5(data)]];
+ return `<section class="finance-simple-summary-v29" aria-label="Финансовые итоги"><div class="finance-totals-v5">${rows.map(([key,label,value]) => `<div class="stat" data-summary-key="${key}"><span>${label}</span><b>${esc(value)}</b>${key === 'payroll-total' && drawer && applicable ? `<small>${automaticSalary ? 'Учтено из наличных' : 'Из кассы выплачено'}${drawer.scope === 'latest_shift' ? ' последней смены' : ''} ${esc(rub(automaticSalary ? drawer.salary_deduction : drawer.salary_paid))}</small>` : ''}</div>`).join('')}</div>${automaticSalary && applicable ? financePayrollDetailsHtmlV36(data) + financePayrollNoteV5(data) : ''}<p class="small">Оплата после процедуры входит в полученную сумму. Погашения долгов учитываются отдельно.</p>${num(data.pending_total) ? `<p class="notice" data-summary-key="pending">Ожидают оплаты после процедуры: <b>${esc(rub(data.pending_total))}</b>. Это не долг.</p>` : ''}${applicable && automaticSalary && !drawer.opening_confirmed ? '<p class="small">Показаны наличные этой смены после зарплаты и других движений. Наличные на начало смены не указаны и в эту сумму не включены.</p>' : ''}${applicable && automaticSalary && financeCashBalanceV36(data) != null && num(financeCashBalanceV36(data)) < 0 ? '<p class="notice">Наличных не хватает на зарплату.</p>' : ''}${financeCashBalanceV36(data) == null && applicable ? '<p class="small">Для остатка в кассе укажите начальные наличные и движения кассы. Терминал и переводы в наличные не входят.</p>' : ''}${data.has_open_shifts === true ? '<p class="small">Есть открытые смены: суммы ещё могут измениться.</p>' : ''}${drawer?.scope === 'latest_shift' && applicable ? '<p class="small">Остаток наличных относится к последней смене выбранного периода.</p>' : ''}</section>`;
 }
 
 function financeShiftSummaryHtmlV16(data) {
  const amounts = financeShiftSummaryAmountsV16(data);
- return `<section class="shift-financial-summary-v16" aria-label="Итоги смены">${financeSimpleSummaryHtmlV29({...data,revenue:{...data.revenue,total:amounts.total},loan_debt_total:amounts.loan,pending_total:amounts.pending,payroll_total:amounts.payroll,payroll_complete:amounts.payrollComplete},'смену')}<details class="no-print"><summary>Подробнее</summary><div class="shift-summary-row-v16"><span>Получено за процедуры и препараты</span><b>${esc(rub(amounts.procedures))}</b></div><div class="shift-summary-row-v16"><span>Получено за продажи</span><b>${esc(rub(amounts.sales))}</b></div>${amounts.receipts ? `<div class="shift-summary-row-v16"><span>Оплата после процедуры</span><b>${esc(rub(amounts.receipts))}</b></div>` : ''}<div class="shift-summary-row-v16"><span>Стоимость процедур и продаж</span><b>${esc(rub(amounts.charge))}</b></div>${(data.staff || []).map(person => `<div class="shift-summary-row-v16"><span>Зарплата: ${esc(person.full_name || 'Сотрудник')}</span><b>${person.amount == null ? 'Не задана' : esc(rub(person.amount))}</b></div>`).join('')}${financePayrollNoteV5(data)}</details></section>`;
+ return `<section class="shift-financial-summary-v16" aria-label="Итоги смены">${financeSimpleSummaryHtmlV29({...data,revenue:{...data.revenue,total:amounts.total},loan_debt_total:amounts.loan,pending_total:amounts.pending,payroll_total:amounts.payroll,payroll_complete:amounts.payrollComplete},'смену')}<details class="no-print"><summary>Подробнее</summary><div class="shift-summary-row-v16"><span>Получено за процедуры и препараты</span><b>${esc(rub(amounts.procedures))}</b></div><div class="shift-summary-row-v16"><span>Получено за продажи</span><b>${esc(rub(amounts.sales))}</b></div>${amounts.receipts ? `<div class="shift-summary-row-v16"><span>Оплата после процедуры</span><b>${esc(rub(amounts.receipts))}</b></div>` : ''}<div class="shift-summary-row-v16"><span>Стоимость процедур и продаж</span><b>${esc(rub(amounts.charge))}</b></div>${financeShiftSalaryStaffV36(data).map(person => `<div class="shift-summary-row-v16"><span>Зарплата: ${esc(person.full_name || 'Сотрудник')}</span><b>${person.amount == null ? 'Не задана' : esc(rub(person.amount))}</b></div>`).join('')}${financePayrollNoteV5(data)}</details></section>`;
 }
 
 function financePeriodDebtHtmlV5(data, note = true) {
@@ -471,7 +503,7 @@ function financeMedicationUsageHtmlV5(items) {
  return items.map(m => `<div class="item"><div><strong>${esc(m.name)}</strong><div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('');
 }
 function renderShiftReportV5(data, closed = false) {
- const owner = isManager(), used = data.used || [], shiftData = data.shift || {};
+ const owner = isManager(), used = data.used || [], shiftData = data.shift || {}, salaryStaff = financeShiftSalaryStaffV36(data);
  financeReportId5 = shiftData.id || financeReportId5 || shift?.id;
  financeShiftSnapshot5 = {id:financeReportId5,actor:currentStaff?.id,role:currentStaff?.role,session:financeSession5,data:JSON.parse(JSON.stringify(data))};
  clearShiftPrintV5();
@@ -480,7 +512,7 @@ function renderShiftReportV5(data, closed = false) {
  <div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>
  ${owner ? '<div class="no-print">' + financePaymentOnlyNoteV5(data) + '</div>' : ''}
  ${financeShiftSummaryHtmlV16(data)}
- ${owner ? `<h2 class="no-print">Изменить зарплату сотрудников</h2>${(data.staff || []).map(s => `<details class="card salary-v5"><summary>${esc(s.full_name)} · ${s.amount == null ? 'Не задана' : rub(s.amount)}</summary><label for="salaryAmount5-${esc(s.id)}">Оплата за смену, ₽</label><input id="salaryAmount5-${esc(s.id)}" type="number" inputmode="decimal" min="0" step="0.01" value="${s.amount == null ? '' : num(s.amount)}"><label for="salaryReason5-${esc(s.id)}">Причина изменения *</label><input id="salaryReason5-${esc(s.id)}" value=""><p class="small">${s.amount == null ? 'Зарплата для этой смены не задана. Укажите сумму и причину.' : s.reason ? 'Последняя причина: ' + esc(s.reason) : 'Стандартная оплата: 2 000 ₽ за смену'}</p><button class="btn primary wide" onclick="saveSalaryV5('${esc(s.id)}')">Сохранить с указанием причины</button></details>`).join('')}` : ''}
+ ${owner ? `<h2 class="no-print">Изменить зарплату сотрудников</h2>${salaryStaff.map(s => `<details class="card salary-v5"><summary>${esc(s.full_name)} · ${s.amount == null ? 'Не задана' : rub(s.amount)}</summary><label for="salaryAmount5-${esc(s.id)}">Оплата за смену, ₽</label><input id="salaryAmount5-${esc(s.id)}" type="number" inputmode="decimal" min="0" step="0.01" value="${s.amount == null ? '' : num(s.amount)}"><label for="salaryReason5-${esc(s.id)}">Причина изменения *</label><input id="salaryReason5-${esc(s.id)}" value=""><p class="small">${s.amount == null ? 'Зарплата для этой смены не задана. Укажите сумму и причину.' : s.reason ? 'Последняя причина: ' + esc(s.reason) : 'Стандартная оплата: 2 000 ₽ за смену'}</p><button class="btn primary wide" onclick="saveSalaryV5('${esc(s.id)}')">Сохранить с указанием причины</button></details>`).join('')}` : ''}
  ${owner ? `<div class="no-print report-warehouse-v5"><h2>Списано со склада</h2><div class="report-used">${financeMedicationUsageHtmlV5(used) || '<p class="small">Списаний нет.</p>'}</div>
  ${(data.untracked || []).length ? `<h2>Учтено без складского списания</h2><p class="small">Количество препаратов в процедурах и продажах по прайсу. Эти операции включены в выручку и не меняли остатки склада.</p><div class="report-untracked-v5">${financeMedicationUsageHtmlV5(data.untracked)}</div>` : ''}
  <details><summary>Остатки ${owner ? 'склада и рабочего шкафа' : 'рабочего шкафа'}</summary>${(data.stock || []).map(m => `<div class="item"><strong>${esc(m.name)}</strong><div>В работе: ${qty(m.work)} ${esc(m.unit)}${owner ? ' · запас: ' + qty(m.reserve) + ' ' + esc(m.unit) : ''}</div></div>`).join('') || '<p>Нет препаратов.</p>'}</details>
@@ -638,7 +670,13 @@ function financeCsvCellV5(value) {
 }
 function buildFinanceCsvV5(data) {
  const revenue = data.revenue || {};
- const rows = [['Период',data.from,data.to],['Показатель','Значение'],['Получено за период',revenue.total || 0],['Оплата терминалом',revenue.terminal || 0],['Переводы на карту',revenue.owner_card || 0],['Долг',financeDebtAmountV29(data)],['Наличные за период',revenue.cash || 0],['Зарплата за период',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : data.payroll_complete === false ? 'Не задана полностью' : data.payroll_total || 0],['Остаток наличных в кассе',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : data.cash_drawer?.balance ?? 'Не рассчитан: укажите остаток на начало смены'],['Ожидает оплаты после процедуры (не долг)',data.pending_total || 0],['Стоимость процедур и продаж',data.charge_total ?? revenue.total ?? 0],['Пояснение','Погашения долгов учитываются отдельно и не входят в сумму смены. Обычная оплата после процедуры входит в смену.'],[],['Группа','Пациенты','Процедуры','Продажи','Количество','Наличные','Терминал','Переводы на карту','Получено','Долг','Ожидает оплаты']];
+ const rows = [['Период',data.from,data.to],['Показатель','Значение'],['Получено за период',revenue.total || 0],['Оплата терминалом',revenue.terminal || 0],['Переводы на карту',revenue.owner_card || 0],['Долг',financeDebtAmountV29(data)],['Наличные за период',revenue.cash || 0],['Зарплата за период',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeSalaryValueV36(data) ?? 'Не задана полностью'],[financeRemainingLabelV36(data),data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeCashBalanceV36(data) ?? 'Не рассчитан: укажите остаток на начало смены'],['Ожидает оплаты после процедуры (не долг)',data.pending_total || 0],['Стоимость процедур и продаж',data.charge_total ?? revenue.total ?? 0],['Пояснение','Погашения долгов учитываются отдельно и не входят в сумму смены. Обычная оплата после процедуры входит в смену.'],[],['Группа','Пациенты','Процедуры','Продажи','Количество','Наличные','Терминал','Переводы на карту','Получено','Долг','Ожидает оплаты']];
+ if (data.cash_drawer?.salary_auto === true && data.payroll_scope !== 'not_applicable_to_entity_filter') {
+  rows.splice(rows.length - 1,0,['Зарплата учитывается автоматически; отмеченные выплаты повторно не вычитаются.']);
+  for (const person of data.cash_drawer.salary_auto_payroll || data.cash_drawer.payroll || []) rows.splice(rows.length - 1,0,[(data.cash_drawer.scope === 'latest_shift' ? 'Зарплата последней смены: ' : 'Зарплата: ') + (person.staff_name || person.full_name || 'Сотрудник'),person.configured ?? 'Не задана']);
+  if (!data.cash_drawer.opening_confirmed) rows.splice(rows.length - 1,0,['Пояснение к наличным','Наличные на начало смены не указаны и в сумму не включены.']);
+  if (data.cash_drawer.scope === 'latest_shift') rows.splice(rows.length - 1,0,['Пояснение к кассе','Остаток наличных относится к последней смене выбранного периода.']);
+ }
  for (const row of data.rows || []) rows.push([row.label,row.patients_count,row.procedures_count,row.sales_count,row.quantity ?? '',row.revenue?.cash,row.revenue?.terminal,row.revenue?.owner_card,row.revenue?.total,financeDebtAmountV29(row),row.pending_total || 0]);
  return '\uFEFF' + rows.map(row => row.map(financeCsvCellV5).join(';')).join('\r\n');
 }
