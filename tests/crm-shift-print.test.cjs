@@ -62,7 +62,7 @@ test('above-pricelist charge shows surcharge in finance and print without adding
  data.charge_total=1800;data.debt_total=700;
  c.renderShiftReportV5(data,true);
  for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0]),element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
-  for(const phrase of ['По прайсу: <b>1200 ₽','Скидка: <b>0 ₽','Надбавка: <b>300 ₽','К оплате: <b>1500 ₽','Оплачено: <b>800 ₽','Долг: <b>700 ₽','Наличные 500 ₽','терминал 300 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
+  for(const phrase of ['По прайсу: <b>1200 ₽','Скидка: <b>0 ₽','Надбавка: <b>300 ₽','К оплате: <b>1500 ₽','Оплачено: <b>800 ₽','Долг: <b>700 ₽','Наличные: <b>500 ₽','Терминал: <b>300 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
   assert.ok(!html.includes('Скидка: <b>-'));assert.ok(!html.includes('<b>по согласованию</b>'));
  }
  for(const html of [element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
@@ -70,6 +70,41 @@ test('above-pricelist charge shows surcharge in finance and print without adding
   assert.ok(html.includes('1800 ₽'),'Accrued amount includes surcharge, collected revenue stays unchanged');
  }
  assert.ok(!c.financeEventPriceHtmlV14({list_total:1200,charge_total:1000}).includes('Надбавка:'));
+});
+
+test('event finance and ordinary receipts identify exact mixed methods while debt repayments stay separate',()=>{
+ const {c}=boot(),event={paid_total:125.25,received_total:875.25,charge_total:1000,debt_total:124.75,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0},debt_repayments_total:200};
+ const data=report();data.procedures=[{...data.procedures[0],...event}];
+ for(const html of [c.financeEventPaymentHtmlV5(event),c.buildShiftPrintV5(data)]){
+  for(const phrase of ['Наличные: <b>125.25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','не входит в сумму и наличные смены'])assert.ok(html.includes(phrase),phrase);
+ }
+ const receipt=c.financeReceiptHtmlV5({paid_total:550,payments:{terminal:250,owner_card:300}});
+ assert.ok(receipt.includes('Терминал: <b>250 ₽'));assert.ok(receipt.includes('Перевод на карту начальника: <b>300 ₽'));assert.ok(!receipt.includes('data-payment-method="cash"'));
+ assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,125.25,'Adding method labels must not change shift income');
+});
+
+test('event payment labels never invent cash for legacy, pending or malformed splits',()=>{
+ const {c}=boot();
+ const legacy=c.financeEventPaymentHtmlV5({received_total:800,charge_total:800,payments:null});
+ assert.ok(legacy.includes('Способ оплаты не указан: <b>800 ₽'));assert.ok(!legacy.includes('data-payment-method="cash"'));
+ const pending=c.financeEventPaymentHtmlV5({received_total:0,charge_total:800,debt_total:800,payment_pending:true,payments:{cash:0,terminal:0,owner_card:0}});
+ assert.ok(pending.includes('Ожидает оплаты'));assert.ok(!pending.includes('data-payment-method='));
+ const invalid=c.financeEventMethodsHtmlV34({received_total:800,payments:{cash:-20,terminal:200,owner_card:Infinity}});
+ assert.ok(invalid.includes('Терминал: <b>200 ₽'));assert.ok(invalid.includes('Способ оплаты не указан: <b>600 ₽'));assert.ok(!invalid.includes('Infinity'));assert.ok(!invalid.includes('-20'));
+ const inconsistent=c.financeEventMethodsHtmlV34({received_total:800,payments:{cash:99999},debt_repayments_total:1000});
+ assert.ok(inconsistent.includes('Способ оплаты не указан: <b>800 ₽'));assert.ok(!inconsistent.includes('99999'));assert.ok(!inconsistent.includes('Погашено долга отдельно'));
+});
+
+test('shift ordinary-only received amount does not subtract separate debt receipts from channels twice',()=>{
+ const {c}=boot(),data=report();
+ Object.assign(data.procedures[0],{paid_total:125.25,received_total:675.25,lifetime_received_total:875.25,debt_repayments_total:200,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,total:675.25},payments_complete:true});
+ const before=c.financeShiftSummaryAmountsV16(data);
+ for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0]),c.buildShiftPrintV5(data)]){
+  for(const phrase of ['Наличные: <b>125.25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','Оплачено всего: <b>675.25 ₽'])assert.ok(html.includes(phrase),phrase);
+  assert.ok(!html.includes('Способ оплаты не указан'));
+ }
+ assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,125.25);
+ assert.deepEqual(c.financeShiftSummaryAmountsV16(data),before,'Rendering must not change shift financial totals');
 });
 
 test('nurse own shift shows finances without warehouse while owner keeps stock on the application screen',()=>{

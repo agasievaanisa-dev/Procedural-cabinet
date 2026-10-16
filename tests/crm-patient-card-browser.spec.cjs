@@ -45,7 +45,9 @@ test('print from patient detail loads the full latest history and prints only th
 });
 
 test('nurse can print patient history without exposing stock or salaries',async({page})=>{
- const errors=await boot(page,'nurse');await expect(page.locator('#patientCardPrintButtonV20')).toBeVisible();await page.click('#patientCardPrintButtonV20');
+ const errors=await boot(page,'nurse');await expect(page.locator('#patientCardOpenV20')).toHaveText('История процедур');await page.click('#patientCardOpenV20');
+ await expect(page.locator('#patientMedicalCardBodyV20 [data-card-event]')).toHaveCount(238);await expect(page.locator('#patientMedicalCardBodyV20 [data-card-repeat-v33]')).toHaveCount(237);await expect(page.locator('#patientMedicalCardBodyV20 [data-card-edit-v20]')).toHaveCount(0);
+ await page.click('#patientMedicalCardBackV20');await expect(page.locator('#patientCardPrintButtonV20')).toBeVisible();await page.click('#patientCardPrintButtonV20');
  await expect(page.locator('#patientCardPrintV20 [data-card-event]')).toHaveCount(238);expect(await page.evaluate(()=>__cardPrintCalls)).toBe(1);await expect(page.locator('#patientCardPrintV20')).not.toContainText('77777');await expect(page.locator('#patientCardPrintV20')).not.toContainText('Нельзя печатать склад');expect(errors).toEqual([]);
 });
 
@@ -71,4 +73,38 @@ test('full-card edit and payment actions refer to the selected recorded event',a
  await page.evaluate(()=>{window.__cardActions=[];window.editTreatmentV10=(...args)=>__cardActions.push(['edit',...args]);window.openSavedPaymentV14=(...args)=>__cardActions.push(['pay',...args])});
  await page.locator('[data-card-event="procedure-0"] [data-card-edit-v20]').click();await page.locator('[data-card-event="procedure-0"] [data-card-payment-v20]').click();
  expect(await page.evaluate(()=>__cardActions)).toEqual([['edit','procedure','procedure-0'],['pay','procedure','procedure-0',1300,'patient-a',true]]);expect(errors).toEqual([]);
+});
+
+test('nurse sees actual mixed payment methods in history and print with debt repayments separate',async({page})=>{
+ const errors=await boot(page,'nurse');
+ await page.evaluate(()=>{installPaymentControlsV5('proc');installPaymentControlsV5('sale')});
+ for(const prefix of ['proc','sale']){
+  await expect(page.locator('#'+prefix+'PaymentV5 [data-pay-method="owner_card"]')).toHaveText('Перевод на карту начальника');
+  await expect(page.locator('label[for="'+prefix+'PayOwnerCard"]')).toHaveText('Перевод на карту начальника, ₽');
+ }
+ await page.evaluate(()=>{
+  __patientCardHistory={procedures:[{...__patientCardHistory.procedures[0],id:'mixed',paid_total:125.25,received_total:875.25,debt_total:424.75,payment_pending:false,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,cash_received:99999},debt_repayments_total:200}],sales:[]};
+ });
+ await page.click('#patientCardOpenV20');
+ const record=page.locator('#patientMedicalCardBodyV20 [data-card-event="mixed"]');
+ await expect(record.locator('[data-payment-method="cash"]')).toHaveText('Наличные: 125,25 ₽');await expect(record.locator('[data-payment-method="terminal"]')).toHaveText('Терминал: 250 ₽');await expect(record.locator('[data-payment-method="owner_card"]')).toHaveText('Перевод на карту начальника: 300 ₽');
+ await expect(record.locator('[data-payment-method="debt_repayment"]')).toContainText('Погашено долга отдельно: 200 ₽');await expect(record.locator('[data-payment-method="unclassified"]')).toHaveCount(0);
+ await page.click('#patientMedicalCardPrintV20');
+ const printed=page.locator('#patientCardPrintV20 [data-card-event="mixed"]');
+ for(const method of ['cash','terminal','owner_card','debt_repayment'])await expect(printed.locator('[data-payment-method="'+method+'"]')).toHaveText(await record.locator('[data-payment-method="'+method+'"]').textContent());
+ await expect(page.locator('#patientCardPrintV20 button')).toHaveCount(0);await expect(page.locator('#patientCardPrintV20')).not.toContainText('99999');expect(errors).toEqual([]);
+});
+
+test('legacy method remains unclassified and pending zero has no fictitious payment labels on screen or print',async({page})=>{
+ const errors=await boot(page,'nurse');
+ await page.evaluate(()=>{
+  const sample=__patientCardHistory.procedures[0];
+  __patientCardHistory={procedures:[{...sample,id:'legacy',paid_total:800,received_total:800,debt_total:500,payment_pending:false,payments:null},{...sample,id:'waiting',paid_total:0,received_total:0,debt_total:1300,payment_pending:true,payments:{cash:0,terminal:0,owner_card:0}}],sales:[]};
+ });
+ await page.click('#patientCardOpenV20');await page.click('#patientMedicalCardPrintV20');
+ for(const host of ['#patientMedicalCardBodyV20','#patientCardPrintV20']){
+  const legacy=page.locator(host+' [data-card-event="legacy"]');await expect(legacy.locator('[data-payment-method="unclassified"]')).toHaveText('Способ оплаты не указан: 800 ₽');await expect(legacy.locator('[data-payment-method="cash"],[data-payment-method="terminal"],[data-payment-method="owner_card"]')).toHaveCount(0);
+  const waiting=page.locator(host+' [data-card-event="waiting"]');await expect(waiting).toContainText('Ожидает оплаты: 1 300 ₽');await expect(waiting.locator('[data-payment-method]')).toHaveCount(0);
+ }
+ expect(errors).toEqual([]);
 });

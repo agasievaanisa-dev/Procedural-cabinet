@@ -146,13 +146,10 @@ const originalOpenPatient4=openPatient;
 openPatient=async function(id){const token=++patientView4;lastTemplate=null;$('lastProcedure').textContent='Загружаем последнюю процедуру…';await originalOpenPatient4(id);try{const t=await quickRpc('last_procedure',{patient_id:id});if(token!==patientView4||currentPatientId!==id)return;lastTemplate=t;$('lastProcedure').innerHTML=t?`<span class="small">Последняя процедура</span><p>${templateText4(t)}</p><button class="btn primary wide" onclick="repeatLast4('${id}')">Повторить прошлую процедуру</button>`:'Процедур пока нет.'}catch(e){$('lastProcedure').textContent=e.message}};
 async function repeatLast4(id,navigation=null){
  navigation??=beginQuickNavigation4();const actor=currentStaff?.id;
- try{if(!await requireShift4(()=>repeatLast4(id,navigation),navigation))return;const t=await quickRpc('last_procedure',{patient_id:id});if(!t||!quickNavigationCurrent4(navigation,actor))return;
- if(!await prepareTreatment4('procedure',id,navigation)||!quickNavigationCurrent4(navigation,actor))return;$('procMeds').innerHTML='';$('procService').value=services.some(s=>s.id===t.service_id)?t.service_id:'';
- (t.items||[]).forEach(m=>addMedRow('procMeds',m.medication_id,m.quantity,{id:m.medication_id,name:m.name,consumption_unit:m.unit,dose:m.dose}));
- // Current prices, current nurse and no inherited discount/payment/notes.
- calcProcedure();recalc();message('procedureMessage','Черновик заполнен по прошлой процедуре. Проверьте назначение, препараты, количество и оплату перед сохранением.');
- if(!$('procService').value)message('repeatHint','Прежняя услуга недоступна. Выберите действующую услугу из прайса.');
- }catch(e){message('procedureMessage',e.message)}
+ try{const t=await quickRpc('last_procedure',{patient_id:id});if(!t||!quickNavigationCurrent4(navigation,actor))return;
+ if(!t.id||typeof window.repeatPatientProcedureV33!=='function')throw Error('Обновите страницу, чтобы повторить процедуру из полной истории');
+ return await window.repeatPatientProcedureV33(id,t.id,navigation);
+ }catch(e){if(quickNavigationCurrent4(navigation,actor))message($('procedure').classList.contains('active')?'procedureMessage':'patientCardMessageV5',e.message)}
 }
 async function quickTransfer4(id,quantity){
  let draft=quickTransferPendingV16();

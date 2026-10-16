@@ -25,6 +25,20 @@
   }
   return result;
  }
+ function paymentSnapshot(event) {
+  const cents = value => {
+   if (!['number','string'].includes(typeof value) || String(value).trim() === '') return 0;
+   const parsed = Number(value), rounded = Math.round(parsed * 100);
+   return Number.isFinite(parsed) && parsed >= 0 && Number.isSafeInteger(rounded) ? rounded : 0;
+  };
+  const received = cents(event.lifetime_received_total ?? event.received_total ?? event.paid_total ?? event.paid);
+  const candidate = cents(event.debt_repayments_total), repayment = candidate <= received ? candidate : 0;
+  const ordinary = received - repayment, source = event.payments || {};
+  let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card);
+  // A missing or inconsistent legacy split must never turn into presumed cash.
+  if (cash + terminal + owner_card > ordinary) cash = terminal = owner_card = 0;
+  return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,unclassified:(ordinary - cash - terminal - owner_card) / 100,debt_repayments_total:repayment / 100};
+ }
  function eventSnapshot(event, kind) {
   const received = number(event.received_total ?? event.paid_total ?? event.paid), debt = number(event.debt_total ?? event.debt_amount);
   const charge = number(event.charge_total ?? event.charged_total ?? received + debt), list = number(event.list_total ?? charge + number(event.discount_amount));
@@ -33,7 +47,7 @@
    services:serviceRows.map(item => itemSnapshot(item)),items:(Array.isArray(event.items) ? event.items : Array.isArray(event.medications) ? event.medications : []).map(item => itemSnapshot(item)),
    own_medications:(Array.isArray(event.own_medications) ? event.own_medications : []).map(item => itemSnapshot(item,true)),
    patient_owned:event.own_medications === true || event.own_meds === true,list,charge,received,debt,discount:Math.max(0,Math.round((list - charge) * 100) / 100),surcharge:Math.max(0,Math.round((charge - list) * 100) / 100),
-   pending:event.payment_pending === true,editable:event.editable === true,discount_reason:string(event.discount_reason),discount_comment:string(event.discount_comment),notes:string(event.notes)};
+   payments:paymentSnapshot(event),pending:event.payment_pending === true,editable:event.editable === true,discount_reason:string(event.discount_reason),discount_comment:string(event.discount_comment),notes:string(event.notes)};
  }
  function historySnapshot(data) {
   if (!data || !Array.isArray(data.procedures) || !Array.isArray(data.sales)) throw Error('Полная история пока не получена. Повторите загрузку карты.');
@@ -53,10 +67,14 @@
   return `<h3>${label}</h3><ul>${items.map(item => `<li>${escape(item.name || 'Без названия')}${item.dosage ? ' · ' + escape(item.dosage) : ''} × ${escape(quantity(item.quantity))}${item.unit ? ' ' + escape(item.unit) : ''}${item.dose ? ' · Доза: ' + escape(item.dose) : ''}${own ? ' · ' + (item.source === 'previously_purchased' ? 'Ранее куплен в кабинете' : 'Препарат пациента') : ` · ${escape(money(item.unit_price))} за единицу · ${escape(money(item.line_total))}`}</li>`).join('')}</ul>`;
  }
  function actionsHtml(event) {
-  return (event.editable || event.debt > 0) ? `<div class="row patient-card-actions-v20">${event.editable ? `<button type="button" class="btn secondary" data-card-edit-v20="${escape(event.id)}" data-kind="${event.kind}">Редактировать</button>` : ''}${event.debt > 0 ? `<button type="button" class="btn primary" data-card-payment-v20="${escape(event.id)}" data-kind="${event.kind}">${event.pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : ''}</div>` : '';
+  return (event.editable || event.debt > 0 || event.kind === 'procedure') ? `<div class="row patient-card-actions-v20">${event.kind === 'procedure' ? `<button type="button" class="btn secondary" data-card-repeat-v33="${escape(event.id)}" data-kind="procedure">Повторить</button>` : ''}${event.editable ? `<button type="button" class="btn secondary" data-card-edit-v20="${escape(event.id)}" data-kind="${event.kind}">Редактировать</button>` : ''}${event.debt > 0 ? `<button type="button" class="btn primary" data-card-payment-v20="${escape(event.id)}" data-kind="${event.kind}">${event.pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : ''}</div>` : '';
+ }
+ function paymentMethodsHtml(payments) {
+  const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+  return `<div class="patient-payment-methods-v34">${rows.filter(([key]) => payments[key] > 0).map(([key,label]) => `<div data-payment-method="${key}">${label}: <b>${escape(money(payments[key]))}</b></div>`).join('')}${payments.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${escape(money(payments.debt_repayments_total))}</b></div>` : ''}</div>`;
  }
  function eventsHtml(events, interactive = false) {
-  return `<ol class="patient-card-events-v20">${events.map((event,index) => `<li class="patient-card-event-v20" data-card-event="${escape(event.id)}"><h2>${index + 1}. ${escape(event.kind === 'sale' ? 'Продажа препарата' : event.type || 'Процедура')}</h2><p>${escape(date(event.at,true))} · Москва${event.nurse ? ' · Медсестра: ' + escape(event.nurse) : ''}</p>${itemListHtml(event.services,'Услуги')}${itemListHtml(event.items,'Препараты кабинета')}${itemListHtml(event.own_medications,'Препараты пациента',true)}${event.patient_owned && !event.own_medications.length ? '<p>Пациент со своими препаратами</p>' : ''}<div class="patient-card-payment-v20"><div>По прайсу: <b>${escape(money(event.list))}</b></div><div>Скидка: <b>${escape(money(event.discount))}</b></div>${event.surcharge > 0 ? `<div>Надбавка: <b>${escape(money(event.surcharge))}</b></div>` : ''}<div>К оплате: <b>${escape(money(event.charge))}</b>${event.charge === 0 ? ' · Бесплатно' : ''}</div><div>Оплачено всего: <b>${escape(money(event.received))}</b></div><div>${event.pending && event.debt > 0 ? 'Ожидает оплаты' : 'В долг'}: <b>${escape(money(event.debt))}</b></div></div>${event.discount_reason || event.discount_comment ? `<p>Причина изменения стоимости: ${escape([event.discount_reason,event.discount_comment].filter(Boolean).join(' · '))}</p>` : ''}${event.notes ? `<p class="patient-card-note-v20">Комментарий: ${escape(event.notes)}</p>` : ''}${interactive ? actionsHtml(event) : ''}</li>`).join('') || '<li class="patient-card-empty-v20">История процедур и продаж пока пустая.</li>'}</ol>`;
+  return `<ol class="patient-card-events-v20">${events.map((event,index) => `<li class="patient-card-event-v20" data-card-event="${escape(event.id)}"><h2>${index + 1}. ${escape(event.kind === 'sale' ? 'Продажа препарата' : event.type || 'Процедура')}</h2><p>${escape(date(event.at,true))} · Москва${event.nurse ? ' · Медсестра: ' + escape(event.nurse) : ''}</p>${itemListHtml(event.services,'Услуги')}${itemListHtml(event.items,'Препараты кабинета')}${itemListHtml(event.own_medications,'Препараты пациента',true)}${event.patient_owned && !event.own_medications.length ? '<p>Пациент со своими препаратами</p>' : ''}<div class="patient-card-payment-v20"><div>По прайсу: <b>${escape(money(event.list))}</b></div><div>Скидка: <b>${escape(money(event.discount))}</b></div>${event.surcharge > 0 ? `<div>Надбавка: <b>${escape(money(event.surcharge))}</b></div>` : ''}<div>К оплате: <b>${escape(money(event.charge))}</b>${event.charge === 0 ? ' · Бесплатно' : ''}</div><div>Оплачено всего: <b>${escape(money(event.received))}</b></div>${paymentMethodsHtml(event.payments)}<div>${event.pending && event.debt > 0 ? 'Ожидает оплаты' : 'В долг'}: <b>${escape(money(event.debt))}</b></div></div>${event.discount_reason || event.discount_comment ? `<p>Причина изменения стоимости: ${escape([event.discount_reason,event.discount_comment].filter(Boolean).join(' · '))}</p>` : ''}${event.notes ? `<p class="patient-card-note-v20">Комментарий: ${escape(event.notes)}</p>` : ''}${interactive ? actionsHtml(event) : ''}</li>`).join('') || '<li class="patient-card-empty-v20">История процедур и продаж пока пустая.</li>'}</ol>`;
  }
  function totalsHtml(events) {
   const total = key => events.reduce((sum,event) => sum + Math.round(number(event[key]) * 100),0) / 100;
@@ -65,7 +83,7 @@
  function buildPatientCardHtml(patient, events, interactive = false) {
   return `<header><p>Процедурный кабинет</p><h1>Карта пациента</h1><h2>${escape(patient.full_name)}</h2>${profileHtml(patient)}</header><section aria-label="История процедур и продаж"><h2>История процедур и продаж · ${events.length}</h2>${eventsHtml(events,interactive)}</section>${totalsHtml(events)}`;
  }
- const pure = {patientSnapshot,eventSnapshot,historySnapshot,buildPatientCardHtml};
+ const pure = {patientSnapshot,eventSnapshot,historySnapshot,buildPatientCardHtml,paymentSnapshot};
  if (typeof module === 'object' && module.exports) module.exports = pure;
  if (typeof document === 'undefined') return;
  global.CrmPatientCardV20 = pure;
@@ -114,15 +132,16 @@
  };
  function install() {
   const controls = $('patientCard').querySelector('.patient-controls-v5');
-  const printControls = document.createElement('div'); printControls.className = 'row patient-card-toolbar-v20'; printControls.innerHTML = '<button id="patientCardOpenV20" type="button" class="btn secondary">Карта пациента и история</button><button id="patientCardPrintButtonV20" type="button" class="btn secondary">Печать карты пациента / PDF</button>';
+  const printControls = document.createElement('div'); printControls.className = 'row patient-card-toolbar-v20'; printControls.innerHTML = '<button id="patientCardOpenV20" type="button" class="btn secondary">История процедур</button><button id="patientCardPrintButtonV20" type="button" class="btn secondary">Печать карты пациента / PDF</button>';
   controls.after(printControls); $('patientCardOpenV20').onclick = () => global.openPatientMedicalCardV20(); $('patientCardPrintButtonV20').onclick = global.printPatientCardV20;
   const screen = document.createElement('section'); screen.id = 'patientMedicalCardV20'; screen.className = 'screen'; screen.innerHTML = '<div class="row patient-card-toolbar-v20"><button id="patientMedicalCardBackV20" type="button" class="btn secondary">Назад к пациенту</button><button id="patientMedicalCardRefreshV20" type="button" class="btn secondary">Обновить карту</button><button id="patientMedicalCardPrintV20" type="button" class="btn primary">Печать / PDF</button></div><div id="patientMedicalCardMessageV20" role="status"></div><article id="patientMedicalCardBodyV20" class="card"></article>';
   $('patientCard').after(screen); $('patientMedicalCardBackV20').onclick = () => openPatient(currentPatientId); $('patientMedicalCardRefreshV20').onclick = () => global.openPatientMedicalCardV20(); $('patientMedicalCardPrintV20').onclick = global.printPatientCardV20;
   screen.addEventListener('click',event => {
-   const button = event.target.closest('[data-card-edit-v20],[data-card-payment-v20]'); if (!button || !snapshot || !current(snapshot)) return;
-   const kind = button.dataset.kind, id = button.dataset.cardEditV20 || button.dataset.cardPaymentV20, record = snapshot.events.find(item => item.id === id && item.kind === kind);
+   const button = event.target.closest('[data-card-edit-v20],[data-card-payment-v20],[data-card-repeat-v33]'); if (!button || !snapshot || !current(snapshot)) return;
+   const kind = button.dataset.kind, id = button.dataset.cardEditV20 || button.dataset.cardPaymentV20 || button.dataset.cardRepeatV33, record = snapshot.events.find(item => item.id === id && item.kind === kind);
    if (!record) return;
-   if (button.dataset.cardEditV20 && record.editable) global.editTreatmentV10(kind,id);
+   if (button.dataset.cardRepeatV33 && kind === 'procedure') global.repeatPatientProcedureV33(snapshot.patient.id,id);
+   else if (button.dataset.cardEditV20 && record.editable) global.editTreatmentV10(kind,id);
    else if (button.dataset.cardPaymentV20 && record.debt > 0) global.openSavedPaymentV14(kind,id,record.debt,snapshot.patient.id,record.pending);
   });
   const originalOpen = openPatient;

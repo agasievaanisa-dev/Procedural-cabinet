@@ -87,7 +87,7 @@
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
  const forms = {proc:null,sale:null}, requests = new Map(), ambiguousRequests16 = new Set(), pendingPayments16 = new Map(), debtPurposes29 = new Map();
- let session = 0, patientView = 0, editorView = 0, debtBusy = false;
+ let session = 0, patientView = 0, editorView = 0, repeatView = 0, repeatPreparationV33 = null, debtBusy = false;
  const amount = value => (value / 100).toFixed(2);
  const state = prefix => forms[prefix];
  function actorKey() { return JSON.stringify([currentStaff?.id,currentStaff?.role,session]); }
@@ -332,12 +332,12 @@
  }
  helpers.templateState = function() {
   const s = state('proc');
-  return {ready:!!s,locked:!s || !!s.retry || clinicalBusy || !!s.correctionSavingV22,editing:!!s?.edit,hasSelection:!!$('procMeds')?.querySelector('.medrow') || !!$('procAdditionalServicesV10')?.querySelector('.clinical-service-v10')};
+  return {ready:!!s,locked:!s || !!s.retry || clinicalBusy || !!repeatPreparationV33 || !!s.correctionSavingV22,editing:!!s?.edit,hasSelection:!!$('procMeds')?.querySelector('.medrow') || !!$('procAdditionalServicesV10')?.querySelector('.clinical-service-v10')};
  };
  helpers.applyTemplate = function(template, mode = 'replace') {
   const s = state('proc');
   if (!s || !currentStaff?.id || currentStaff.active === false) throw Error('Сначала откройте процедуру пациента');
-  if (s.retry || clinicalBusy || s.correctionSavingV22) throw Error('Дождитесь подтверждения сохранения процедуры перед применением шаблона');
+  if (s.retry || clinicalBusy || repeatPreparationV33 || s.correctionSavingV22) throw Error('Дождитесь загрузки или подтверждения сохранения процедуры перед применением шаблона');
   if (!['replace','append'].includes(mode)) throw Error('Выберите, как применить шаблон');
   if (!template || template.active === false) throw Error('Шаблон недоступен');
   const additions = protocolItems(template.items || []);
@@ -495,7 +495,7 @@
   return ready;
  };
  saveTreatment = async function(kind) {
-  if (clinicalBusy) return;
+  if (clinicalBusy || repeatPreparationV33) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale', actor = actorKey(), navigation = quickNavigation4;
   if (state(prefix)?.correctionActorV22 && state(prefix).correctionActorV22 !== actor) { message(kind + 'Message','Учётная запись изменилась. Выйдите и откройте процедуру заново перед исправлением оплаты.'); return; }
   let saved = false, s, model, payload;
@@ -527,6 +527,7 @@
    if (model.status === 'pending' && model.received === 0) $(prefix + 'PayConfirmed').checked = true;
    const allServices = kind === 'procedure' ? selectedServices() : [];
    allServices.forEach(item => positiveWhole(item.quantity,'Количество процедур'));
+   if (!s.edit && allServices.some(item => !services.some(service => service.id === item.service_id && service.active !== false))) throw Error('Услуга недоступна. Замените её или уберите из записи');
    payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly,...visitPayload(prefix)};
    if (!paymentOnly && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) payload.reserve_sale = true;
    if (s.edit && model.received > 0 && shift?.id && shift.id !== s.edit.shift_id) { payload.payment_shift_id=shift.id; payload.payment_nurse_id=[shift.aId,shift.bId].includes(currentStaff.id)?currentStaff.id:shift.aId; }
@@ -563,7 +564,7 @@
  const treatmentBase = treatmentRpc;
  async function saveWithoutPayment(kind) {
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
-  if (clinicalBusy || !state(prefix)) return;
+  if (clinicalBusy || repeatPreparationV33 || !state(prefix)) return;
   if (state(prefix).retry) { await saveTreatment(kind); return; }
   if (correctionSelected(prefix)) { await saveTreatment(kind); return; }
   $(prefix + 'PaymentStatusV10').value = 'pending'; $(prefix + 'ReceivedV10').value = '0.00';
@@ -573,6 +574,49 @@
  global.saveProcedureWithoutPaymentV14 = () => saveWithoutPayment('procedure');
  global.saveSaleWithoutPaymentV14 = () => saveWithoutPayment('sale');
  treatmentRpc = async function(kind,payload) { try { return await treatmentBase(kind,payload); } catch (error) { throw saveError(error,error.status); } };
+ global.repeatPatientProcedureV33 = async function(patientId,id,navigation = null) {
+  if (!currentStaff?.id || currentStaff.active === false || !['owner','admin','nurse'].includes(currentStaff.role) || !id || clinicalBusy || repeatPreparationV33) return false;
+  const activeCard = $('patientCard')?.classList.contains('active') || $('patientMedicalCardV20')?.classList.contains('active');
+  const activeProcedure = $('procedure').classList.contains('active') && $('procPatient').value === patientId;
+  if (navigation === null && !(activeCard && currentPatientId === patientId) && !activeProcedure) return false;
+  if (state('proc')?.correctionSavingV22) return false;
+  if (state('proc')?.retry) { show('procedure'); lockRetryForm('proc'); message('procedureMessage','Сначала повторите предыдущее сохранение. Его результат ещё не подтверждён.'); return false; }
+  navigation ??= beginQuickNavigation4();
+  const actor = actorKey(), staffId = currentStaff.id, openedPatient = currentPatientId, version = ++repeatView;
+  let preparation = null;
+  const current = () => actor === actorKey() && version === repeatView && openedPatient === currentPatientId && quickNavigationCurrent4(navigation,staffId) && (!$('procedure').classList.contains('active') || $('procPatient').value === patientId);
+  const notice = () => $('patientMedicalCardV20')?.classList.contains('active') ? 'patientMedicalCardMessageV20' : $('procedure').classList.contains('active') ? 'procedureMessage' : 'patientCardMessageV5';
+  try {
+   if (!await requireShift4(() => global.repeatPatientProcedureV33(patientId,id,navigation),navigation) || !current()) return false;
+   // Read the selected saved procedure, even when it belongs to a closed shift.
+   // Editing permission is deliberately independent of creating a new draft.
+   const record = await clinicalRpc('treatment_get',{kind:'procedure',id});
+   if (!current() || clinicalBusy || state('proc')?.correctionSavingV22 || state('proc')?.retry) return false;
+   if (!record || record.id !== id || record.patient_id !== patientId) throw Error('Процедура не относится к выбранному пациенту. Обновите его историю');
+   preparation = {actor,navigation,version}; repeatPreparationV33 = preparation;
+   $('procedure').inert = true; $('procedure').setAttribute('aria-busy','true');
+   if (!await prepareTreatment4('procedure',patientId,navigation) || !current() || clinicalBusy || state('proc')?.retry || state('proc')?.correctionSavingV22 || $('procPatient').value !== patientId) return false;
+   $('procMeds').innerHTML = ''; $('procAdditionalServicesV10').innerHTML = ''; $('procOwnMedsV10').innerHTML = '';
+   const selected = Array.isArray(record.services) && record.services.length ? record.services : record.service_id ? [{service_id:record.service_id,name:record.procedure_type,quantity:1}] : [];
+   const main = selected[0];
+   if (main?.service_id && !services.some(service => service.id === main.service_id)) $('procService').add(new Option(main.name || 'Прежняя услуга недоступна',main.service_id));
+   $('procService').value = main?.service_id || '';
+   if (num(main?.quantity) > 1) addService({...main,quantity:num(main.quantity) - 1});
+   selected.slice(1).forEach(item => addService(item));
+   (Array.isArray(record.items) ? record.items : []).forEach(item => addMedRow('procMeds',item.medication_id,item.quantity,{id:item.medication_id,name:item.name,dosage:item.dosage,consumption_unit:item.unit,dose:item.dose}));
+   (Array.isArray(record.own_medications) ? record.own_medications : []).forEach(item => addOwn(item));
+   // A repeat has today's visit time, current prices and a fresh payment state.
+   // Historical discounts, debt, notes, record version and shift are not copied.
+   const now = global.CrmVisitTimeV23.nowParts();
+   $('procVisitDateV23').value = now.date; $('procVisitTimeV23').value = now.time;
+   state('proc').visitTimeV23 = {original:null,date:now.date,time:now.time,manual:false};
+   resetPaymentV5('proc'); recalc(); clearConfirmation('proc');
+   const unavailable = !main?.service_id || selected.some(item => !services.some(service => service.id === item.service_id && service.active !== false)) || (record.items || []).some(item => !meds.some(medicine => medicine.id === item.medication_id && medicine.active !== false));
+   message('procedureMessage','Новая процедура заполнена по выбранной записи. Проверьте препараты, дозы, количество и стоимость. При необходимости измените состав перед сохранением.' + (unavailable ? ' Есть недоступные препараты или услуги: замените или удалите их перед сохранением.' : ''),!unavailable);
+   return true;
+  } catch (error) { if (current()) message(notice(),error.message); return false; }
+  finally { if (preparation && repeatPreparationV33 === preparation) { repeatPreparationV33 = null; $('procedure').inert = false; $('procedure').removeAttribute('aria-busy'); } }
+ };
  global.editTreatmentV10 = async function(kind,id) {
   if (clinicalBusy) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
@@ -626,7 +670,8 @@
    const data = await clinicalRpc('patient_treatments',{patient_id:id});
    if (version !== patientView || id !== currentPatientId || actor !== actorKey()) return;
    const events = treatmentEvents(data);
-   host.innerHTML = `<h2>Оплата и изменения</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}</div>${financeEventPaymentHtmlV5(event)}${(event.own_medications || []).map(item => `<div class="small">${esc(item.name)} × ${qty(item.quantity)} ${esc(item.unit)}${item.dose ? ' · Доза: ' + esc(item.dose) : ''} · ${item.source === 'previously_purchased' ? 'Ранее куплен у нас' : 'Препарат пациента'}</div>`).join('')}${global.treatmentActionsHtmlV14(event)}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
+   host.innerHTML = `<h2>История процедур и продаж</h2>${events.map(event => `<div class="card clinical-history-v10"><strong>${esc(event.kind === 'sale' ? 'Продажа' : event.procedure_type || 'Процедура')}</strong><div class="small">${dateText(event.at || event.visit_at || event.sold_at)}${event.nurse ? ' · Медсестра: ' + esc(event.nurse) : ''}</div>${financeEventDetailsHtmlV5(event)}${financeEventPaymentHtmlV5(event)}${global.treatmentActionsHtmlV14(event)}${event.kind === 'procedure' && event.id ? `<button type="button" class="btn secondary no-print" data-repeat-procedure-v33="${esc(event.id)}">Повторить</button>` : ''}</div>`).join('') || '<p class="small">Записей пока нет.</p>'}`;
+   host.querySelectorAll('[data-repeat-procedure-v33]').forEach(button => { button.onclick = () => global.repeatPatientProcedureV33(id,button.dataset.repeatProcedureV33); });
    const historyButton = document.createElement('button'); historyButton.type = 'button'; historyButton.className = 'btn secondary wide no-print'; historyButton.id = 'patientDebtHistoryV29'; historyButton.textContent = 'Погашения долгов пациента'; historyButton.onclick = () => global.openDebtHistoryV29(id); host.appendChild(historyButton);
   } catch (error) { if (version === patientView && id === currentPatientId && actor === actorKey()) host.innerHTML = `<div class="notice">${esc(error.message)}<button type="button" class="btn secondary wide" onclick="loadPatientClinicalV10()">Повторить</button></div>`; }
  };
@@ -648,7 +693,7 @@
   delete host.dataset.returnToJournal;
   const title = pending ? kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры' : 'Погашение долга';
   const purpose = debtPurposes29.get(kind + ':' + id) || (kind === 'sale' ? 'Продажа препарата' : 'Процедура');
-  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
+  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
   host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   if (pending) {
    let tenderEdited = false;
@@ -776,6 +821,6 @@
  const showBase = show;
  show = function(id) { if (id === 'debtsV10' && !isManager()) { message('homeMessage','Список всех долгов доступен только владельцу'); id = 'workspace'; } if (id === 'debtHistoryV29Screen' && (!currentStaff?.id || (!isManager() && !$('debtHistoryV29Screen')?.dataset.patientId))) id = 'workspace'; showBase(id); };
  const signOutBase = signOut;
- signOut = async function() { session++; patientView++; editorView++; debtView++; debtHistoryView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); debtPurposes29.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10','debtHistoryV29Screen']) if ($(id)) { $(id).innerHTML = ''; delete $(id).dataset.patientId; } await signOutBase(); };
+ signOut = async function() { session++; patientView++; editorView++; repeatView++; repeatPreparationV33 = null; $('procedure').inert = false; $('procedure').removeAttribute('aria-busy'); debtView++; debtHistoryView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); debtPurposes29.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10','debtHistoryV29Screen']) if ($(id)) { $(id).innerHTML = ''; delete $(id).dataset.patientId; } await signOutBase(); };
  global.getClinicalStockRecordV28 = prefix => forms[prefix]?.edit || null;
 })(typeof window === 'object' ? window : globalThis);

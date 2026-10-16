@@ -137,9 +137,9 @@ function installPaymentControlsV5(prefix) {
  const box = document.createElement('div');
  box.id = prefix + 'PaymentV5'; box.className = 'payment-v5';
  box.innerHTML = `<h2>Оплата</h2><div class="pay-methods-v5" role="group" aria-label="Способ оплаты">
-  ${[['cash','💵 Наличные'],['terminal','💳 Терминал'],['owner_card','Перевод владельцу'],['mixed','Смешанная']].map(([method,label]) => `<button type="button" class="btn secondary" data-pay-method="${method}" aria-pressed="false" onclick="selectPaymentMethodV5('${prefix}','${method}')">${label}</button>`).join('')}
+  ${[['cash','💵 Наличные'],['terminal','💳 Терминал'],['owner_card','Перевод на карту начальника'],['mixed','Смешанная']].map(([method,label]) => `<button type="button" class="btn secondary" data-pay-method="${method}" aria-pressed="false" onclick="selectPaymentMethodV5('${prefix}','${method}')">${label}</button>`).join('')}
  </div><div id="${prefix}PayAllocation" class="pay-allocation-v5 hidden">
-  ${[['Cash','Наличные'],['Terminal','Терминал'],['OwnerCard','Перевод на карту владельца']].map(([suffix,label]) => `<div><label for="${prefix}Pay${suffix}">${label}, ₽</label><input id="${prefix}Pay${suffix}" type="number" inputmode="decimal" min="0" step="0.01" value="0.00" oninput="paymentEditedV5('${prefix}')"></div>`).join('')}
+  ${[['Cash','Наличные'],['Terminal','Терминал'],['OwnerCard','Перевод на карту начальника']].map(([suffix,label]) => `<div><label for="${prefix}Pay${suffix}">${label}, ₽</label><input id="${prefix}Pay${suffix}" type="number" inputmode="decimal" min="0" step="0.01" value="0.00" oninput="paymentEditedV5('${prefix}')"></div>`).join('')}
  </div><div id="${prefix}PayTenderBox"><label for="${prefix}PayTender">Получено наличными, ₽</label><input id="${prefix}PayTender" type="number" inputmode="decimal" min="0" step="0.01" oninput="paymentEditedV5('${prefix}',true)"></div>
  <div id="${prefix}PaySummary" class="payment-summary-v5" role="status" aria-live="polite"></div>
  <label class="payment-confirm-v5"><input id="${prefix}PayConfirmed" type="checkbox"> <span>Подтверждаю сумму и способы оплаты</span></label>
@@ -344,16 +344,30 @@ function financeEventDetailsHtmlV5(event) {
  const line = item => `<li>${esc(item.name || item.service_name || 'Без названия')}${item.dosage ? ' · ' + esc(item.dosage) : ''}${item.quantity !== undefined ? ' × ' + esc(qty(item.quantity)) + ' ' + esc(item.unit || '') : ''}${typeof item.dose === 'string' && item.dose ? ' · Доза: ' + esc(item.dose) : ''}${item.line_total !== undefined ? ' · ' + esc(rub(item.line_total)) : ''}${item.source === 'previously_purchased' ? ' · ранее куплен в кабинете' : ''}</li>`;
  return `${serviceItems.length ? `<div class="report-detail-label-v5">Услуги</div><ul>${serviceItems.map(line).join('')}</ul>` : ''}${medications.length ? `<div class="report-detail-label-v5">Препараты кабинета</div><ul>${medications.map(line).join('')}</ul>` : ''}${ownMedications.length ? `<div class="report-detail-label-v5">Препараты пациента</div><ul>${ownMedications.map(line).join('')}</ul>` : event.own_medications === true || event.own_meds === true ? '<p>Пациент со своими препаратами</p>' : ''}${!medications.length && !ownMedications.length && !event.own_medications && !event.own_meds ? '<p>Без препаратов кабинета</p>' : ''}`;
 }
+function financeEventMethodsV34(event) {
+ const cents = value => {
+  if (!['number','string'].includes(typeof value) || String(value).trim() === '') return 0;
+  const parsed = Number(value), rounded = Math.round(parsed * 100);
+  return Number.isFinite(parsed) && parsed >= 0 && Number.isSafeInteger(rounded) ? rounded : 0;
+ };
+ const received = cents(event.lifetime_received_total ?? event.received_total ?? event.paid_total ?? event.paid), candidate = cents(event.debt_repayments_total), repayment = candidate <= received ? candidate : 0;
+ const ordinary = received - repayment, source = event.payments || {};
+ let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card);
+ if (cash + terminal + owner_card > ordinary) cash = terminal = owner_card = 0;
+ return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,unclassified:(ordinary - cash - terminal - owner_card) / 100,debt_repayments_total:repayment / 100};
+}
+function financeEventMethodsHtmlV34(event) {
+ const payments = financeEventMethodsV34(event), rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+ return `<div class="report-payment-methods-v34">${rows.filter(([key]) => payments[key] > 0).map(([key,label]) => `<div data-payment-method="${key}">${label}: <b>${esc(rub(payments[key]))}</b></div>`).join('')}${payments.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(payments.debt_repayments_total))}</b></div>` : ''}</div>`;
+}
 function financeEventPaymentHtmlV5(event) {
  const amounts = financeEventAmountsV5(event),pending = event.payment_pending === true;
  const reason = [event.discount_reason,event.discount_comment].filter(Boolean).join(' · ');
- const payments = event.payments;
- return `${financeEventPriceHtmlV14(event)}<div class="report-event-payment-v5"><span>${event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span>${amounts.debt > 0 ? `<span>${pending ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b></span>` : ''}</div>${pending && amounts.debt > 0 ? '<p class="small">Пациент ещё на процедуре или ожидает расчёта. Это не долг.</p>' : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${payments ? `<p>Наличные ${esc(rub(payments.cash))} · терминал ${esc(rub(payments.terminal))} · перевод на карту ${esc(rub(payments.owner_card))}</p>` : ''}`;
+ return `${financeEventPriceHtmlV14(event)}<div class="report-event-payment-v5"><span>${event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span>${amounts.debt > 0 ? `<span>${pending ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b></span>` : ''}</div>${pending && amounts.debt > 0 ? '<p class="small">Пациент ещё на процедуре или ожидает расчёта. Это не долг.</p>' : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${financeEventMethodsHtmlV34(event)}`;
 }
 
 function financeReceiptHtmlV5(receipt) {
- const payments = receipt.payments || {};
- return `<p><b>Получено: ${esc(rub(receipt.paid_total))}</b></p><p>Наличные ${esc(rub(payments.cash))} · терминал ${esc(rub(payments.terminal))} · перевод ${esc(rub(payments.owner_card))}</p>${receipt.comment ? `<p>Комментарий: ${esc(receipt.comment)}</p>` : ''}`;
+ return `<p><b>Получено: ${esc(rub(receipt.paid_total))}</b></p>${financeEventMethodsHtmlV34(receipt)}${receipt.comment ? `<p>Комментарий: ${esc(receipt.comment)}</p>` : ''}`;
 }
 function financeReceiptEventsHtmlV5(receipts = []) {
  return receipts.map(receipt => `<div class="item report-event-v5"><div class="row between"><strong>${esc(receipt.patient || 'Без пациента')}</strong><b>${esc(rub(receipt.paid_total))}</b></div><p>${esc(financeDateTimeV5(receipt.at))} · Москва · ${esc(receipt.nurse || '')}</p>${financeReceiptHtmlV5(receipt)}</div>`).join('');

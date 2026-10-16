@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {patientSnapshot,historySnapshot,buildPatientCardHtml}=require('../crm-patient-card-v20.js');
+const {patientSnapshot,historySnapshot,buildPatientCardHtml,paymentSnapshot}=require('../crm-patient-card-v20.js');
 
 const patient={id:'patient-1',full_name:'Анна <script>bad()</script>',birth_date:'1980-04-12',sex:'female',phone:'+7 <123>',complaints:'Жалобы <img src=x>',request:'Запрос\nВторая строка',prescriptions:'Назначение врача',notes:'Заметка о пациенте',auth_user_id:'hidden-auth',purchase_price:987654};
 function procedure(overrides={}){
@@ -31,7 +31,7 @@ test('print contains captured unit prices, complete financial history, own medic
  const history=historySnapshot({procedures:[procedure(),procedure({id:'pending',at:'2026-10-12T09:00:00Z',payment_pending:true,list_total:200,charge_total:200,paid_total:0,received_total:0,debt_total:200,discount_reason:null,discount_comment:null})],sales:[]});
  const html=buildPatientCardHtml(patientSnapshot(patient),history);
  for(const phrase of ['Карта пациента','Дата рождения','12.04.1980','Женский','Назначение врача','Сохранённый препарат × 2 амп.','500 ₽ за единицу','1 000 ₽','Скидка: <b>300 ₽','К оплате: <b>1 300 ₽','Оплачено всего: <b>800 ₽','В долг: <b>500 ₽','Ожидает оплаты: <b>200 ₽','Свой препарат × 3 фл.','Ранее куплен в кабинете','Москва','Наталья &lt;img&gt;','Анна &lt;script&gt;bad()&lt;/script&gt;','Жалобы &lt;img src=x&gt;','Комментарий &lt;b&gt;не HTML&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
- for(const secret of ['99999','88888','77777','hidden-warehouse','auth_user_id','stock_deducted','<script>','<img','<button','onclick=','data-card-edit-v20','data-card-payment-v20'])assert.ok(!html.includes(secret),secret);
+ for(const secret of ['99999','88888','77777','hidden-warehouse','auth_user_id','stock_deducted','<script>','<img','<button','onclick=','data-card-edit-v20','data-card-payment-v20','data-card-repeat-v33'])assert.ok(!html.includes(secret),secret);
 });
 
 test('patient-specific dose survives printable snapshots, stays separate from pack dosage and cannot change billed quantities',()=>{
@@ -65,15 +65,50 @@ test('a final price above pricelist prints a positive surcharge and keeps origin
  assert.equal(discounted[0].surcharge,0);assert.ok(!buildPatientCardHtml(patientSnapshot(patient),discounted).includes('Надбавка:'));
 });
 
-test('live card supports authorized edit and payment controls while print strips every control',()=>{
+test('live card supports authorized edit, repeat and payment controls while print strips every control',()=>{
  const history=historySnapshot({procedures:[procedure()],sales:[]});
  const live=buildPatientCardHtml(patientSnapshot(patient),history,true),printed=buildPatientCardHtml(patientSnapshot(patient),history);
- assert.match(live,/data-card-edit-v20="procedure-1"/);assert.match(live,/data-card-payment-v20="procedure-1"/);assert.match(live,/Принять оплату долга/);assert.ok(!printed.includes('<button'));
- const readOnly=historySnapshot({procedures:[procedure({editable:false,debt_total:0,received_total:1300})],sales:[]});assert.ok(!buildPatientCardHtml(patientSnapshot(patient),readOnly,true).includes('<button'));
+ assert.match(live,/data-card-edit-v20="procedure-1"/);assert.match(live,/data-card-payment-v20="procedure-1"/);assert.match(live,/data-card-repeat-v33="procedure-1"/);assert.match(live,/Принять оплату долга/);assert.ok(!printed.includes('<button'));
+ const readOnly=historySnapshot({procedures:[procedure({editable:false,debt_total:0,received_total:1300})],sales:[]});const readOnlyHtml=buildPatientCardHtml(patientSnapshot(patient),readOnly,true);
+ assert.match(readOnlyHtml,/data-card-repeat-v33="procedure-1"/);assert.ok(!readOnlyHtml.includes('data-card-edit-v20'));assert.ok(!readOnlyHtml.includes('data-card-payment-v20'));
+ const sale=historySnapshot({procedures:[],sales:[procedure({id:'sale-1',editable:false,debt_total:0,received_total:1300})]});assert.ok(!buildPatientCardHtml(patientSnapshot(patient),sale,true).includes('data-card-repeat-v33'));
 });
 
 test('malformed or partial history cannot silently become an empty printable card',()=>{
  for(const invalid of [null,{},[],{procedures:[]},{procedures:[],sales:null},{procedures:null,sales:[]}])assert.throws(()=>historySnapshot(invalid),/Полная история/);
  assert.deepEqual(historySnapshot({procedures:[],sales:[]}),[]);
  assert.match(buildPatientCardHtml(patientSnapshot(patient),[]),/История процедур и продаж пока пустая/);
+});
+
+test('patient card and print retain exact ordinary payment channels and separate debt repayments',()=>{
+ const source=procedure({paid_total:125.25,received_total:875.25,debt_total:424.75,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,cash_received:99999,internal:'hidden-channel'},debt_repayments_total:200});
+ const history=historySnapshot({procedures:[source],sales:[]});
+ assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,unclassified:0,debt_repayments_total:200});
+ source.payments.owner_card=777777;
+ for(const interactive of [true,false]){
+  const html=buildPatientCardHtml(patientSnapshot(patient),history,interactive);
+  for(const phrase of ['Наличные: <b>125,25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','не входит в сумму и наличные смены'])assert.ok(html.includes(phrase),phrase);
+  for(const secret of ['99999','777777','hidden-channel','Способ оплаты не указан'])assert.ok(!html.includes(secret),secret);
+ }
+});
+
+test('unknown payment channels stay unknown and unpaid pending cards never show fictitious cash',()=>{
+ const legacy=historySnapshot({procedures:[procedure({received_total:800,payments:null})],sales:[]});
+ const html=buildPatientCardHtml(patientSnapshot(patient),legacy);
+ assert.ok(html.includes('Способ оплаты не указан: <b>800 ₽'));assert.ok(!html.includes('data-payment-method="cash"'));assert.ok(!html.includes('data-payment-method="terminal"'));assert.ok(!html.includes('data-payment-method="owner_card"'));
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:-20,terminal:200,owner_card:Infinity,unclassified:'<img>'}}),{cash:0,terminal:200,owner_card:0,unclassified:600,debt_repayments_total:0});
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:900,terminal:100},debt_repayments_total:900}),{cash:0,terminal:0,owner_card:0,unclassified:800,debt_repayments_total:0});
+ const pending=historySnapshot({procedures:[procedure({paid_total:0,received_total:0,debt_total:1300,payment_pending:true,payments:{cash:0,terminal:0,owner_card:0}})],sales:[]});
+ const waiting=buildPatientCardHtml(patientSnapshot(patient),pending);
+ assert.ok(waiting.includes('Ожидает оплаты: <b>1 300 ₽'));assert.ok(!waiting.includes('data-payment-method='));
+});
+
+test('ordinary-only report totals use lifetime receipts for methods without subtracting debt twice',()=>{
+ const source=procedure({paid_total:125.25,received_total:675.25,lifetime_received_total:875.25,debt_repayments_total:200,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,total:675.25},payments_complete:true});
+ const history=historySnapshot({procedures:[source],sales:[]});
+ assert.equal(history[0].received,675.25);
+ assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,unclassified:0,debt_repayments_total:200});
+ const html=buildPatientCardHtml(patientSnapshot(patient),history);
+ for(const phrase of ['Наличные: <b>125,25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','Оплачено всего: <b>675,25 ₽'])assert.ok(html.includes(phrase),phrase);
+ assert.ok(!html.includes('Способ оплаты не указан'));
 });
