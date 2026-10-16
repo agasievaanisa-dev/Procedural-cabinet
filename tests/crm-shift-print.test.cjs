@@ -132,16 +132,16 @@ test('snapshot preserves report values and new failed loading cannot print a pre
  await c.openReportByIdV5('another-shift');c.printShiftReportV5();assert.equal(c.printCalls,1);assert.ok(!elements.get('shiftPrintV5'));
 });
 
-test('ordinary after-procedure collections print on their collection shift without a second procedure charge',()=>{
+test('ordinary collection with missing original reference prints unnumbered without a second procedure charge',()=>{
  const {c}=boot(),data=report();
  data.procedures[0].received_total=1000;data.procedures[0].debt_total=0;
  data.receipts=[{id:'receipt-1',receipt_kind:'pending_payment',at:'2026-10-11T09:30:00Z',patient:'Оплата после процедуры',nurse:'Лилия',paid_total:200,payments:{cash:200,terminal:0,owner_card:0},comment:'Оплата после капельницы'}];
  const html=c.buildShiftPrintV5(data);
- assert.ok(html.indexOf('Анна &lt;script&gt;')<html.indexOf('<h2>Оплата после процедуры</h2>'));
- assert.ok(html.indexOf('<h2>Оплата после процедуры</h2>')<html.indexOf('<h2>Бесплатная процедура</h2>'));
+ assert.equal((html.match(/class="shift-print-event-v5"/g)||[]).length,3);
+ assert.ok(html.indexOf('</ol>')<html.indexOf('<h2>Оплаты по другим записям</h2>'));
  assert.ok(html.includes('Оплачено всего:'));assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,800,'Lifetime collections cannot increase original shift income');
- const receiptSection=html.split('<h2>Оплата после процедуры</h2>')[1].split('</li>')[0];
- assert.ok(receiptSection.includes('Получено: 200 ₽'));assert.ok(receiptSection.includes('Оплата после капельницы'));assert.ok(!receiptSection.includes('По прайсу'));
+ const receiptSection=html.split('<h2>Оплаты по другим записям</h2>')[1].split('</section>')[0];
+ assert.ok(receiptSection.includes('200 ₽'));assert.ok(receiptSection.includes('Оплата после капельницы'));assert.ok(!receiptSection.includes('По прайсу'));
  assert.ok(html.includes('1300 ₽'),'Debt repayment must not create a new charge');
 });
 

@@ -403,6 +403,27 @@ function financeReceiptHtmlV5(receipt) {
 function financeReceiptEventsHtmlV5(receipts = []) {
  return receipts.map(receipt => `<div class="item report-event-v5"><div class="row between"><strong>${esc(receipt.patient || 'Без пациента')}</strong><b>${esc(rub(receipt.paid_total))}</b></div><p>${esc(financeDateTimeV5(receipt.at))} · Москва · ${esc(receipt.nurse || '')}</p>${financeReceiptHtmlV5(receipt)}</div>`).join('');
 }
+// Presentation links only. The receipt ledger and lifetime payment snapshots
+// remain intact: adding a receipt to received_total would count the money twice.
+function financeShiftDisplayV39(data = {}) {
+ const groups = {procedures:(data.procedures || []).map(event => ({...event,shift_receipts_v39:[]})),sales:(data.sales || []).map(event => ({...event,shift_receipts_v39:[]})),otherReceipts:[]};
+ const targets = new Map();
+ for (const [kind,events] of [['procedure',groups.procedures],['sale',groups.sales]]) for (const event of events) {
+  if (typeof event.id === 'string' && event.id) targets.set(kind + ':' + event.id,event);
+ }
+ for (const receipt of financeShiftReceiptsV29(data)) {
+  const key = ['procedure','sale'].includes(receipt.kind) && typeof receipt.record_id === 'string' && receipt.record_id ? receipt.kind + ':' + receipt.record_id : null;
+  const target = key && targets.get(key);
+  if (target) target.shift_receipts_v39.push(receipt); else groups.otherReceipts.push(receipt);
+ }
+ return groups;
+}
+function financeInlineReceiptsHtmlV39(receipts = [],includePatient = false) {
+ return receipts.length ? `<div class="report-inline-receipts-v39">${receipts.map(receipt => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(receipt.id || '')}">${includePatient ? `<strong>${esc(receipt.patient || 'Без пациента')}</strong> · ` : ''}<span>${receipt.kind === 'sale' ? 'Оплата продажи' : 'Оплата после процедуры'} · <time>${esc(financeDateTimeV5(receipt.at))}</time> · <b>${esc(rub(receipt.paid_total))}</b></span>${financeEventMethodsHtmlV34(receipt)}${receipt.nurse ? `<span>Сотрудник: ${esc(receipt.nurse)}</span>` : ''}${receipt.comment ? `<span>Комментарий: ${esc(receipt.comment)}</span>` : ''}</div>`).join('')}</div>` : '';
+}
+function financeOtherReceiptsHtmlV39(receipts = []) {
+ return receipts.length ? `<section class="shift-print-other-payments-v39"><h2>Оплаты по другим записям</h2><p class="small">По записям вне списка этой смены; в число посещений не входят.</p>${financeInlineReceiptsHtmlV39(receipts,true)}</section>` : '';
+}
 function financeShiftTotalsV5(data) {
  const events = [...(data.procedures || []),...(data.sales || [])];
  return {charge:num(data.charge_total ?? data.charged_total ?? events.reduce((sum,event) => sum + financeEventAmountsV5(event).charge,0)),debt:num(data.debt_total ?? events.reduce((sum,event) => sum + financeEventAmountsV5(event).debt,0))};
@@ -463,15 +484,15 @@ function financePeriodDebtHtmlV5(data, note = true) {
 }
 
 function financeEventsHtmlV5(events = [], kind, owner) {
- return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}${financeEventPaymentHtmlV5(event)}${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}${typeof treatmentActionsHtmlV14 === 'function' ? treatmentActionsHtmlV14(event) : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
+ return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeEventPaymentHtmlV5(event)}${financeInlineReceiptsHtmlV39(event.shift_receipts_v39)}</div>${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}${typeof treatmentActionsHtmlV14 === 'function' ? treatmentActionsHtmlV14(event) : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
 }
 function buildShiftPrintV5(data) {
- const shiftData = data.shift || {};
- const events = [...(data.procedures || []).map(event => ({...event,print_kind:'Процедура'})),...(data.sales || []).map(event => ({...event,print_kind:'Продажа препарата'})),...financeShiftReceiptsV29(data).map(event => ({...event,print_kind:'Оплата после процедуры',print_receipt:true}))].sort((a,b) => {
+ const shiftData = data.shift || {},display = financeShiftDisplayV39(data);
+ const events = [...display.procedures.map(event => ({...event,print_kind:'Процедура'})),...display.sales.map(event => ({...event,print_kind:'Продажа препарата'}))].sort((a,b) => {
   const first = Date.parse(a.at),second = Date.parse(b.at);
   return (Number.isFinite(first) ? first : Infinity) - (Number.isFinite(second) ? second : Infinity) || String(a.id || '').localeCompare(String(b.id || ''));
  });
- return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(shiftData.date || '')} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)} · доплат ${num(financeShiftReceiptsV29(data).length)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))} · Москва${event.nurse ? ' · ' + esc(event.nurse) : ''}</p>${event.print_receipt ? financeReceiptHtmlV5(event) : financeEventDetailsHtmlV5(event) + financeEventPaymentHtmlV5(event)}${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol><footer><h2>Итоги смены</h2>${financeShiftSummaryHtmlV16(data)}</footer>`;
+ return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(shiftData.date || '')} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))} · Москва${event.nurse ? ' · ' + esc(event.nurse) : ''}</p>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeEventPaymentHtmlV5(event)}${financeInlineReceiptsHtmlV39(event.shift_receipts_v39)}</div>${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol>${financeOtherReceiptsHtmlV39(display.otherReceipts)}<footer><h2>Итоги смены</h2>${financeShiftSummaryHtmlV16(data)}</footer>`;
 }
 function clearShiftPrintV5() {
  if (document.body?.classList) document.body.classList.remove('crm-shift-printing-v5');
@@ -503,7 +524,7 @@ function financeMedicationUsageHtmlV5(items) {
  return items.map(m => `<div class="item"><div><strong>${esc(m.name)}</strong><div class="small">Процедуры: ${qty(m.procedure_qty)} · продажи: ${qty(m.sale_qty)}</div></div><strong>${qty(m.quantity)} ${esc(m.unit)}</strong></div>`).join('');
 }
 function renderShiftReportV5(data, closed = false) {
- const owner = isManager(), used = data.used || [], shiftData = data.shift || {}, salaryStaff = financeShiftSalaryStaffV36(data);
+ const owner = isManager(), used = data.used || [], shiftData = data.shift || {}, salaryStaff = financeShiftSalaryStaffV36(data),display = financeShiftDisplayV39(data);
  financeReportId5 = shiftData.id || financeReportId5 || shift?.id;
  financeShiftSnapshot5 = {id:financeReportId5,actor:currentStaff?.id,role:currentStaff?.role,session:financeSession5,data:JSON.parse(JSON.stringify(data))};
  clearShiftPrintV5();
@@ -516,7 +537,7 @@ function renderShiftReportV5(data, closed = false) {
  ${owner ? `<div class="no-print report-warehouse-v5"><h2>Списано со склада</h2><div class="report-used">${financeMedicationUsageHtmlV5(used) || '<p class="small">Списаний нет.</p>'}</div>
  ${(data.untracked || []).length ? `<h2>Учтено без складского списания</h2><p class="small">Количество препаратов в процедурах и продажах по прайсу. Эти операции включены в выручку и не меняли остатки склада.</p><div class="report-untracked-v5">${financeMedicationUsageHtmlV5(data.untracked)}</div>` : ''}
  <details><summary>Остатки ${owner ? 'склада и рабочего шкафа' : 'рабочего шкафа'}</summary>${(data.stock || []).map(m => `<div class="item"><strong>${esc(m.name)}</strong><div>В работе: ${qty(m.work)} ${esc(m.unit)}${owner ? ' · запас: ' + qty(m.reserve) + ' ' + esc(m.unit) : ''}</div></div>`).join('') || '<p>Нет препаратов.</p>'}</details>
- ${financeWarningHtmlV5(data.warnings || [])}</div>` : ''}<details><summary>Процедуры (${num(data.procedures_count)})</summary>${financeEventsHtmlV5(data.procedures,'Процедура',owner)}</details><details><summary>Продажи (${num(data.sales_count)})</summary>${financeEventsHtmlV5(data.sales,'Продажа',owner)}</details>${financeShiftReceiptsV29(data).length ? `<h2>Оплата после процедуры</h2>${financeReceiptEventsHtmlV5(financeShiftReceiptsV29(data))}` : ''}<div id="salaryMessageV5" role="status"></div><div id="reportPrintMessageV5" role="status" class="no-print"></div>`;
+ ${financeWarningHtmlV5(data.warnings || [])}</div>` : ''}<details><summary>Процедуры (${num(data.procedures_count)})</summary>${financeEventsHtmlV5(display.procedures,'Процедура',owner)}</details><details><summary>Продажи (${num(data.sales_count)})</summary>${financeEventsHtmlV5(display.sales,'Продажа',owner)}</details>${financeOtherReceiptsHtmlV39(display.otherReceipts)}<div id="salaryMessageV5" role="status"></div><div id="reportPrintMessageV5" role="status" class="no-print"></div>`;
  const printButton = $('report').querySelector('button[onclick="window.print()"],#reportPrintV5');
  if (printButton) {printButton.id = 'reportPrintV5';printButton.setAttribute('onclick','printShiftReportV5()');printButton.disabled = false;}
  $('report').querySelector('button[onclick="closeShift()"]').classList.toggle('hidden', closed || shiftData.status !== 'open');

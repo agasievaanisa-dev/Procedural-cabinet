@@ -42,7 +42,7 @@ test('nurse shift summary orders ordinary income, methods, real debt, salary and
 test('nurse PDF repeats the summary while preserving ordered patient and medication details',async({page})=>{
  const errors=await boot(page),before=await summary(page).textContent();await page.click('#reportPrintV5');await page.emulateMedia({media:'print'});
  const printed=page.locator('#shiftPrintV5');await expect(printed).toBeVisible();expect(await printed.locator('.shift-financial-summary-v16').textContent()).toBe(before);
- const entries=printed.locator('.shift-print-event-v5');await expect(entries).toHaveCount(4);await expect(entries.nth(0)).toContainText('Покупатель');await expect(entries.nth(1)).toContainText('Сохранённый препарат × 2 фл.');await expect(entries.nth(1)).toContainText(/По прайсу:\s*1\s*100/);await expect(entries.nth(1)).toContainText('Согласованная скидка');await expect(entries.nth(2)).toContainText('Ожидает оплаты');await expect(entries.nth(3)).toContainText('Получено в этой смене');
+ const entries=printed.locator('.shift-print-event-v5');await expect(entries).toHaveCount(3);await expect(entries.nth(0)).toContainText('Покупатель');await expect(entries.nth(1)).toContainText('Сохранённый препарат × 2 фл.');await expect(entries.nth(1)).toContainText(/По прайсу:\s*1\s*100/);await expect(entries.nth(1)).toContainText('Согласованная скидка');await expect(entries.nth(2)).toContainText('Ожидает оплаты');await expect(printed.locator('.shift-print-other-payments-v39')).toContainText('Получено в этой смене');
  await expect(printed).not.toContainText('Не печатать');await expect(printed.locator('input,button,img,script')).toHaveCount(0);await expect(printed).toContainText('Лилия <img src=x>');expect(errors).toEqual([]);
 });
 

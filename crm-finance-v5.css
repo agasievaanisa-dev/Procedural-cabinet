@@ -27,3 +27,41 @@
 
 .finance-simple-summary-v29 .stat small{display:block;margin-top:6px;color:var(--muted);font-size:13px;line-height:1.4}.finance-simple-summary-v29 [data-summary-key="revenue"]{grid-column:1/-1;background:#edf6f4}.finance-simple-summary-v29 [data-summary-key="cash-balance"]{grid-column:1/-1}.finance-simple-summary-v29 .stat b{display:block;line-height:1.35}.finance-details-v29 summary{cursor:pointer;font-weight:600}.debt-history-v29 .item{overflow-wrap:anywhere}.debt-purpose-v29{min-height:80px}@media print{#shiftPrintV5 .no-print{display:none!important}#shiftPrintV5 .finance-simple-summary-v29 [data-summary-key="revenue"],#shiftPrintV5 .finance-simple-summary-v29 [data-summary-key="cash-balance"]{grid-column:1/-1;background:none}}
 #debtHistoryBodyV29{display:grid;gap:10px}.debt-history-v29 .item p{white-space:pre-wrap;line-height:1.5;margin-bottom:0}.debt-history-v29 time{color:var(--muted);font-size:14px}
+
+.report-inline-receipts-v39{margin:8px 0}.report-inline-receipt-v39{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 10px;padding:5px 0;overflow-wrap:anywhere}.report-inline-receipt-v39>.report-payment-methods-v34{flex-basis:100%}.shift-print-other-payments-v39{margin:14px 0}
+/* A4 reports use the paper width even when printing from a narrow phone screen. */
+@page crm-shift-report-v39{size:A4 portrait;margin:10mm}
+@media print{
+ body.crm-shift-printing-v5{margin:0}
+ body.crm-shift-printing-v5>#shiftPrintV5{page:crm-shift-report-v39;width:auto;max-width:none;font-size:10.5pt;line-height:1.25}
+ #shiftPrintV5 h1{font-size:15pt;margin:0 0 5pt}
+ #shiftPrintV5 h2{font-size:11.5pt;margin:0 0 3pt;break-after:avoid}
+ #shiftPrintV5 header{margin:0 0 7pt;padding:0 0 5pt;break-inside:avoid}
+ #shiftPrintV5 p{margin:2pt 0;orphans:2;widows:2}
+ #shiftPrintV5 .small,#shiftPrintV5 small{font-size:10pt;color:#333;line-height:1.25}
+ #shiftPrintV5 .shift-print-events-v5{padding-left:17pt}
+ #shiftPrintV5 .shift-print-event-v5{padding:5pt 0;break-inside:auto;page-break-inside:auto;overflow:visible}
+ #shiftPrintV5 .shift-print-event-v5>h2+p{break-after:avoid}
+ #shiftPrintV5 .report-detail-label-v5{margin-top:3pt;break-after:avoid}
+ #shiftPrintV5 ul{margin:1pt 0 3pt;padding-left:14pt}
+ #shiftPrintV5 ul>li{break-inside:avoid;orphans:2;widows:2}
+ #shiftPrintV5 .report-event-prices-v14,#shiftPrintV5 .report-event-payment-v5,#shiftPrintV5 .report-payment-methods-v34{display:flex;flex-wrap:wrap;gap:2pt 12pt;margin:3pt 0;line-height:1.25;break-inside:avoid}
+ #shiftPrintV5 .report-event-prices-v14>div,#shiftPrintV5 .report-event-payment-v5>span,#shiftPrintV5 .report-payment-methods-v34>div{max-width:100%;overflow-wrap:anywhere}
+ #shiftPrintV5 .report-inline-receipts-v39,#shiftPrintV5 .shift-print-other-payments-v39{margin:4pt 0}
+ #shiftPrintV5 .report-visit-payment-v39{break-inside:avoid;page-break-inside:avoid}
+ #shiftPrintV5 .report-inline-receipt-v39{display:flex;flex-wrap:wrap;gap:1pt 8pt;margin:2pt 0;padding:2pt 0;break-inside:avoid;overflow-wrap:anywhere}
+ #shiftPrintV5 .report-inline-receipt-v39 .report-payment-methods-v34{flex-basis:auto;margin:0}
+ #shiftPrintV5 footer{margin-top:8pt;break-inside:auto;page-break-inside:auto}
+ #shiftPrintV5 .shift-financial-summary-v16{margin:4pt 0}
+ #shiftPrintV5 .finance-totals-v5{display:block;margin:3pt 0}
+ #shiftPrintV5 .finance-simple-summary-v29 .stat{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2pt 12pt;min-height:0;margin:0;padding:3pt 0;border:0;border-bottom:1px solid #ddd;border-radius:0;background:none;break-inside:avoid}
+ #shiftPrintV5 .finance-simple-summary-v29 .stat>span{flex:1;min-width:0}
+ #shiftPrintV5 .finance-simple-summary-v29 .stat>b{display:block;max-width:60%;margin:0;font-size:11pt;line-height:1.25;text-align:right}
+ #shiftPrintV5 .finance-simple-summary-v29 .stat>small{flex-basis:100%;margin:0}
+ #shiftPrintV5 .shift-summary-section-v16{padding:4pt 0;break-inside:auto}
+ #shiftPrintV5 .shift-summary-row-v16{font-size:10.5pt;padding:2pt 0;line-height:1.25;break-inside:avoid}
+ #shiftPrintV5 .notice{margin:3pt 0;padding:4pt;border:1px solid #bbb}
+ #shiftPrintV5 .cash-count-summary-v37{margin:4pt 0}
+ #shiftPrintV5 .cash-count-values-v37{margin:3pt 0}
+ #shiftPrintV5 .cash-count-values-v37>div{padding:2pt 0;gap:8pt}
+}
