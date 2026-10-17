@@ -202,12 +202,15 @@ function syncPaymentV5(prefix, force = false) {
  if (!state.tenderEdited) $(prefix + 'PayTender').value = financeAmountV5(cash);
  renderPaymentSummaryV5(prefix);
 }
+function financeAllocationCentsV43(value, label) {
+ return String(value ?? '').trim() === '' ? 0 : financeCentsV5(value,label);
+}
 function readPaymentsV5(prefix, requireConfirmation = true) {
  if (!financePaymentState5[prefix]) throw Error('Откройте форму оплаты заново');
  const paid = financeCentsV5($(prefix + 'Paid').value, 'Стоимость');
- const cash = financeCentsV5($(prefix + 'PayCash').value, 'Наличные');
- const terminal = financeCentsV5($(prefix + 'PayTerminal').value, 'Терминал');
- const card = financeCentsV5($(prefix + 'PayOwnerCard').value, 'Перевод');
+ const cash = financeAllocationCentsV43($(prefix + 'PayCash').value, 'Наличные');
+ const terminal = financeAllocationCentsV43($(prefix + 'PayTerminal').value, 'Терминал');
+ const card = financeAllocationCentsV43($(prefix + 'PayOwnerCard').value, 'Перевод');
  const tender = cash > 0 ? financeCentsV5($(prefix + 'PayTender').value, 'Получено наличными') : 0;
  if (cash + terminal + card !== paid) throw Error(`Распределите ровно ${rub(paid / 100)} между способами оплаты`);
  if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');

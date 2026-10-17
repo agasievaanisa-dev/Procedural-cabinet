@@ -8,6 +8,9 @@
   if (!Number.isSafeInteger(result)) throw Error(`${label}: слишком большая сумма`);
   return result;
  }
+ function allocationCents(value, label = 'Сумма') {
+  return String(value ?? '').trim() === '' ? 0 : cents(value,label);
+ }
  function paymentModel(input) {
   const list = cents(input.list, 'Стоимость по прайсу'), charge = cents(input.charge, 'Стоимость для пациента');
   const previous = cents(input.previous ?? 0, 'Ранее оплачено'), received = cents(input.received, 'Оплата сейчас');
@@ -82,7 +85,7 @@
   try { return cents(record.paid_total ?? 0) > 0; } catch { return false; }
  }
  const correctionReasonV22 = 'Оплата отмечена ошибочно: деньги не получены';
- const helpers = {cents,paymentModel,ownedItems,doseValue,protocolItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge,paymentCorrectionAllowed};
+ const helpers = {cents,allocationCents,paymentModel,ownedItems,doseValue,protocolItems,mergeServices,pendingUnpaidRecord,editWithoutReason,automaticUnpaidCharge,paymentCorrectionAllowed};
  if (typeof module === 'object' && module.exports) module.exports = helpers;
  if (typeof document === 'undefined') return;
  global.CrmClinicalV10 = helpers;
@@ -469,7 +472,7 @@
   correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
-  const model = currentModel(prefix), cash = cents($(prefix + 'PayCash').value,'Наличные'), terminal = cents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = cents($(prefix + 'PayOwnerCard').value,'Перевод');
+  const model = currentModel(prefix), cash = allocationCents($(prefix + 'PayCash').value,'Наличные'), terminal = allocationCents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = allocationCents($(prefix + 'PayOwnerCard').value,'Перевод');
   if (cash + terminal + ownerCard !== model.received) throw Error(`Распределите ровно ${rub(model.received / 100)} между способами оплаты`);
   const tender = cash ? cents($(prefix + 'PayTender').value,'Получено наличными') : 0;
   if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
@@ -693,26 +696,46 @@
   delete host.dataset.returnToJournal;
   const title = pending ? kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры' : 'Погашение долга';
   const purpose = debtPurposes29.get(kind + ':' + id) || (kind === 'sale' ? 'Продажа препарата' : 'Процедура');
-  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option></select><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
+  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option><option value="mixed">Смешанная оплата</option></select><div id="debtAllocationV43" class="pay-allocation-v5 hidden"><div><label for="debtCashV43">Наличные, ₽</label><input id="debtCashV43" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"></div><div><label for="debtTerminalV43">Терминал, ₽</label><input id="debtTerminalV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div><label for="debtOwnerCardV43">Перевод на карту начальника, ₽</label><input id="debtOwnerCardV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div></div><p id="debtAllocationStatusV43" class="small hidden" role="status" aria-live="polite"></p><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
   host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
+  let refreshPaymentMethodV43;
   if (pending) {
    let tenderEdited = false;
+   refreshPaymentMethodV43 = (syncTender = true) => {
+    const method = $('debtMethodV10').value, mixed = method === 'mixed';
+    $('debtAllocationV43').classList.toggle('hidden',!mixed);
+    $('debtAllocationStatusV43').classList.toggle('hidden',!mixed);
+    const cashValue = method === 'cash' ? $('debtAmountV10').value : mixed ? $('debtCashV43').value : '0';
+    const hasCash = method === 'cash' || (mixed && Number(String(cashValue).replace(',','.')) > 0);
+    $('debtTenderV10').classList.toggle('hidden',!hasCash);
+    $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!hasCash);
+    if (syncTender && !tenderEdited) $('debtTenderV10').value = hasCash ? cashValue : '0.00';
+    if (mixed) {
+     try {
+      const total = allocationCents($('debtCashV43').value,'Наличные') + allocationCents($('debtTerminalV43').value,'Терминал') + allocationCents($('debtOwnerCardV43').value,'Перевод на карту начальника');
+      const paid = allocationCents($('debtAmountV10').value,'Получено сейчас');
+      $('debtAllocationStatusV43').textContent = `Распределено: ${rub(total / 100)} из ${rub(paid / 100)}${total === paid ? '' : '. Суммы по способам оплаты должны совпадать с полученной оплатой'}`;
+     } catch (error) { $('debtAllocationStatusV43').textContent = error.message; }
+    }
+   };
    $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
-   $('debtAmountV10').addEventListener('input',() => { if (!tenderEdited) $('debtTenderV10').value = $('debtAmountV10').value; });
-   $('debtMethodV10').addEventListener('change',() => { const cash = $('debtMethodV10').value === 'cash'; $('debtTenderV10').classList.toggle('hidden',!cash); $('debtTenderV10').previousElementSibling.classList.toggle('hidden',!cash); $('debtConfirmV10').checked = false; });
+   ['debtAmountV10','debtCashV43','debtTerminalV43','debtOwnerCardV43'].forEach(id => $(id).addEventListener('input',() => refreshPaymentMethodV43()));
+   $('debtMethodV10').addEventListener('change',() => { refreshPaymentMethodV43(); $('debtConfirmV10').checked = false; });
   }
   if (retry) {
    $('debtAmountV10').value = amount(retry.paid);
    if (pending) {
     const payments = retry.payload.payments;
     $('debtTenderV10').value = String(payments.cash_received);
-    $('debtMethodV10').value = payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
+    $('debtCashV43').value = String(payments.cash || 0); $('debtTerminalV43').value = String(payments.terminal || 0); $('debtOwnerCardV43').value = String(payments.owner_card || 0);
+    $('debtMethodV10').value = [payments.cash,payments.terminal,payments.owner_card].filter(value => Number(value) > 0).length > 1 ? 'mixed' : payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
     $('debtNoteV10').value = retry.payload.comment || '';
    } else { $('debtDateV29').value = retry.payload.paid_on; $('debtPurposeV29').value = retry.payload.purpose; }
    $('debtConfirmV10').checked = true;
    host.querySelectorAll('input,select,textarea').forEach(input => input.disabled = true);
    message('debtMessageV10','Предыдущее сохранение оплаты ещё не подтверждено. Повторите сохранение — отправим первоначальную оплату без дубля.');
   }
+  if (pending) refreshPaymentMethodV43(!retry);
   show('debtPaymentV10');
  };
  global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
@@ -738,10 +761,16 @@
     let payload = {kind:host.dataset.kind,id:host.dataset.recordId};
     if (pending) {
      if (!shift?.id) throw Error('Для обычной оплаты после процедуры откройте свою смену');
-     const method = $('debtMethodV10').value, tender = method === 'cash' ? cents($('debtTenderV10').value,'Получено наличными') : 0;
-     if (method === 'cash' && tender < paid) throw Error('Получено наличными меньше суммы оплаты');
+     const method = $('debtMethodV10').value;
+     if (!['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты');
+     const cash = method === 'mixed' ? allocationCents($('debtCashV43').value,'Наличные') : method === 'cash' ? paid : 0;
+     const terminal = method === 'mixed' ? allocationCents($('debtTerminalV43').value,'Терминал') : method === 'terminal' ? paid : 0;
+     const ownerCard = method === 'mixed' ? allocationCents($('debtOwnerCardV43').value,'Перевод на карту начальника') : method === 'owner_card' ? paid : 0;
+     if (cash + terminal + ownerCard !== paid) throw Error('Суммы по способам оплаты должны совпадать с полученной оплатой');
+     const tender = cash > 0 ? cents($('debtTenderV10').value,'Получено наличными') : 0;
+     if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
      const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
-     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:method === 'cash' ? paid / 100 : 0,terminal:method === 'terminal' ? paid / 100 : 0,owner_card:method === 'owner_card' ? paid / 100 : 0,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
+     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
     } else {
      const paidOn = $('debtDateV29').value, purpose = $('debtPurposeV29').value.trim();
      const parsedDate = new Date(paidOn + 'T12:00:00Z');
