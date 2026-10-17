@@ -73,9 +73,10 @@ test('pending zero-paid procedure and its later same-shift collection remain one
  c.renderShiftReportV5(paid,true);printed=c.buildShiftPrintV5(paid);
  assert.equal(numbered(printed).length,1,'A receipt is not another procedure or numbered visit');
  assert.equal((printed.match(/<h2>Анна<\/h2>/g)||[]).length,1);
- assert.match(numbered(printed)[0],/Оплачено всего: <b>600 ₽/);
+ assert.match(numbered(printed)[0],/Оплачено: <span data-payment-method="terminal">Терминал: <b>600 ₽/);
+ assert.ok(!numbered(printed)[0].includes('Оплачено всего:'));
  assert.match(numbered(printed)[0],/data-receipt-id="receipt-1"/);
- assert.match(numbered(printed)[0],/Оплата после процедуры · <time>11.10.2026, 09:45<\/time>/);
+ assert.match(numbered(printed)[0],/<time>11.10.2026, 09:45<\/time> · Лилия · Оплата после процедуры/);
  assert.match(numbered(printed)[0],/Терминал: <b>600 ₽/);
  assert.ok(!printed.includes('1200 ₽'),'The cumulative collection must not be added twice');
  assert.ok(!printed.includes('shift-print-other-payments-v39'));
@@ -172,12 +173,13 @@ test('merged view preserves and escapes captured dose, discounts and exact mixed
   receipts:[receipt({id:'receipt-"<img>',nurse:'Лилия <svg>',comment:'После процедуры <script>x</script>',payments:{cash:100,terminal:200,owner_card:300}})]});
  const before=clone(data),expected=['Препарат &lt;b&gt;снимок&lt;/b&gt; · 400 мг / 5 мл × 2 амп. · Доза: 200 мг &lt;img src=x&gt; · 600 ₽',
   'Скидка &lt;script&gt;x&lt;/script&gt; · По решению &quot;владельца&quot;','data-receipt-id="receipt-&quot;&lt;img&gt;"',
-  'Сотрудник: Лилия &lt;svg&gt;','После процедуры &lt;script&gt;x&lt;/script&gt;','Наличные: <b>100 ₽','Терминал: <b>200 ₽','Перевод на карту начальника: <b>300 ₽'];
+  '<time>11.10.2026, 09:45</time> · Лилия &lt;svg&gt;','После процедуры &lt;script&gt;x&lt;/script&gt;','Наличные: <b>100 ₽','Терминал: <b>200 ₽','Перевод на карту начальника: <b>300 ₽'];
  c.renderShiftReportV5(data,true);
  for(const html of [element('reportBody').innerHTML,c.buildShiftPrintV5(data)]) {
   for(const text of expected)assert.ok(html.includes(text),text);
   for(const tag of ['<img','<script','<svg','<iframe'])assert.ok(!html.includes(tag),tag);
-  assert.match(html,/Оплачено всего: <b>600 ₽/);
+  assert.match(html,/Оплачено: <span data-payment-method="cash">Наличные: <b>100 ₽<\/b><\/span> · <span data-payment-method="terminal">Терминал: <b>200 ₽<\/b><\/span> · <span data-payment-method="owner_card">Перевод на карту начальника: <b>300 ₽/);
+  assert.ok(!html.includes('Оплачено всего:')&&!html.includes('Сотрудник:'));
   assert.match(html,/Погашено долга отдельно: <b>50 ₽/);
  }
  const merged=c.financeShiftDisplayV39(data).procedures[0];

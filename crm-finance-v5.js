@@ -353,6 +353,12 @@ function financeShiftSalaryStaffV36(data) {
 function financeWarningHtmlV5(warnings = []) {
  return warnings.length ? `<h2>Предупреждения</h2>${warnings.map(w => `<div class="notice finance-warning-v5"><strong>${esc(w.name || 'Препарат')}</strong> · ${esc(w.message || ({expired:'Есть просроченная партия',expiring:'Истекает срок годности',low_stock:'Минимальный остаток',low_work:'Мало в рабочем шкафу'}[w.type]) || w.type || 'Проверьте остатки')}${w.expiry_date ? ' · ' + esc(w.expiry_date) : ''}</div>`).join('')}` : '<p class="small">Предупреждений по остаткам нет.</p>';
 }
+function financeDateV41(value) {
+ const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+ if (!match) return 'Дата не указана';
+ const [,year,month,day] = match,date = new Date(year + '-' + month + '-' + day + 'T12:00:00Z');
+ return Number.isFinite(+date) && date.toISOString().slice(0,10) === match[0] ? day + '.' + month + '.' + year : 'Дата не указана';
+}
 function financeDateTimeV5(value) {
  if (!value) return 'Время не указано';
  const date = new Date(value);
@@ -419,10 +425,42 @@ function financeShiftDisplayV39(data = {}) {
  return groups;
 }
 function financeInlineReceiptsHtmlV39(receipts = [],includePatient = false) {
- return receipts.length ? `<div class="report-inline-receipts-v39">${receipts.map(receipt => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(receipt.id || '')}">${includePatient ? `<strong>${esc(receipt.patient || 'Без пациента')}</strong> · ` : ''}<span>${receipt.kind === 'sale' ? 'Оплата продажи' : 'Оплата после процедуры'} · <time>${esc(financeDateTimeV5(receipt.at))}</time> · <b>${esc(rub(receipt.paid_total))}</b></span>${financeEventMethodsHtmlV34(receipt)}${receipt.nurse ? `<span>Сотрудник: ${esc(receipt.nurse)}</span>` : ''}${receipt.comment ? `<span>Комментарий: ${esc(receipt.comment)}</span>` : ''}</div>`).join('')}</div>` : '';
+ return receipts.length ? `<div class="report-inline-receipts-v39">${receipts.map(receipt => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(receipt.id || '')}">${includePatient ? `<strong>${esc(receipt.patient || 'Без пациента')}</strong> · ` : ''}${financeReceiptMetaHtmlV41(receipt)}${financePaidLineHtmlV41(financeEventMethodsV34(receipt))}${receipt.comment ? `<span>Комментарий: ${esc(receipt.comment)}</span>` : ''}</div>`).join('')}</div>` : '';
 }
 function financeOtherReceiptsHtmlV39(receipts = []) {
  return receipts.length ? `<section class="shift-print-other-payments-v39"><h2>Оплаты по другим записям</h2><p class="small">По записям вне списка этой смены; в число посещений не входят.</p>${financeInlineReceiptsHtmlV39(receipts,true)}</section>` : '';
+}
+// A visit's methods already include ordinary later collections. Show each
+// collection once; attaching a receipt must never add it to the paid total.
+function financePaidLineHtmlV41(methods, adjustment = '') {
+ const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+ const values = rows.filter(([key]) => methods[key] > 0).map(([key,label]) => `<span data-payment-method="${key}">${label}: <b>${esc(rub(methods[key]))}</b></span>`);
+ return `<div class="report-paid-line-v41">Оплачено: ${values.join(' · ') || '<b>' + esc(rub(0)) + '</b>'}${adjustment}</div>`;
+}
+function financeReceiptMetaHtmlV41(receipt) {
+ return `<span class="report-payment-date-v41"><time>${esc(financeDateTimeV5(receipt.at))}</time>${receipt.nurse ? ' · ' + esc(receipt.nurse) : ''} · ${receipt.kind === 'sale' ? 'Оплата продажи' : 'Оплата после процедуры'}</span>`;
+}
+function financeVisitPaymentHtmlV41(event) {
+ const amounts = financeEventAmountsV5(event),methods = financeEventMethodsV34(event),cents = value => Math.round(num(value) * 100);
+ const keys = ['cash','terminal','owner_card','unclassified'],ordinary = keys.reduce((sum,key) => sum + cents(methods[key]),0);
+ const receipts = financeShiftReceiptsV29({receipts:Array.isArray(event.shift_receipts_v39) ? event.shift_receipts_v39 : []}).slice().sort((a,b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
+ const collections = receipts.map(receipt => ({receipt,total:cents(receipt.paid_total),methods:financeEventMethodsV34({paid_total:receipt.paid_total,payments:receipt.payments})}));
+ const receiptTotal = collections.reduce((sum,item) => sum + item.total,0),residual = ordinary - receiptTotal;
+ const reasons = [...new Set([event.discount_reason,event.discount_comment].filter(value => typeof value === 'string' && value.trim()).map(value => value.trim()))];
+ const difference = Math.round((amounts.list - amounts.charge) * 100),reason = reasons.length ? ' (' + esc(reasons.join(' · ')) + ')' : '';
+ const adjustment = (amounts.charge === 0 ? ' · Бесплатно' : '') + (difference > 0 ? ` · <span class="report-adjustment-v41">со скидкой <b>${esc(rub(difference / 100))}</b>${reason}</span>` : difference < 0 ? ` · <span class="report-adjustment-v41">с надбавкой <b>${esc(rub(-difference / 100))}</b>${reason}</span>` : reason);
+ let lines = '';
+ if (residual >= 0 && collections.every(item => item.total >= 0 && Number.isSafeInteger(item.total))) {
+  const remaining = Object.fromEntries(keys.map(key => [key,cents(methods[key]) - collections.reduce((sum,item) => sum + cents(item.methods[key]),0)]));
+  const exact = keys.every(key => remaining[key] >= 0) && keys.reduce((sum,key) => sum + remaining[key],0) === residual;
+  const baseMethods = exact ? Object.fromEntries(keys.map(key => [key,remaining[key] / 100])) : {unclassified:residual / 100};
+  if (residual > 0 || !collections.length) lines += financePaidLineHtmlV41(baseMethods,collections.length ? '' : adjustment);
+  lines += collections.map((item,index) => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt)}${financePaidLineHtmlV41(item.methods,index === collections.length - 1 ? adjustment : '')}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
+ } else {
+  // Inconsistent legacy snapshots cannot justify additional received money.
+  lines = financePaidLineHtmlV41(methods,adjustment) + collections.map(item => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt)}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
+ }
+ return `<div class="report-visit-payment-v41"><div class="report-price-line-v41">Оплата по прайсу: <b>${esc(rub(amounts.list))}</b></div>${lines}${amounts.debt > 0 ? `<div class="report-unpaid-v41">${event.payment_pending === true ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b>${event.payment_pending === true ? ' · Это не долг.' : ''}</div>` : ''}${methods.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(methods.debt_repayments_total))}</b></div>` : ''}</div>`;
 }
 function financeShiftTotalsV5(data) {
  const events = [...(data.procedures || []),...(data.sales || [])];
@@ -484,7 +522,7 @@ function financePeriodDebtHtmlV5(data, note = true) {
 }
 
 function financeEventsHtmlV5(events = [], kind, owner) {
- return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeEventPaymentHtmlV5(event)}${financeInlineReceiptsHtmlV39(event.shift_receipts_v39)}</div>${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}${typeof treatmentActionsHtmlV14 === 'function' ? treatmentActionsHtmlV14(event) : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
+ return events.map(event => `<div class="item report-event-v5" data-event-id="${esc(event.id || '')}"><div class="row between"><strong>${esc(kind)}: ${esc(event.patient || 'Без пациента')}</strong><b>${esc(rub(financeEventAmountsV5(event).charge))}</b></div>${owner ? financeStockBadgeV5(event) : ''}<div class="small">${esc(financeDateTimeV5(event.at))} · ${esc(event.nurse || '')} · Москва</div>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeVisitPaymentHtmlV41(event)}</div>${event.notes ? `<div class="small">${esc(event.notes)}</div>` : ''}${typeof treatmentActionsHtmlV14 === 'function' ? treatmentActionsHtmlV14(event) : ''}</div>`).join('') || '<p class="small">Записей нет.</p>';
 }
 function buildShiftPrintV5(data) {
  const shiftData = data.shift || {},display = financeShiftDisplayV39(data);
@@ -492,7 +530,7 @@ function buildShiftPrintV5(data) {
   const first = Date.parse(a.at),second = Date.parse(b.at);
   return (Number.isFinite(first) ? first : Infinity) - (Number.isFinite(second) ? second : Infinity) || String(a.id || '').localeCompare(String(b.id || ''));
  });
- return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(shiftData.date || '')} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))} · Москва${event.nurse ? ' · ' + esc(event.nurse) : ''}</p>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeEventPaymentHtmlV5(event)}${financeInlineReceiptsHtmlV39(event.shift_receipts_v39)}</div>${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol>${financeOtherReceiptsHtmlV39(display.otherReceipts)}<footer><h2>Итоги смены</h2>${financeShiftSummaryHtmlV16(data)}</footer>`;
+ return `<header><h1>Процедурный кабинет · Отчёт смены</h1><p><b>Смена:</b> ${esc(financeDateV41(shiftData.date))} · ${esc(shiftData.started_at ? shiftLabel(shiftData.started_at,shiftData.ended_at || shiftData.planned_end_at) : 'Время не указано')} · Москва</p><p><b>Медсёстры:</b> ${esc((data.staff || []).map(staff => staff.full_name).join(', ') || 'Не указаны')}</p><p>${shiftData.status === 'closed' ? 'Смена закрыта' : 'Смена открыта · предварительный отчёт'} · пациентов ${num(data.patients_count)} · процедур ${num(data.procedures_count)} · продаж ${num(data.sales_count)}</p></header><ol class="shift-print-events-v5">${events.map(event => `<li class="shift-print-event-v5"><h2>${esc(event.patient || 'Без пациента')}</h2><p><b>${esc(event.print_kind)}</b> · ${esc(financeDateTimeV5(event.at))}${event.nurse ? ' · ' + esc(event.nurse) : ''} · Москва</p>${financeEventDetailsHtmlV5(event)}<div class="report-visit-payment-v39">${financeVisitPaymentHtmlV41(event)}</div>${event.notes ? `<p>Комментарий: ${esc(event.notes)}</p>` : ''}</li>`).join('') || '<li>За смену записей нет.</li>'}</ol>${financeOtherReceiptsHtmlV39(display.otherReceipts)}<footer><h2>Итоги смены</h2>${financeShiftSummaryHtmlV16(data)}</footer>`;
 }
 function clearShiftPrintV5() {
  if (document.body?.classList) document.body.classList.remove('crm-shift-printing-v5');
@@ -514,7 +552,7 @@ function printShiftReportV5() {
   prepareShiftPrintV5();
   if (typeof crmOpenPrintPreviewV40 === 'function') {
    const saved = financeShiftSnapshot5;
-   return crmOpenPrintPreviewV40({source:$('shiftPrintV5'),title:'Отчёт смены ' + (saved.data.shift?.date || ''),
+   return crmOpenPrintPreviewV40({source:$('shiftPrintV5'),title:'Отчёт смены ' + financeDateV41(saved.data.shift?.date),
     validate:() => financeShiftSnapshot5 === saved && saved.actor === currentStaff?.id && saved.role === currentStaff?.role && saved.session === financeSession5 && saved.id === financeReportId5 && $('report').classList.contains('active'),
     print:() => {prepareShiftPrintV5();window.print();},cleanup:clearShiftPrintV5}).print();
   }
@@ -542,7 +580,7 @@ function renderShiftReportV5(data, closed = false) {
  financeReportId5 = shiftData.id || financeReportId5 || shift?.id;
  financeShiftSnapshot5 = {id:financeReportId5,actor:currentStaff?.id,role:currentStaff?.role,session:financeSession5,data:JSON.parse(JSON.stringify(data))};
  clearShiftPrintV5();
- $('reportBody').innerHTML = `${closed ? '<div class="notice success">Смена закрыта. Итог сохранён.</div>' : ''}<p class="small">${esc(shiftData.date || '')} · ${esc(shiftLabel(shiftData.started_at, shiftData.ended_at || shiftData.planned_end_at))}</p>
+ $('reportBody').innerHTML = `${closed ? '<div class="notice success">Смена закрыта. Итог сохранён.</div>' : ''}<p class="small">${esc(financeDateV41(shiftData.date))} · ${esc(shiftLabel(shiftData.started_at, shiftData.ended_at || shiftData.planned_end_at))}</p>
  <div class="row">${(data.staff || []).map(s => `<span class="pill">${esc(s.full_name)}</span>`).join('')}</div>
  <div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>
  ${owner ? '<div class="no-print">' + financePaymentOnlyNoteV5(data) + '</div>' : ''}
@@ -631,7 +669,7 @@ function requireFinanceSnapshotV5(id) {
 function printFinanceReportV5(id) {
  try {
   const saved = requireFinanceSnapshotV5(id);clearShiftPrintV5();
-  if (typeof crmOpenPrintPreviewV40 === 'function') return crmOpenPrintPreviewV40({source:$(id + 'Body'),title:'Финансовый отчёт ' + (saved.from || '') + ' — ' + (saved.to || ''),
+  if (typeof crmOpenPrintPreviewV40 === 'function') return crmOpenPrintPreviewV40({source:$(id + 'Body'),title:'Финансовый отчёт ' + financeDateV41(saved.from) + ' — ' + financeDateV41(saved.to),
    validate:() => requireFinanceSnapshotV5(id) === saved && $(id).classList.contains('active'),
    print:() => {requireFinanceSnapshotV5(id);clearShiftPrintV5();window.print();}}).print();
   window.print();
@@ -670,7 +708,7 @@ function renderFinanceSummaryV5(data, id) {
  const rows = data.rows || [], shifts = data.shifts || [];
  const basis = data.rows_revenue_basis === 'medication_line_share_of_paid_total' ? '<p class="small">По препаратам показана оплаченная стоимость с учётом скидки. Работа и расходники услуги в эти строки не входят.</p>' : '';
  const operational = `<div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>`;
- return `<p class="small">${esc(data.from)} — ${esc(data.to)} · ${esc(data.time_zone || '')}</p>${operational}<div class="no-print">${financePaymentOnlyNoteV5(data)}</div>${financeSimpleSummaryHtmlV29(data,'период')}${financePeriodDebtHtmlV5(data)}${financePayrollNoteV5(data)}<h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод на карту ${rub(row.revenue?.owner_card)} · долг ${rub(financeDebtAmountV29(row))}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(s.shift_date)} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
+ return `<p class="small">${esc(financeDateV41(data.from))} — ${esc(financeDateV41(data.to))} · ${esc(data.time_zone || '')}</p>${operational}<div class="no-print">${financePaymentOnlyNoteV5(data)}</div>${financeSimpleSummaryHtmlV29(data,'период')}${financePeriodDebtHtmlV5(data)}${financePayrollNoteV5(data)}<h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод на карту ${rub(row.revenue?.owner_card)} · долг ${rub(financeDebtAmountV29(row))}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(financeDateV41(s.shift_date))} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
 }
 async function loadFinanceSummaryV5(id) {
  let token, actor, key;

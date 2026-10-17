@@ -71,7 +71,8 @@ test('an initially unpaid procedure remains one numbered visit after a same-shif
  await expect(page.locator('#reportBody [data-summary-key="loan"] > b')).toHaveText(/0\s*₽/);
  await expect(page.locator('#reportBody [data-summary-key="pending"]')).toContainText(/1\s*000\s*₽/);
  await printReport(page);await expect(entries(page)).toHaveCount(1);
- await expect(entries(page).first()).toContainText(/Оплачено всего:\s*0\s*₽/);
+ await expect(entries(page).first()).toContainText(/Оплачено:\s*0\s*₽/);
+ await expect(entries(page).first()).not.toContainText('Оплачено всего:');
  await expect(entries(page).first()).toContainText('Ожидает оплаты');await finishPrint(page);
 
  // The server now reports the same saved record after collection. No payment
@@ -87,7 +88,8 @@ test('an initially unpaid procedure remains one numbered visit after a same-shif
  await printReport(page);await expect(entries(page)).toHaveCount(1);
  const visit=entries(page).first();await expect(visit.locator('.report-inline-receipt-v39')).toHaveCount(1);
  await expect(visit.locator('time')).toHaveText('11.10.2026, 11:15');await expect(visit).toContainText('11.10.2026, 10:00');
- await expect(visit).toContainText(/Оплачено всего:\s*1\s*000\s*₽/);
+ await expect(visit).toContainText(/Оплачено:\s*Наличные:\s*600\s*₽\s*·\s*Терминал:\s*400\s*₽/);
+ await expect(visit).not.toContainText('Оплачено всего:');
  await expect(visit.locator('.report-inline-receipt-v39')).toContainText('Оплата после процедуры');
  await expect(page.locator('#shiftPrintV5 .shift-print-other-payments-v39')).toHaveCount(0);
  await expect(page.locator('#shiftPrintV5 footer [data-summary-key="revenue"] > b')).toHaveText(/1\s*000\s*₽/);
@@ -159,7 +161,8 @@ test('captured dosage, discounts and receipt fields are escaped and repeated ren
  await expect(visit.locator('.report-inline-receipt-v39')).toHaveAttribute('data-receipt-id',unsafe.id);
  await expect(page.locator('#reportBody script,#reportBody img,#reportBody svg,#shiftPrintV5 script,#shiftPrintV5 img,#shiftPrintV5 svg')).toHaveCount(0);
  expect(await page.evaluate(()=>window.reportInjection)).toBeUndefined();
- await expect(visit).toContainText(/Скидка:\s*200\s*₽/);await expect(visit).toContainText(/К оплате:\s*800\s*₽/);await expect(visit).toContainText(/Оплачено всего:\s*800\s*₽/);
+ await expect(visit).toContainText(/Оплата по прайсу:\s*1\s*000\s*₽/);await expect(visit).toContainText(/со скидкой\s*200\s*₽/);await expect(visit).toContainText(/Оплачено:\s*Наличные:\s*800\s*₽/);
+ for(const redundant of ['К оплате:','Оплачено всего:','Сотрудник:'])await expect(visit).not.toContainText(redundant);
  await expect(page.locator('#shiftPrintV5 footer [data-summary-key="revenue"] > b')).toHaveText(/800\s*₽/);
  await finishPrint(page);await printReport(page);await expect(entries(page)).toHaveCount(1);
  await expect(entries(page).first().locator('.report-inline-receipt-v39')).toHaveCount(1);
@@ -173,7 +176,7 @@ test('mobile print uses compact A4 flow: long visits and the footer can split wh
  await expect(entries(page)).toHaveCount(12);await expect(page.locator('#shiftPrintV5 .report-inline-receipt-v39')).toHaveCount(12);
  const css=await page.evaluate(()=>{
   const style=selector=>getComputedStyle(document.querySelector(selector));
-  const article=style('#shiftPrintV5'),event=style('#shiftPrintV5 .shift-print-event-v5'),footer=style('#shiftPrintV5 footer'),prices=style('#shiftPrintV5 .report-event-prices-v14'),receipt=style('#shiftPrintV5 .report-inline-receipt-v39'),totals=style('#shiftPrintV5 .finance-totals-v5'),stat=style('#shiftPrintV5 .finance-simple-summary-v29 .stat');
+  const article=style('#shiftPrintV5'),event=style('#shiftPrintV5 .shift-print-event-v5'),footer=style('#shiftPrintV5 footer'),prices=style('#shiftPrintV5 .report-price-line-v41'),receipt=style('#shiftPrintV5 .report-inline-receipt-v39'),totals=style('#shiftPrintV5 .finance-totals-v5'),stat=style('#shiftPrintV5 .finance-simple-summary-v29 .stat');
   const pages=Array.from(document.styleSheets).flatMap(sheet=>Array.from(sheet.cssRules||[])).filter(rule=>rule.type===CSSRule.PAGE_RULE).map(rule=>({
    selector:rule.selectorText,size:rule.style.getPropertyValue('size').toLowerCase().trim().split(/\s+/),
    margins:['top','right','bottom','left'].map(side=>CSSNumericValue.parse(rule.style.getPropertyValue('margin-'+side)).to('mm').value)
@@ -186,7 +189,7 @@ test('mobile print uses compact A4 flow: long visits and the footer can split wh
  for(const margin of paper.margins)expect(margin).toBeCloseTo(10,3);
  expect(css.fontSize).toBeLessThanOrEqual(14.1);expect(css.lineHeight/css.fontSize).toBeLessThanOrEqual(1.26);expect(css.maxWidth).toBe('none');
  expect(css.eventBreak).toBe('auto');expect(css.footerBreak).toBe('auto');expect(css.eventPadding).toBeLessThanOrEqual(7);
- expect(css.pricesDisplay).toBe('flex');expect(css.pricesBreak).toBe('avoid');expect(css.receiptBreak).toBe('avoid');
+ expect(css.pricesDisplay).toBe('block');expect(css.pricesBreak).toBe('avoid');expect(css.receiptBreak).toBe('avoid');
  expect(css.totalsDisplay).toBe('block');expect(css.statDisplay).toBe('flex');expect(css.statPadding).toBeLessThanOrEqual(4.1);
  await expect(page.locator('#shiftPrintV5 input,#shiftPrintV5 button')).toHaveCount(0);await expectReadOnly(page);expect(errors).toEqual([]);
 });

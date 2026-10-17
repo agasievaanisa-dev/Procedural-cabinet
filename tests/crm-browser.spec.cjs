@@ -107,7 +107,7 @@ test('failed new finance period cannot export the old report and manual retry pr
  expect(await page.evaluate(()=>window.__printCalls)).toBe(0);
  await page.evaluate(()=>{window.__failSummary=false});
  await page.click('#reportsV5 button[onclick="loadFinanceSummaryV5(\'reportsV5\')"]');
- await expect(page.locator('#reportsV5Body')).toContainText('2026-10-01 — 2026-10-10');
+ await expect(page.locator('#reportsV5Body')).toContainText('01.10.2026 — 10.10.2026');
  await expect(page.locator('#reportsV5Message')).toBeEmpty();
  await expect(page.locator('#reportsV5Csv')).toBeEnabled();
  await page.click('#reportsV5Print');expect(await page.evaluate(()=>window.__printCalls)).toBe(1);
@@ -136,7 +136,7 @@ test('finance filter changes discard an in-flight report and require a fresh res
  await expect(page.locator('#reportsV5Body')).toBeEmpty();
  await expect(page.locator('#reportsV5Csv')).toBeDisabled();
  await page.click('#reportsV5 button[onclick="loadFinanceSummaryV5(\'reportsV5\')"]');
- await expect(page.locator('#reportsV5Body')).toContainText('2026-10-09');
+ await expect(page.locator('#reportsV5Body')).toContainText('09.10.2026');
  const call=await page.evaluate(()=>window.__crmCalls.filter(x=>x.name==='crm_finance_v5'&&x.args.p_action==='summary').at(-1));
  expect(call.args.p_payload).toEqual({from:await page.locator('#reportsV5From').inputValue(),to:'2026-10-09',group_by:'employee',employee_id:'nurse-1'});
  await expect(page.locator('#reportsV5Csv')).toBeEnabled();expect(errors).toEqual([]);

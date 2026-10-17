@@ -37,7 +37,8 @@ test('shift PDF includes chronological patients, full services, medicines, disco
  const {c}=boot(),html=c.buildShiftPrintV5(report());
  assert.ok(html.indexOf('Первый пациент')<html.indexOf('Анна &lt;script&gt;'));
  assert.ok(html.indexOf('Анна &lt;script&gt;')<html.indexOf('Бесплатная процедура'));
- for (const expected of ['Наталья &lt;img','Лилия','08:30–16:00','11.10.2026, 12:00','Капельница со своими препаратами','Дополнительный внутримышечный укол','Милдронат 5 мл × 2 амп.','Препарат пациента 10 мл × 1 фл.','По прайсу:','К оплате:','Оплачено:','Долг:','200 ₽','Согласовано с владельцем','Бесплатно','Итоги смены','1300 ₽','1100 ₽','700 ₽','300 ₽','100 ₽','Зарплата за смену','2000 ₽','2500 ₽','4500 ₽','Остаток наличных в кассе','3400 ₽']) assert.ok(html.includes(expected),expected);
+ for (const expected of ['Наталья &lt;img','Лилия','08:30–16:00','11.10.2026, 12:00','Капельница со своими препаратами','Дополнительный внутримышечный укол','Милдронат 5 мл × 2 амп.','Препарат пациента 10 мл × 1 фл.','Оплата по прайсу:','со скидкой','Оплачено:','Долг:','200 ₽','Согласовано с владельцем','Бесплатно','Итоги смены','1300 ₽','1100 ₽','700 ₽','300 ₽','100 ₽','Зарплата за смену','2000 ₽','2500 ₽','4500 ₽','Остаток наличных в кассе','3400 ₽']) assert.ok(html.includes(expected),expected);
+ for(const redundant of ['К оплате:','Оплачено всего:','Скидка: <b>0 ₽'])assert.ok(!html.includes(redundant),redundant);
  for(const secret of ['Скрыт','99995','99996','Списано со склада','Остатки','Без списания со склада','salaryAmount5-','salaryReason5-','saveSalaryV5(','<script>bad()','<img src=x>']) assert.ok(!html.includes(secret),secret);
 });
 
@@ -61,11 +62,13 @@ test('above-pricelist charge shows surcharge in finance and print without adding
  Object.assign(data.procedures[0],{list_total:1200,charge_total:1500,paid_total:800,debt_total:700,discount_amount:0,discount_reason:'Индивидуальная стоимость',discount_comment:'Дополнительная работа <b>по согласованию</b>'});
  data.charge_total=1800;data.debt_total=700;
  c.renderShiftReportV5(data,true);
- for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0]),element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
+ for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0])]){
   for(const phrase of ['По прайсу: <b>1200 ₽','Скидка: <b>0 ₽','Надбавка: <b>300 ₽','К оплате: <b>1500 ₽','Оплачено: <b>800 ₽','Долг: <b>700 ₽','Наличные: <b>500 ₽','Терминал: <b>300 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
   assert.ok(!html.includes('Скидка: <b>-'));assert.ok(!html.includes('<b>по согласованию</b>'));
  }
  for(const html of [element('reportBody').innerHTML,c.buildShiftPrintV5(data)]){
+  for(const phrase of ['Оплата по прайсу: <b>1200 ₽','с надбавкой <b>300 ₽','Оплачено:','Долг: <b>700 ₽','Наличные: <b>500 ₽','Терминал: <b>300 ₽','Дополнительная работа &lt;b&gt;по согласованию&lt;/b&gt;'])assert.ok(html.includes(phrase),phrase);
+  for(const redundant of ['К оплате:','Оплачено всего:','Скидка: <b>0 ₽','<b>по согласованию</b>'])assert.ok(!html.includes(redundant),redundant);
   for(const unchanged of ['1100 ₽','700 ₽','300 ₽','100 ₽','4500 ₽','3400 ₽'])assert.ok(html.includes(unchanged),unchanged);
   assert.ok(html.includes('1800 ₽'),'Accrued amount includes surcharge, collected revenue stays unchanged');
  }
@@ -100,9 +103,11 @@ test('shift ordinary-only received amount does not subtract separate debt receip
  Object.assign(data.procedures[0],{paid_total:125.25,received_total:675.25,lifetime_received_total:875.25,debt_repayments_total:200,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,total:675.25},payments_complete:true});
  const before=c.financeShiftSummaryAmountsV16(data);
  for(const html of [c.financeEventPaymentHtmlV5(data.procedures[0]),c.buildShiftPrintV5(data)]){
-  for(const phrase of ['Наличные: <b>125.25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','Оплачено всего: <b>675.25 ₽'])assert.ok(html.includes(phrase),phrase);
+  for(const phrase of ['Наличные: <b>125.25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽'])assert.ok(html.includes(phrase),phrase);
   assert.ok(!html.includes('Способ оплаты не указан'));
  }
+ assert.ok(c.financeEventPaymentHtmlV5(data.procedures[0]).includes('Оплачено всего: <b>675.25 ₽'),'Clinical history keeps its existing cumulative total');
+ assert.ok(!c.buildShiftPrintV5(data).includes('Оплачено всего:'),'Shift payments identify their methods without another cumulative line');
  assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,125.25);
  assert.deepEqual(c.financeShiftSummaryAmountsV16(data),before,'Rendering must not change shift financial totals');
 });
@@ -139,7 +144,7 @@ test('ordinary collection with missing original reference prints unnumbered with
  const html=c.buildShiftPrintV5(data);
  assert.equal((html.match(/class="shift-print-event-v5"/g)||[]).length,3);
  assert.ok(html.indexOf('</ol>')<html.indexOf('<h2>Оплаты по другим записям</h2>'));
- assert.ok(html.includes('Оплачено всего:'));assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,800,'Lifetime collections cannot increase original shift income');
+ assert.ok(html.includes('Оплачено:'));assert.ok(!html.includes('Оплачено всего:'));assert.equal(c.financeShiftSummaryAmountsV16(data).procedures,800,'Lifetime collections cannot increase original shift income');
  const receiptSection=html.split('<h2>Оплаты по другим записям</h2>')[1].split('</section>')[0];
  assert.ok(receiptSection.includes('200 ₽'));assert.ok(receiptSection.includes('Оплата после капельницы'));assert.ok(!receiptSection.includes('По прайсу'));
  assert.ok(html.includes('1300 ₽'),'Debt repayment must not create a new charge');

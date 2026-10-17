@@ -65,3 +65,7 @@
  #shiftPrintV5 .cash-count-values-v37{margin:3pt 0}
  #shiftPrintV5 .cash-count-values-v37>div{padding:2pt 0;gap:8pt}
 }
+
+/* Compact payment records: each received amount and adjustment appear once. */
+.report-price-line-v41,.report-paid-line-v41{break-inside:avoid}
+.report-visit-payment-v41{margin:10px 0;line-height:1.45;overflow-wrap:anywhere}.report-price-line-v41,.report-paid-line-v41,.report-unpaid-v41{margin:5px 0}.report-payment-date-v41{display:block;color:var(--muted,#59666b);font-size:.92em}.report-visit-payment-v41 .report-inline-receipt-v39,.shift-print-other-payments-v39 .report-inline-receipt-v39{display:block}.report-adjustment-v41{display:inline}.report-visit-payment-v41 .report-inline-receipt-v39>span:last-child{display:block}.report-visit-payment-v41 .report-inline-receipt-v39 .report-paid-line-v41{margin:3px 0}@media print{#shiftPrintV5 .report-visit-payment-v41{margin:3pt 0;line-height:1.25}#shiftPrintV5 .report-price-line-v41,#shiftPrintV5 .report-paid-line-v41,#shiftPrintV5 .report-unpaid-v41{margin:2pt 0;orphans:2;widows:2}#shiftPrintV5 .report-visit-payment-v41 .report-inline-receipt-v39,#shiftPrintV5 .shift-print-other-payments-v39 .report-inline-receipt-v39{display:block}#shiftPrintV5 .report-payment-date-v41{color:#333}}

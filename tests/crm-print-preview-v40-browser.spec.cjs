@@ -173,9 +173,9 @@ test('period print previews the selected snapshot and changing a filter discards
  const errors=await boot(page,'owner');
  await page.evaluate(()=>{__previewSummaryV40.shifts=[{id:'period-shift',shift_date:'2026-10-15',status:'closed',started_at:'2026-10-15T05:30:00Z',ended_at:'2026-10-15T13:00:00Z',staff:[{full_name:'Медсестра периода Наталья'},{full_name:'Медсестра периода Лилия'}],payroll_total:4000,payroll_complete:true}]});
  await openPeriod(page);
- await expect(page.locator('#crmPrintDocumentV40')).toContainText('2026-10-01');await expect(page.locator('#crmPrintDocumentV40')).toContainText('2026-10-16');await expect(page.locator('#crmPrintDocumentV40')).toContainText('Строка выбранного периода');
+ await expect(page.locator('#crmPrintDocumentV40')).toContainText('01.10.2026');await expect(page.locator('#crmPrintDocumentV40')).toContainText('16.10.2026');await expect(page.locator('#crmPrintDocumentV40')).toContainText('Строка выбранного периода');
  const shiftRow=page.locator('#crmPrintDocumentV40 div.finance-shift-v5');await expect(shiftRow).toHaveCount(1);
- for(const text of ['2026-10-15','Закрыта','Медсестра периода Наталья','Медсестра периода Лилия','зарплата 4 000 ₽'])await expect(shiftRow).toContainText(text);
+ for(const text of ['15.10.2026','Закрыта','Медсестра периода Наталья','Медсестра периода Лилия','зарплата 4 000 ₽'])await expect(shiftRow).toContainText(text);
  await expect(shiftRow).not.toHaveAttribute('onclick');
  await expect(page.locator('#crmPrintDocumentV40 button,#crmPrintDocumentV40 input,#crmPrintDocumentV40 select')).toHaveCount(0);
  await holdPdf(page);

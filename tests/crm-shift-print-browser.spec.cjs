@@ -36,7 +36,8 @@ test('nurse has explicit medication sale action and prints the entire own shift 
  await expect(page.locator('#shiftPrintV5 header')).toContainText('08:30–16:00');await expect(page.locator('#shiftPrintV5 header')).toContainText('Наталья');await expect(page.locator('#shiftPrintV5 header')).toContainText('Лилия <img src=x>');
  const entries=page.locator('#shiftPrintV5 .shift-print-event-v5');await expect(entries).toHaveCount(3);
  await expect(entries.nth(0)).toContainText('Первый пациент');await expect(entries.nth(1)).toContainText('Анна <script>bad()</script>');await expect(entries.nth(2)).toContainText('Вера');
- for (const expected of ['11.10.2026, 12:00','Капельница со своими препаратами','Внутримышечный дополнительный укол','Милдронат 5 мл × 2 амп.','Препарат пациента × 1 фл.','Согласовано с владельцем','К оплате: 900','Оплачено: 700','Долг: 200']) await expect(entries.nth(1)).toContainText(expected);
+ for (const expected of ['11.10.2026, 12:00','Капельница со своими препаратами','Внутримышечный дополнительный укол','Милдронат 5 мл × 2 амп.','Препарат пациента × 1 фл.','Согласовано с владельцем','Оплата по прайсу: 1 200','Оплачено: Наличные: 500','Терминал: 200','со скидкой 300','Долг: 200']) await expect(entries.nth(1)).toContainText(expected);
+ for(const redundant of ['К оплате:','Оплачено всего:','Скидка: 0'])await expect(entries.nth(1)).not.toContainText(redundant);
  await expect(entries.nth(2)).toContainText('Бесплатно');await expect(page.locator('#shiftPrintV5 footer')).toContainText('1 200');await expect(page.locator('#shiftPrintV5 footer')).toContainText('1 000');
  for (const expected of ['Зарплата за смену','2 000','2 500','4 500','Остаток наличных в кассе','3 200']) await expect(page.locator('#shiftPrintV5 footer')).toContainText(expected);
  expect(await page.locator('#shiftPrintV5 input,#shiftPrintV5 button[onclick^="saveSalaryV5"]').count()).toBe(0);
@@ -57,7 +58,7 @@ test('owner stock remains in app but stays outside the printed shift; failed nex
  await expect(page.locator('#reportPrintMessageV5')).toContainText('Сначала откройте');expect(errors).toEqual([]);
 });
 
-for(const role of ['nurse','owner'])test(`${role} print shows captured 14300 list then 2800 discount then 11500 agreed charge before zero paid and full debt`,async({page})=>{
+for(const role of ['nurse','owner'])test(`${role} print shows captured 14300 list, zero paid with 2800 discount and agreed 11500 debt`,async({page})=>{
  const errors=await boot(page,role);
  await page.evaluate(()=>{
   const event={...__reportV10.procedures[0],patient:'Пациент со скидкой без оплаты',list_total:14300,charge_total:11500,paid_total:0,received_total:0,debt_total:11500,discount_comment:'Скидка 2 800 ₽ согласована начальником',payments:{cash:0,terminal:0,owner_card:0},
@@ -70,8 +71,9 @@ for(const role of ['nurse','owner'])test(`${role} print shows captured 14300 lis
  });
  await page.click('#reportPrintV5');expect(await page.evaluate(()=>__printCalls)).toBe(1);await page.emulateMedia({media:'print'});await expect(page.locator('#shiftPrintV5')).toBeVisible();
  const entry=page.locator('#shiftPrintV5 .shift-print-event-v5');await expect(entry).toHaveCount(1);
- for(const amount of [/По прайсу:\s*14\s*300\s*₽/,/Скидка:\s*2\s*800\s*₽/,/К оплате:\s*11\s*500\s*₽/,/Оплачено(?: всего)?:\s*0\s*₽/,/Долг:\s*11\s*500\s*₽/])await expect(entry).toContainText(amount);
- expect(await entry.innerText()).toMatch(/По прайсу:[\s\S]*Скидка:[\s\S]*К оплате:[\s\S]*Оплачено(?: всего)?:[\s\S]*Долг:/);
+ for(const amount of [/Оплата по прайсу:\s*14\s*300\s*₽/,/со скидкой\s*2\s*800\s*₽/,/Оплачено:\s*0\s*₽/,/Долг:\s*11\s*500\s*₽/])await expect(entry).toContainText(amount);
+ expect(await entry.innerText()).toMatch(/Оплата по прайсу:[\s\S]*Оплачено:[\s\S]*со скидкой[\s\S]*Долг:/);
+ for(const redundant of ['К оплате:','Оплачено всего:','Сотрудник:'])await expect(entry).not.toContainText(redundant);
  await expect(entry).toContainText(/Препарат с сохранённой ценой\s*×\s*2\s*фл\./);await expect(entry).toContainText('Капельница по сохранённому прайсу');await expect(entry).toContainText('Скидка 2 800 ₽ согласована начальником');
  for(const changed of ['Услуга после изменения прайса','Переименованный препарат','99 997','99 998'])await expect(entry).not.toContainText(changed);
  await expect(page.locator('#shiftPrintV5 footer')).toContainText('Зарплата за смену');await expect(page.locator('#shiftPrintV5 footer')).toContainText('4 500');expect(await page.locator('#shiftPrintV5 input').count()).toBe(0);
