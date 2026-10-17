@@ -6,7 +6,7 @@
  const date=value=>{const parsed=new Date(value);return Number.isFinite(+parsed)?parsed.toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):'Время не указано';};
  function countHtml(count){
   if(!count)return '<p class="small">Сверка наличных ещё не выполнена.</p>';
-  return `<dl class="cash-count-values-v37"><div><dt>По учёту на момент сверки</dt><dd>${escape(cash(count.expected_cash))}</dd></div><div><dt>Пересчитано наличными</dt><dd>${escape(cash(count.counted_cash))}</dd></div><div><dt>Расхождение</dt><dd>${escape(cash(count.difference))}</dd></div></dl><p class="small">${escape(date(count.created_at))} · Москва${count.staff_name?' · '+escape(count.staff_name):''}</p><p>${count.salary_confirmed===true?'Зарплата выдана полностью':'Зарплата не выдана или выдана не полностью'}</p>${count.reason?`<p>Комментарий: ${escape(count.reason)}</p>`:''}`;
+  return `<dl class="cash-count-values-v37"><div><dt>По учёту на момент сверки</dt><dd>${escape(cash(count.expected_cash))}</dd></div><div><dt>Пересчитано наличными</dt><dd>${escape(cash(count.counted_cash))}</dd></div><div><dt>Расхождение</dt><dd>${escape(cash(count.difference))}</dd></div></dl><p class="small">${escape(date(count.created_at))}${count.staff_name?' · '+escape(count.staff_name):''}</p><p>${count.salary_confirmed===true?'Зарплата выдана полностью':'Зарплата не выдана или выдана не полностью'}</p>${count.reason?`<p>Комментарий: ${escape(count.reason)}</p>`:''}`;
  }
  function cashCountSummaryHtmlV37(drawer){
   const reconciliation=drawer?.reconciliation_v37;if(reconciliation?.required!==true)return '';
