@@ -53,8 +53,9 @@ test('same-shift cash collection prints its amount once after the list price wit
  assert.match(plain,/Оплата по прайсу: 800 ₽/);assert.match(plain,/Оплачено:.*Наличные: 800 ₽/);
  assert.equal(count(plain,'800 ₽'),2,'Only the list price and the actual cash payment repeat this number');
  assert.equal(count(html,'data-payment-method="cash"'),1);assert.equal(count(html,'data-receipt-id="receipt-1"'),1);
- assert.match(plain,/16\.10\.2026, 19:12.*Наталья/);
- for(const old of ['Оплачено всего','К оплате:','Сотрудник:','Скидка: 0'])assert.ok(!plain.includes(old),old);
+ assert.match(plain,/Оплачено:.*Наличные: 800 ₽.*Время оплаты: 19:12/);
+ assert.match(html,/<time>19:12<\/time>/);
+ for(const old of ['16.10.2026','Наталья','Оплата после процедуры','Оплачено всего','К оплате:','Сотрудник:','Скидка: 0'])assert.ok(!plain.includes(old),old);
 });
 
 test('individual terminal payment keeps the discount and its explanation on the payment line',()=>{
@@ -63,6 +64,7 @@ test('individual terminal payment keeps the discount and its explanation on the 
  assert.match(plain,/Оплата по прайсу: 800 ₽/);assert.match(plain,/Оплачено:.*Терминал: 500 ₽.*со скидкой 300 ₽/);
  assert.equal(count(plain,reason),1,'An identical reason/comment is not printed twice');
  assert.equal(count(html,'data-payment-method="terminal"'),1);
+ assert.ok(!plain.includes('Время оплаты:')&&!html.includes('<time>'),'The visit timestamp cannot stand in for an unknown initial payment time');
  for(const old of ['Оплачено всего','К оплате:','Скидка:'])assert.ok(!plain.includes(old),old);
 });
 
@@ -71,6 +73,7 @@ test('initial mixed payment and later receipt subtract in cents instead of repea
  const html=c.financeVisitPaymentHtmlV41(procedure({list_total:800,charge_total:700,initial_paid_total:100,paid_total:100,received_total:700,lifetime_received_total:700,payments:{cash:100,terminal:600,owner_card:0},shift_receipts_v39:[part]})),plain=text(html);
  assert.equal(count(html,'data-payment-method="cash"'),1);assert.equal(count(html,'data-payment-method="terminal"'),1);
  assert.match(plain,/Наличные: 100 ₽/);assert.match(plain,/Терминал: 600 ₽/);assert.ok(!plain.includes('700 ₽'),'No extra cumulative paid amount');
+ assert.match(plain,/Терминал: 600 ₽.*Время оплаты: 19:12/);assert.equal(count(html,'<time>19:12</time>'),1);
  const decimal=c.financeVisitPaymentHtmlV41(procedure({list_total:0.3,charge_total:0.3,received_total:0.3,lifetime_received_total:0.3,payments:{cash:0.1,terminal:0.2},shift_receipts_v39:[receipt({paid_total:0.2,payments:{terminal:0.2}})]}));
  assert.ok(!decimal.includes('0.099999')&&!decimal.includes('0.199999')&&!decimal.includes('-0.'));
  assert.match(text(decimal),/Наличные: 0\.1 ₽/);assert.match(text(decimal),/Терминал: 0\.2 ₽/);
@@ -96,9 +99,27 @@ test('waiting payment stays distinct from true debt, and free care and a surchar
 
 test('clinical details and escaped discount/receipt notes survive without repeated employee labels',()=>{
  const {c}=boot(),html=c.financeVisitPaymentHtmlV41(procedure({list_total:800,charge_total:500,received_total:500,lifetime_received_total:500,payments:{cash:500},discount_reason:'Скидка <script>alert(1)</script>',discount_comment:'Причина "индивидуальная"',shift_receipts_v39:[receipt({id:'receipt-"<img>',paid_total:500,payments:{cash:500},nurse:'Наталья <svg>',comment:'Оплата <iframe> сохранена'})]}));
- for(const escaped of ['&lt;script&gt;','&quot;индивидуальная&quot;','&lt;svg&gt;','&lt;iframe&gt;','data-receipt-id="receipt-&quot;&lt;img&gt;"'])assert.ok(html.includes(escaped),escaped);
+ for(const escaped of ['&lt;script&gt;','&quot;индивидуальная&quot;','&lt;iframe&gt;','data-receipt-id="receipt-&quot;&lt;img&gt;"'])assert.ok(html.includes(escaped),escaped);
  for(const tag of ['<script','<img','<svg','<iframe'])assert.ok(!html.includes(tag),tag);
+ assert.ok(!html.includes('Наталья')&&!html.includes('&lt;svg&gt;'),'Attached payment omits the employee already identified by the visit header');
  assert.ok(!html.includes('Сотрудник:'));assert.equal(count(text(html),'Оплата &lt;iframe&gt; сохранена'),1);
+});
+
+test('attached payment repeats only its Moscow clock time, while standalone receipts retain their date and employee',()=>{
+ const {c}=boot(),data=report({receipts:[receipt({nurse:'Кассир <svg>'})]}),printed=c.buildShiftPrintV5(data);
+ const visit=printed.split('<li class="shift-print-event-v5">')[1].split('</ol>')[0],plain=text(visit);
+ assert.equal(count(plain,'16.10.2026'),1,'The date belongs only to the visit header');
+ assert.equal(count(plain,'Наталья'),1,'The visit employee belongs only to the visit header');
+ assert.match(plain,/16\.10\.2026, 18:35.*Наталья/);assert.match(plain,/Время оплаты: 19:12/);
+ assert.ok(!plain.includes('Кассир')&&!plain.includes('Оплата после процедуры'));
+ const standalone=text(c.financeInlineReceiptsHtmlV39([receipt({nurse:'Кассир <svg>'})],true));
+ assert.match(standalone,/16\.10\.2026, 19:12.*Кассир &lt;svg&gt;/);
+ assert.ok(!standalone.includes('<svg>'));
+ for(const at of [undefined,null,'','not-a-date']){
+  const html=c.financeVisitPaymentHtmlV41(procedure({shift_receipts_v39:[receipt({at})]}));
+  assert.ok(!html.includes('Время оплаты:')&&!html.includes('<time>'),String(at));
+  assert.match(text(html),/Наличные: 800 ₽/,'Missing time never hides the actual payment');
+ }
 });
 
 test('screen and print transformations preserve frozen snapshots, shift cash and numbering without data writes',()=>{

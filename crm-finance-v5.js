@@ -432,12 +432,18 @@ function financeOtherReceiptsHtmlV39(receipts = []) {
 }
 // A visit's methods already include ordinary later collections. Show each
 // collection once; attaching a receipt must never add it to the paid total.
-function financePaidLineHtmlV41(methods, adjustment = '') {
+function financePaidLineHtmlV41(methods, adjustment = '', receipt = null) {
  const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
  const values = rows.filter(([key]) => methods[key] > 0).map(([key,label]) => `<span data-payment-method="${key}">${label}: <b>${esc(rub(methods[key]))}</b></span>`);
- return `<div class="report-paid-line-v41">Оплачено: ${values.join(' · ') || '<b>' + esc(rub(0)) + '</b>'}${adjustment}</div>`;
+ const time = receipt ? financeReceiptMetaHtmlV41(receipt,true) : '';
+ return `<div class="report-paid-line-v41">Оплачено: ${values.join(' · ') || '<b>' + esc(rub(0)) + '</b>'}${adjustment}${time ? ' · ' + time : ''}</div>`;
 }
-function financeReceiptMetaHtmlV41(receipt) {
+function financeReceiptMetaHtmlV41(receipt, compact = false) {
+ if (compact) {
+  const date = receipt.at ? new Date(receipt.at) : null;
+  if (!date || !Number.isFinite(+date)) return '';
+  return `<span class="report-payment-time-v42">Время оплаты: <time>${esc(date.toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'}))}</time></span>`;
+ }
  return `<span class="report-payment-date-v41"><time>${esc(financeDateTimeV5(receipt.at))}</time>${receipt.nurse ? ' · ' + esc(receipt.nurse) : ''} · ${receipt.kind === 'sale' ? 'Оплата продажи' : 'Оплата после процедуры'}</span>`;
 }
 function financeVisitPaymentHtmlV41(event) {
@@ -455,10 +461,10 @@ function financeVisitPaymentHtmlV41(event) {
   const exact = keys.every(key => remaining[key] >= 0) && keys.reduce((sum,key) => sum + remaining[key],0) === residual;
   const baseMethods = exact ? Object.fromEntries(keys.map(key => [key,remaining[key] / 100])) : {unclassified:residual / 100};
   if (residual > 0 || !collections.length) lines += financePaidLineHtmlV41(baseMethods,collections.length ? '' : adjustment);
-  lines += collections.map((item,index) => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt)}${financePaidLineHtmlV41(item.methods,index === collections.length - 1 ? adjustment : '')}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
+  lines += collections.map((item,index) => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financePaidLineHtmlV41(item.methods,index === collections.length - 1 ? adjustment : '',item.receipt)}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
  } else {
   // Inconsistent legacy snapshots cannot justify additional received money.
-  lines = financePaidLineHtmlV41(methods,adjustment) + collections.map(item => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt)}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
+  lines = financePaidLineHtmlV41(methods,adjustment) + collections.map(item => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt,true)}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
  }
  return `<div class="report-visit-payment-v41"><div class="report-price-line-v41">Оплата по прайсу: <b>${esc(rub(amounts.list))}</b></div>${lines}${amounts.debt > 0 ? `<div class="report-unpaid-v41">${event.payment_pending === true ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b>${event.payment_pending === true ? ' · Это не долг.' : ''}</div>` : ''}${methods.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(methods.debt_repayments_total))}</b></div>` : ''}</div>`;
 }

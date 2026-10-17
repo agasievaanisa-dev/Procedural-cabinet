@@ -82,15 +82,15 @@ test('an initially unpaid procedure remains one numbered visit after a same-shif
  await openReport(page);
  const screen=page.locator('#reportBody .report-event-v5');await expect(screen).toHaveCount(1);
  await expect(screen.locator('.report-inline-receipt-v39')).toHaveCount(1);
- await expect(screen.locator('.report-inline-receipt-v39 time')).toHaveText('11.10.2026, 11:15');
+ await expect(screen.locator('.report-inline-receipt-v39 time')).toHaveText('11:15');
  await expect(screen.locator('.report-inline-receipt-v39 [data-payment-method="cash"]')).toContainText(/600\s*₽/);
  await expect(screen.locator('.report-inline-receipt-v39 [data-payment-method="terminal"]')).toContainText(/400\s*₽/);
  await printReport(page);await expect(entries(page)).toHaveCount(1);
  const visit=entries(page).first();await expect(visit.locator('.report-inline-receipt-v39')).toHaveCount(1);
- await expect(visit.locator('time')).toHaveText('11.10.2026, 11:15');await expect(visit).toContainText('11.10.2026, 10:00');
+ await expect(visit.locator('time')).toHaveText('11:15');await expect(visit).toContainText('11.10.2026, 10:00');
  await expect(visit).toContainText(/Оплачено:\s*Наличные:\s*600\s*₽\s*·\s*Терминал:\s*400\s*₽/);
  await expect(visit).not.toContainText('Оплачено всего:');
- await expect(visit.locator('.report-inline-receipt-v39')).toContainText('Оплата после процедуры');
+ await expect(visit.locator('.report-inline-receipt-v39')).toContainText('Время оплаты:');await expect(visit.locator('.report-inline-receipt-v39')).not.toContainText('Оплата после процедуры');
  await expect(page.locator('#shiftPrintV5 .shift-print-other-payments-v39')).toHaveCount(0);
  await expect(page.locator('#shiftPrintV5 footer [data-summary-key="revenue"] > b')).toHaveText(/1\s*000\s*₽/);
  await expect(page.locator('#shiftPrintV5 footer [data-summary-key="cash"] > b')).toHaveText(/600\s*₽/);
@@ -115,7 +115,7 @@ test('repeated visits by one patient and a sale/procedure ID collision keep thei
   const nested=entries(page).nth(index).locator('.report-inline-receipt-v39');await expect(nested).toHaveCount(ids.length);
   for(const [receiptIndex,id] of ids.entries())await expect(nested.nth(receiptIndex)).toHaveAttribute('data-receipt-id',id);
  }
- await expect(entries(page).first().locator('.report-inline-receipt-v39 time')).toHaveText(['11.10.2026, 11:15','11.10.2026, 11:25']);
+ await expect(entries(page).first().locator('.report-inline-receipt-v39 time')).toHaveText(['11:15','11:25']);
  await expect(entries(page).first().locator('.report-inline-receipt-v39').nth(0).locator('[data-payment-method="cash"]')).toContainText(/600\s*₽/);
  await expect(entries(page).first().locator('.report-inline-receipt-v39').nth(1).locator('[data-payment-method="terminal"]')).toContainText(/400\s*₽/);
  await expect(entries(page).nth(0)).toContainText('Только первое посещение');await expect(entries(page).nth(0)).not.toContainText('Только вторая процедура');
@@ -137,6 +137,7 @@ test('other-shift and unknown references remain visible without visit numbers or
  await printReport(page);await expect(entries(page)).toHaveCount(1);await expect(entries(page).first().locator('.report-inline-receipt-v39')).toHaveCount(0);
  const other=page.locator('#shiftPrintV5 > .shift-print-other-payments-v39');await expect(other).toBeVisible();
  await expect(other.locator('.report-inline-receipt-v39')).toHaveCount(3);await expect(other.locator('li,ol')).toHaveCount(0);
+ await expect(other.locator('[data-receipt-id="previous-shift-receipt"] time')).toHaveText('11.10.2026, 11:15');await expect(other.locator('[data-receipt-id="previous-shift-receipt"]')).toContainText('Наталья');
  for(const text of ['Пациент вчерашней смены','Сегодня оплачена запись предыдущей смены','Тёзка не определяет запись','Без вида нельзя связать запись','в число посещений не входят'])await expect(other).toContainText(text);
  await expect(page.locator('#reportBody')).not.toContainText('Скрытое погашение долга');await expect(page.locator('#shiftPrintV5')).not.toContainText('Скрытое погашение долга');
  for(const scope of ['#reportBody','#shiftPrintV5 footer']){
@@ -155,9 +156,10 @@ test('captured dosage, discounts and receipt fields are escaped and repeated ren
  const errors=await boot(page,report({procedures:[event],receipts:[payment]}));await openReport(page);
  await page.evaluate(()=>{renderShiftReportV5(__mergedReport,true);renderShiftReportV5(__mergedReport,true);});
  await printReport(page);await expect(entries(page)).toHaveCount(1);const visit=entries(page).first();
- for(const text of [unsafe.patient,unsafe.dosage,unsafe.dose,unsafe.reason,unsafe.discount,unsafe.nurse,unsafe.comment]){
+ for(const text of [unsafe.patient,unsafe.dosage,unsafe.dose,unsafe.reason,unsafe.discount,unsafe.comment]){
   await expect(page.locator('#reportBody')).toContainText(text);await expect(visit).toContainText(text);
  }
+ await expect(page.locator('#reportBody')).not.toContainText(unsafe.nurse);await expect(visit).not.toContainText(unsafe.nurse);
  await expect(visit.locator('.report-inline-receipt-v39')).toHaveAttribute('data-receipt-id',unsafe.id);
  await expect(page.locator('#reportBody script,#reportBody img,#reportBody svg,#shiftPrintV5 script,#shiftPrintV5 img,#shiftPrintV5 svg')).toHaveCount(0);
  expect(await page.evaluate(()=>window.reportInjection)).toBeUndefined();

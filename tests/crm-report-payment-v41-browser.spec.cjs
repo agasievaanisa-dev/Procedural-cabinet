@@ -30,10 +30,15 @@ for(const role of ['nurse','owner'])test(`${role}: shift print uses day-first da
  await expect(document.locator('header')).toContainText('16.10.2026');await expect(document.locator('header')).not.toContainText('2026-10-16');
  const cash=visits.filter({hasText:'Тестовая пациентка'}).locator('.report-visit-payment-v39');await expect(cash).toContainText(/Оплата по прайсу:\s*800\s*₽/);await expect(cash).toContainText(/Оплачено:.*Наличные:\s*800\s*₽/);
  expect((await cash.innerText()).match(/800\s*₽/g)).toHaveLength(2);await expect(cash.locator('[data-payment-method="cash"]')).toHaveCount(1);await expect(cash.locator('.report-inline-receipt-v39')).toHaveCount(1);
- const paymentDate=cash.locator('.report-inline-receipt-v39 time');await expect(paymentDate).toHaveText('16.10.2026, 19:12');await expect(paymentDate.locator('..')).toContainText('Наталья');
+ const paymentTime=cash.locator('.report-inline-receipt-v39 time');await expect(paymentTime).toHaveText('19:12');await expect(paymentTime.locator('..')).toContainText('Время оплаты:');
+ await expect(cash.locator('.report-inline-receipt-v39 .report-paid-line-v41')).toContainText(/Оплачено:.*Наличные:\s*800\s*₽.*Время оплаты:\s*19:12/);
+ await expect(cash).not.toContainText('16.10.2026');await expect(cash).not.toContainText('Наталья');await expect(cash).not.toContainText('Оплата после процедуры');
+ const cashVisit=visits.filter({hasText:'Тестовая пациентка'}),visitText=await cashVisit.innerText();expect(visitText.match(/16\.10\.2026/g)).toHaveLength(1);expect(visitText.match(/Наталья/g)).toHaveLength(1);await expect(cashVisit).toContainText('16.10.2026, 18:35');
  const discount=visits.filter({hasText:'Пациент со скидкой'}).locator('.report-visit-payment-v39');await expect(discount).toContainText(/Оплачено:.*Терминал:\s*500\s*₽.*со скидкой\s*300\s*₽/);
  expect((await discount.innerText()).match(/Скидка от начальника/g)).toHaveLength(1);
+ await expect(discount.locator('time')).toHaveCount(0);await expect(discount).not.toContainText('Время оплаты:');
  const mixed=visits.filter({hasText:'Пациент с доплатой'}).locator('.report-visit-payment-v39');await expect(mixed).toContainText(/Наличные:\s*100\s*₽/);await expect(mixed).toContainText(/Перевод на карту начальника:\s*600\s*₽/);await expect(mixed).not.toContainText(/700\s*₽/);
+ await expect(mixed.locator('.report-inline-receipt-v39 time')).toHaveText('19:12');await expect(mixed).not.toContainText('Лилия');
  await expect(document).not.toContainText('Оплачено всего:');await expect(document).not.toContainText('К оплате:');await expect(document).not.toContainText('Сотрудник:');
  const waiting=visits.filter({hasText:'Ожидающий пациент'});await expect(waiting).toContainText(/Ожидает оплаты:\s*800\s*₽/);await expect(waiting).toContainText('Это не долг');
  for(const event of await visits.all())await expect(event).toContainText('250 мг');await expect(document.locator('[data-summary-key="cash"] > b')).toHaveText(/900\s*₽/);await expect(document.locator('[data-summary-key="cash-balance"] > b')).toHaveText(/3\s*900\s*₽/);
@@ -52,6 +57,6 @@ test('downloaded PDF retains the compact payment language, Russian text and the 
  const errors=await boot(page),document=await preview(page);await expect(document.locator('.shift-print-event-v5')).toHaveCount(4);
  const promised=page.waitForEvent('download');await page.click('#crmPrintPdfV40');const download=await promised;await download.saveAs(testInfo.outputPath('compact-payments-v41.pdf'));const bytes=fs.readFileSync(await download.path());expect(bytes.subarray(0,5).toString()).toBe('%PDF-');expect(bytes.length).toBeGreaterThan(3000);expect(bytes.subarray(-1024).toString()).toContain('%%EOF');
  const definition=await page.evaluate(()=>JSON.stringify(crmPdfDefinitionV40(document.getElementById('crmPrintDocumentV40'),{title:'Отчёт смены'})));
- for(const text of ['Тестовая пациентка','16.10.2026','Оплата по прайсу','Наталья','Сохранённый препарат','250 мг','со скидкой','Скидка от начальника','Перевод на карту начальника','Остаток наличных в кассе'])expect(definition).toContain(text);
+ for(const text of ['Тестовая пациентка','16.10.2026','Оплата по прайсу','Наталья','Сохранённый препарат','250 мг','со скидкой','Скидка от начальника','Перевод на карту начальника','Остаток наличных в кассе','Время оплаты:','19:12'])expect(definition).toContain(text);
  for(const old of ['Оплачено всего:','Сотрудник:','2026-10-16'])expect(definition).not.toContain(old);await expectReadOnly(page);expect(errors).toEqual([]);
 });
