@@ -510,14 +510,28 @@ function prepareShiftPrintV5() {
  document.body.appendChild(printView);document.body.classList.add('crm-shift-printing-v5');
 }
 function printShiftReportV5() {
- try { prepareShiftPrintV5();window.print(); }
+ try {
+  prepareShiftPrintV5();
+  if (typeof crmOpenPrintPreviewV40 === 'function') {
+   const saved = financeShiftSnapshot5;
+   return crmOpenPrintPreviewV40({source:$('shiftPrintV5'),title:'Отчёт смены ' + (saved.data.shift?.date || ''),
+    validate:() => financeShiftSnapshot5 === saved && saved.actor === currentStaff?.id && saved.role === currentStaff?.role && saved.session === financeSession5 && saved.id === financeReportId5 && $('report').classList.contains('active'),
+    print:() => {prepareShiftPrintV5();window.print();},cleanup:clearShiftPrintV5}).print();
+  }
+  window.print();
+ }
  catch (error) { clearShiftPrintV5();message('reportPrintMessageV5',error.message); }
 }
 if (typeof window.addEventListener === 'function') {
  window.addEventListener('afterprint',clearShiftPrintV5);
  window.addEventListener('beforeprint',() => {
   if (!$('report')?.classList.contains('active')) {clearShiftPrintV5();return;}
-  try {prepareShiftPrintV5();} catch (error) {clearShiftPrintV5();document.body.classList.add('crm-shift-printing-v5');message('reportPrintMessageV5',error.message);}
+  try {prepareShiftPrintV5();} catch (error) {
+   clearShiftPrintV5();
+   const failed = document.createElement('article');failed.id = 'shiftPrintV5';
+   failed.innerHTML = '<h1>Отчёт не подготовлен</h1><p>Откройте отчёт заново и нажмите «Печать».</p>';
+   document.body.appendChild(failed);document.body.classList.add('crm-shift-printing-v5');message('reportPrintMessageV5',error.message);
+  }
  });
 }
 function financeMedicationUsageHtmlV5(items) {
@@ -615,7 +629,13 @@ function requireFinanceSnapshotV5(id) {
  return data;
 }
 function printFinanceReportV5(id) {
- try { requireFinanceSnapshotV5(id); clearShiftPrintV5(); window.print(); }
+ try {
+  const saved = requireFinanceSnapshotV5(id);clearShiftPrintV5();
+  if (typeof crmOpenPrintPreviewV40 === 'function') return crmOpenPrintPreviewV40({source:$(id + 'Body'),title:'Финансовый отчёт ' + (saved.from || '') + ' — ' + (saved.to || ''),
+   validate:() => requireFinanceSnapshotV5(id) === saved && $(id).classList.contains('active'),
+   print:() => {requireFinanceSnapshotV5(id);clearShiftPrintV5();window.print();}}).print();
+  window.print();
+ }
  catch (e) { message(id + 'Message',e.message); }
 }
 function installFinanceScreensV5() {

@@ -111,6 +111,7 @@ test('failed new finance period cannot export the old report and manual retry pr
  await expect(page.locator('#reportsV5Message')).toBeEmpty();
  await expect(page.locator('#reportsV5Csv')).toBeEnabled();
  await page.click('#reportsV5Print');expect(await page.evaluate(()=>window.__printCalls)).toBe(1);
+ await expect(page.locator('#crmPrintPreviewV40')).toBeVisible();await page.click('#crmPrintCloseV40');await expect(page.locator('#crmPrintPreviewV40')).toBeHidden();
  const downloadPromise=page.waitForEvent('download');await page.click('#reportsV5Csv');
  expect((await downloadPromise).suggestedFilename()).toBe('procedural-cabinet-2026-10-01-2026-10-10.csv');
  await noOverflow(page);expect(errors).toEqual([]);

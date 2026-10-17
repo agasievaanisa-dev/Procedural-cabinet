@@ -53,6 +53,7 @@ test('nurse can print patient history without exposing stock or salaries',async(
 
 test('failed or malformed full history never prints a stale or partial patient card',async({page})=>{
  const errors=await boot(page);await page.click('#patientCardPrintButtonV20');expect(await page.evaluate(()=>__cardPrintCalls)).toBe(1);
+ await expect(page.locator('#crmPrintPreviewV40')).toBeVisible();await page.click('#crmPrintCloseV40');await expect(page.locator('#crmPrintPreviewV40')).toBeHidden();
  await page.evaluate(()=>__cardFailure={code:'P0001',message:'Нет доступа к истории'});await page.click('#patientCardPrintButtonV20');await expect(page.locator('#patientCardMessageV5')).toContainText('Не удалось подготовить полную карту');await expect(page.locator('#patientCardPrintV20')).toHaveCount(0);expect(await page.evaluate(()=>__cardPrintCalls)).toBe(1);
  await page.evaluate(()=>{__cardFailure=null;__patientCardHistory={procedures:[]}});await page.click('#patientCardPrintButtonV20');await expect(page.locator('#patientCardMessageV5')).toContainText('Полная история пока не получена');expect(await page.evaluate(()=>__cardPrintCalls)).toBe(1);expect(errors).toEqual([]);
 });

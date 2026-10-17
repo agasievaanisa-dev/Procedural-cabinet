@@ -54,6 +54,7 @@ async function printReport(page) {
 async function finishPrint(page) {
  await page.emulateMedia({media:'screen'});await page.evaluate(()=>window.dispatchEvent(new Event('afterprint')));
  await expect(page.locator('#shiftPrintV5')).toHaveCount(0);
+ await expect(page.locator('#crmPrintPreviewV40')).toBeVisible();await page.click('#crmPrintCloseV40');await expect(page.locator('#crmPrintPreviewV40')).toBeHidden();
 }
 async function expectReadOnly(page) {
  const state=await page.evaluate(()=>({calls:__mergedCalls,unexpected:__mergedUnexpected,unchanged:JSON.stringify(__mergedReport)===__mergedExpected,frozen:Object.isFrozen(__mergedReport)&&Object.isFrozen(__mergedReport.procedures)&&Object.isFrozen(__mergedReport.receipts),decorated:__mergedReport.procedures.some(item=>Object.hasOwn(item,'shift_receipts_v39'))||__mergedReport.sales.some(item=>Object.hasOwn(item,'shift_receipts_v39'))}));

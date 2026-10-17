@@ -125,8 +125,14 @@
    if (!current(saved)) return;
    snapshot = saved;
    if ($('patientMedicalCardV20').classList.contains('active')) showCompleteCard(saved);
-   const printable = document.createElement('article'); printable.id = 'patientCardPrintV20'; printable.innerHTML = buildPatientCardHtml(saved.patient,saved.events);
-   document.body.appendChild(printable); document.body.classList.add('crm-patient-printing-v20'); status('Карта готова к печати. В окне печати можно сохранить PDF.',true); global.print();
+   const prepare = () => {
+    if (!current(saved)) throw Error('Откройте карту пациента заново.');
+    clearPrint();const printable = document.createElement('article');printable.id = 'patientCardPrintV20';printable.innerHTML = buildPatientCardHtml(saved.patient,saved.events);
+    document.body.appendChild(printable);document.body.classList.add('crm-patient-printing-v20');return printable;
+   };
+   const printable = prepare();status('Карта готова к печати. В окне печати можно сохранить PDF.',true);
+   if (typeof global.crmOpenPrintPreviewV40 === 'function') global.crmOpenPrintPreviewV40({source:printable,title:'Карта пациента ' + saved.patient.full_name,validate:() => current(saved),print:() => {prepare();global.print();},cleanup:clearPrint}).print();
+   else global.print();
   } catch (error) { clearPrint(); if (token === version && op.actor === actor() && op.navigation === navigation() && contextActive()) status('Не удалось подготовить полную карту: ' + error.message + ' Повторите печать.'); }
   finally { if (operation === op) { operation = null; if (op.actor === actor()) buttonsBusy(false); } }
  };
