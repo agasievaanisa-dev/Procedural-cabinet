@@ -95,6 +95,56 @@
  const state = prefix => forms[prefix];
  function actorKey() { return JSON.stringify([currentStaff?.id,currentStaff?.role,session]); }
  function assertActor(actor) { if (!currentStaff?.id || actorKey() !== actor) throw Error('Учётная запись изменилась. Откройте форму заново'); }
+ function editReturnContextV46() {
+  const details = host => [...host.querySelectorAll('details')].map((item,index) => item.open ? index : -1).filter(index => index >= 0);
+  const position = {actor:actorKey(),scroll:Math.max(0,Number(global.scrollY) || 0)};
+  if ($('report')?.classList.contains('active') && typeof financeReportId5 === 'string' && financeReportId5 && financeShiftSnapshot5?.id === financeReportId5
+   && financeShiftSnapshot5.actor === currentStaff?.id && financeShiftSnapshot5.role === currentStaff?.role && financeShiftSnapshot5.session === financeSession5) {
+   return {...position,screen:'report',id:financeReportId5,details:details($('reportBody'))};
+  }
+  if ($('shiftJournalV12')?.classList.contains('active') && $('journalDateV12')?.value) {
+   return {...position,screen:'shiftJournalV12',date:$('journalDateV12').value,details:details($('journalBodyV12'))};
+  }
+  return null;
+ }
+ async function returnToEditedShiftV46(target,success) {
+  if (!target || target.actor !== actorKey()) return;
+  if (target.screen === 'report') {
+   // Never leave a confirmed, cleared editor visible or export a stale snapshot.
+   financeReportId5 = target.id; financeShiftSnapshot5 = null; clearShiftPrintV5();
+   if ($('reportPrintV5')) $('reportPrintV5').disabled = true;
+   $('report').querySelector('button[onclick="closeShift()"]')?.classList.add('hidden');
+   $('reportBody').innerHTML = '<div id="reportEditMessageV46" class="notice success" role="status"></div>';
+   $('reportEditMessageV46').textContent = success + ' Обновляем отчёт этой смены…';
+   show('report');
+  }
+  const opening = target.screen === 'report' ? openReportByIdV5(target.id) : global.openShiftJournalV12(target.date);
+  const navigation = quickNavigation4;
+  let refreshed = false;
+  try { refreshed = await opening; } catch { /* Keep the confirmed edit separate from a failed read. */ }
+  const current = () => target.actor === actorKey() && quickNavigationCurrent4(navigation,currentStaff?.id) && $(target.screen)?.classList.contains('active')
+   && (target.screen === 'report' ? financeReportId5 === target.id : $('journalDateV12')?.value === target.date);
+  if (!current()) return;
+  const host = $(target.screen === 'report' ? 'reportBody' : 'journalBodyV12');
+  if (target.screen === 'report') {
+   let notice = $('reportEditMessageV46');
+   if (!notice) { notice = document.createElement('div'); notice.id = 'reportEditMessageV46'; notice.setAttribute('role','status'); host.prepend(notice); }
+   notice.className = refreshed ? 'notice success' : 'notice';
+   notice.textContent = success + (refreshed ? '' : ' Изменения уже сохранены. Не удалось обновить отчёт смены.');
+   if (!refreshed) {
+    const retry = document.createElement('button'); retry.id = 'reportEditRetryV46'; retry.type = 'button'; retry.className = 'btn secondary wide'; retry.textContent = 'Обновить отчёт';
+    retry.onclick = () => { if (current()) return returnToEditedShiftV46(target,success); };
+    notice.append(retry);
+   }
+  } else {
+   const warning = refreshed ? '' : $('journalMessageV12')?.textContent || 'Нажмите «Обновить».';
+   message('journalMessageV12',success + (warning ? ' Журнал не обновлён: ' + warning : ''),!!refreshed);
+  }
+  if (refreshed) {
+   [...host.querySelectorAll('details')].forEach((item,index) => { item.open = target.details.includes(index); });
+   if (typeof global.scrollTo === 'function') global.scrollTo({top:target.scroll,behavior:'instant'});
+  }
+ }
  function saveError(error, status, write = true) {
   const result = financeSaveErrorV16(error,status,'Не удалось выполнить действие');
   if (write && result.uncertain) result.message = 'Не удалось получить ответ. Черновик сохранён; повторите сохранение. Будут отправлены первоначальные данные, без повторного начисления.';
@@ -554,10 +604,12 @@
    const receipt = s.edit ? await clinicalRpc(correcting ? 'payment_correction' : 'treatment_edit',payload,true) : await treatmentRpc(kind,payload);
    assertActor(actor); saved = true;
    if (!s.edit && kind === 'procedure' && typeof global.consumePatientVisitSeedV23 === 'function') global.consumePatientVisitSeedV23(payload.patient_id);
-   if (!correcting || state(prefix) === s) { forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = ''; }
-   if (!correcting || quickNavigationCurrent4(navigation,currentStaff?.id)) show('workspace');
+   if (state(prefix) === s) { forms[prefix] = null; $(prefix + 'Meds').innerHTML = ''; $(prefix + 'Paid').value = ''; }
    const success = correcting ? `Оплата исправлена. В долг: ${rub(receipt?.debt_total ?? model.debt / 100)}. Ошибочно отмеченная оплата убрана из выручки.` : `${s.edit ? 'Изменения сохранены' : kind === 'procedure' ? 'Процедура сохранена' : 'Продажа сохранена'}. Оплачено: ${rub(receipt?.paid_total ?? (model.previous + model.received) / 100)}. ${model.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(receipt?.debt_total ?? model.debt / 100)}.`;
    const stockText = typeof global.partialStockReceiptTextV28 === 'function' ? global.partialStockReceiptTextV28(receipt) : '';
+   if (!quickNavigationCurrent4(navigation,currentStaff?.id) || !$(kind)?.classList.contains('active')) { message('homeMessage',success + stockText,true); return; }
+   if (s.edit && s.editReturnV46) { await returnToEditedShiftV46(s.editReturnV46,success + stockText); return; }
+   show('workspace');
    message('homeMessage',success + stockText,true);
    try { await refreshDashboard(); } catch (error) { if (actorKey() === actor) message('homeMessage',success + stockText + ' Не удалось обновить экран: ' + error.message,true); }
   } catch (error) {
@@ -628,6 +680,7 @@
   if (clinicalBusy) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
   if (state(prefix)?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Сначала повторите предыдущее сохранение. Его результат ещё не подтверждён.'); return; }
+  const editReturnV46 = editReturnContextV46();
   const navigation=beginQuickNavigation4(), actor = actorKey(), version = ++editorView;
   try {
    const record = await clinicalRpc('treatment_get',{kind,id});
@@ -635,7 +688,7 @@
    if (!record?.editable) throw Error('Эту запись нельзя изменить. Медсестра редактирует записи своей открытой смены; для остальных обратитесь к владельцу');
    const patientId = record.patient_id, prefix = kind === 'procedure' ? 'proc' : 'sale';
    // Editing keeps the original shift rather than silently moving a visit to today.
-   forms[prefix] = {chargeEdited:true,previous:cents(record.paid_total ?? 0),edit:record,medicationPrices:new Map((record.items || []).map(item => [item.medication_id,Math.round(num(item.unit_price ?? num(item.line_total) / num(item.quantity)) * 100)])),servicePrices:new Map((record.services || []).map(item => [item.service_id,Math.round(num(item.unit_price ?? (num(item.work_price) + num(item.consumables_price))) * 100)]))};
+   forms[prefix] = {chargeEdited:true,previous:cents(record.paid_total ?? 0),edit:record,editReturnV46,medicationPrices:new Map((record.items || []).map(item => [item.medication_id,Math.round(num(item.unit_price ?? num(item.line_total) / num(item.quantity)) * 100)])),servicePrices:new Map((record.services || []).map(item => [item.service_id,Math.round(num(item.unit_price ?? (num(item.work_price) + num(item.consumables_price))) * 100)]))};
    install(prefix); await Promise.all([loadMeds(),loadPatients(),loadServices()]); assertActor(actor); if (version !== editorView || !quickNavigationCurrent4(navigation,currentStaff?.id)) return;
    financeTreatmentMode5[prefix] = {payment_only:record.stock_deducted === false,stock_deducted:record.stock_deducted !== false,...(record.stock_mode ? {partial_stock:record.stock_mode === 'partial',stock_mode:record.stock_mode} : {})};
    $(prefix + 'Patient').innerHTML = patientOptions(true); if (patientId && !patients.some(patient => patient.id === patientId)) $(prefix + 'Patient').add(new Option(record.patient || 'Пациент записи',patientId)); $(prefix + 'Patient').value = patientId || ''; $(prefix + 'Patient').disabled = true;

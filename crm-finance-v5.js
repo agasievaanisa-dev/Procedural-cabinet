@@ -627,9 +627,11 @@ async function openReportByIdV5(id) {
   if ($('reportPrintV5')) $('reportPrintV5').disabled = true;
   financeReportId5 = id;
   const data = await crmFinanceRpcV5('shift_report', {shift_id:id});
-  if (!quickNavigationCurrent4(navigation,actor) || token !== financeView5) return;
+  if (!quickNavigationCurrent4(navigation,actor) || token !== financeView5) return false;
+  if (data?.shift?.id !== id) throw Error('Не удалось получить отчёт выбранной смены. Откройте его повторно.');
   renderShiftReportV5(data, data.shift?.status === 'closed');
- } catch (e) { if(!quickNavigationCurrent4(navigation,actor)) return; message('homeMessage', e.message); const host = $('financeMessageV5'); if (host) host.textContent = e.message; }
+  return true;
+ } catch (e) { if(!quickNavigationCurrent4(navigation,actor)) return false; message('homeMessage', e.message); const host = $('financeMessageV5'); if (host) host.textContent = e.message; return false; }
 }
 openReport = async function() { if (!shift?.id) { await openShiftMenu(); return; } await openReportByIdV5(shift.id); };
 closeShift = async function() {

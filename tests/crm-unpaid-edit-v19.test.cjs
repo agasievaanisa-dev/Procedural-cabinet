@@ -23,7 +23,7 @@ function fixture(clinical=false){
   currentStaff:{id:'nurse-1',role:'nurse'},currentPatientId:'patient-1',shift:{id:'shift-1',aId:'nurse-1',bId:'nurse-2'},patients:[],nurses:[],inventory:[],
   meds:[],services:[{id:'service-1',work_price:100,consumables_price:0}],rows:()=>[],num:value=>Number(value||0),rub:value=>String(Number(value||0))+' ₽',qty:String,unit:()=> 'амп.',esc:String,
   isManager:()=>['owner','admin'].includes(context.currentStaff?.role),positiveWhole:Number,
-  message(id,text,success){messages.push({id,text,success});el(id).textContent=text;},show(id){context.screen=id;},
+  message(id,text,success){messages.push({id,text,success});el(id).textContent=text;},show(id){context.screen=id;for(const screen of ['workspace','procedure','sale','report'])el(screen).classList.toggle('active',screen===id);},
   localDateValue:()=> '2026-10-12',shiftLabel:()=> '',expiryDays:()=>null,
   loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},loadPatients:async()=>{},loadMeds:async()=>{},loadServices:async()=>{},
   prepareTreatment4:async()=>true,calcProcedure(){},calcSale(){},enterApp:async()=>{},signOut:async()=>{context.currentStaff=null;},refreshDashboard:async()=>{},
@@ -40,6 +40,7 @@ function fixture(clinical=false){
  }
  for(const [id,value] of Object.entries({procPaid:'100',procPatient:'patient-1',procNurse:'nurse-1',procService:'service-1',procPaymentStatusV10:'paid',procPayCash:'100',procPayTerminal:'0',procPayOwnerCard:'0',procPayTender:'100'}))el(id).value=value;
  el('procPayConfirmed').checked=true;el('procSaveButton').tagName='BUTTON';el('procSaveButton').onclickText='saveProcedure()';
+ if(clinical)context.show('procedure');
  return {c:context,el,calls,messages,setRpc(fn){behavior=fn;}};
 }
 
