@@ -186,10 +186,10 @@ test('390px owner workspace, confirmed mixed payment, exact tender/change and on
  const errors=await boot(page);
  for(const label of ['Пациенты','Процедуры','Продажа препаратов','Прайс и препараты','Прайс услуг','Отчёты'])await expect(page.locator('#workspace .home-actions>button').filter({hasText:label})).toBeVisible();
  await noOverflow(page);await procedure(page);
+ await page.click('#procPaymentV5 [data-pay-method="mixed"]');
  await page.click('#procedure button[onclick="saveProcedure()"]');
  await expect(page.locator('#procedureMessage')).toContainText('подтверждение');
  expect(await page.evaluate(()=>window.__crmRecords.length)).toBe(0);
- await page.click('#procPaymentV5 [data-pay-method="mixed"]');
  await page.fill('#procPayCash','40');await page.fill('#procPayTerminal','40');await page.fill('#procPayOwnerCard','40');
  await page.fill('#procPayTender','100');
  await expect(page.locator('#procPaySummary')).toContainText('Сдача: 60');

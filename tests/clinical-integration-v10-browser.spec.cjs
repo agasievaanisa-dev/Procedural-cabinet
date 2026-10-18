@@ -63,6 +63,7 @@ async function procedure(page,withMedicine=true){
  await expect(page.locator('#procPaid')).toHaveValue(withMedicine?'190.00':'150.00');
 }
 async function save(page){await page.check('#procPayConfirmed');await page.click('#procedure button[onclick="saveProcedure()"]')}
+async function cashPayment(page,prefix='proc'){await page.click(`#${prefix}PaymentV5 [data-pay-method="cash"]`)}
 async function noOverflow(page){expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true)}
 async function created(page){return page.evaluate(()=>__v10Calls.filter(x=>x.name==='record_treatment_v5'))}
 async function discountedDebtUi(page){
@@ -73,7 +74,7 @@ async function discountedDebtUi(page){
 
 for(const received of [0,40])test(`nurse records ${received?'partial payment':'full debt'} without counting unpaid money as receipts`,async({page})=>{
  const errors=await boot(page);await procedure(page);await page.selectOption('#procPaymentStatusV10','debt');
- if(received)await page.fill('#procReceivedV10',String(received));
+ if(received){await cashPayment(page);await page.fill('#procReceivedV10',String(received))}
  await expect(page.locator('#procDebtSummaryV10')).toContainText(String(190-received));await noOverflow(page);await save(page);await expect(page.locator('#workspace')).toBeVisible();
  const calls=await created(page);expect(calls).toHaveLength(1);expect(calls[0].args.p_payload).toMatchObject({patient_id:'patient-1',charge_total:190,paid_total:received,payment_status:'debt',payments:{cash:received,terminal:0,owner_card:0,cash_received:received},expected_stock_deducted:false});
  expect(await page.evaluate(()=>meds[0].work_qty)).toBe(0);expect(errors).toEqual([]);
@@ -111,7 +112,7 @@ for(const role of ['nurse','owner'])test(`${role} can edit a wholly unpaid proce
 test('switching payment modes retains the agreed discounted charge and records only the partial receipt',async({page})=>{
  const errors=await boot(page);
  await page.evaluate(()=>{Object.assign(services[0],{work_price:300,consumables_price:0});meds[0].sale_price=7000});await page.evaluate(()=>openProcedure('patient-1'));await expect(page.locator('#procedure')).toBeVisible();await page.selectOption('#procService','service-1');await page.evaluate(()=>chooseMedication('procMeds','med-1'));await page.fill('#procMeds .medqty','2');
- await expect(page.locator('#procList')).toContainText('14 300');await page.fill('#procChargeInPaymentV11','11500');await page.fill('#procDiscountInPaymentV11','Согласована стоимость 11 500 ₽; часть оплаты будет позже');
+ await expect(page.locator('#procList')).toContainText('14 300');await cashPayment(page);await page.fill('#procChargeInPaymentV11','11500');await page.fill('#procDiscountInPaymentV11','Согласована стоимость 11 500 ₽; часть оплаты будет позже');
  await page.selectOption('#procPaymentStatusV10','debt');await discountedDebtUi(page);await expect(page.locator('#procChargeInPaymentV11')).toHaveValue(/^11500(?:\.00)?$/);await expect(page.locator('#procReceivedV10')).toHaveValue('0.00');
  await page.selectOption('#procPaymentStatusV10','paid');await expect(page.locator('#procDebtHintV13')).not.toBeVisible();await expect(page.locator('#procedure button[onclick="saveProcedure()"]')).toHaveText('Сохранить процедуру');await expect(page.locator('#procChargeInPaymentV11')).toHaveValue(/^11500(?:\.00)?$/);await expect(page.locator('#procPayCash')).toHaveValue('11500.00');
  await page.selectOption('#procPaymentStatusV10','debt');await discountedDebtUi(page);await expect(page.locator('#procPaid')).toHaveValue(/^11500(?:\.00)?$/);await expect(page.locator('#procReceivedV10')).toHaveValue('0.00');await expect(page.locator('#procDiscountInPaymentV11')).toHaveValue('Согласована стоимость 11 500 ₽; часть оплаты будет позже');await page.fill('#procReceivedV10','2800');
@@ -121,7 +122,7 @@ test('switching payment modes retains the agreed discounted charge and records o
 });
 
 test('nurse discount and free service require a written explanation and preserve draft on rejection',async({page})=>{
- const errors=await boot(page);await procedure(page);await expect(page.locator('#procPaid')).toBeEditable();await page.fill('#procPaid','170');await save(page);
+ const errors=await boot(page);await procedure(page);await cashPayment(page);await expect(page.locator('#procPaid')).toBeEditable();await page.fill('#procPaid','170');await save(page);
  await expect(page.locator('#procedureMessage')).toContainText('комментарий');expect(await created(page)).toHaveLength(0);await expect(page.locator('#procPaid')).toHaveValue('170');
  await page.selectOption('#procDiscountReason','Постоянный пациент');await page.fill('#procDiscountComment','Постоянная скидка по согласованию с владельцем');await save(page);await expect(page.locator('#workspace')).toBeVisible();
  const discounted=(await created(page))[0].args.p_payload;expect(discounted).toMatchObject({charge_total:170,paid_total:170,discount_reason:'Постоянный пациент',discount_comment:'Постоянная скидка по согласованию с владельцем'});
@@ -133,19 +134,19 @@ test('nurse discount and free service require a written explanation and preserve
 test('own and previously purchased medicines can accompany intramuscular and intravenous services without selling them again',async({page})=>{
  const errors=await boot(page);await procedure(page,false);await page.click('#procAddOwnV10');await page.fill('#procOwnMedsV10 .own-name-v10','Свой витамин B12 500 мкг');
  await page.click('#procAddOwnV10');const previous=page.locator('#procOwnMedsV10 .clinical-own-v10').nth(1);await previous.locator('.own-name-v10').fill('Ранее купленный Самыр');await previous.locator('.own-source-v10').selectOption('previously_purchased');await previous.locator('.own-quantity-v10').fill('2');
- await page.click('#procAddServiceV10');await page.selectOption('#procAdditionalServicesV10 select','service-2');await expect(page.locator('#procPaid')).toHaveValue('175.00');await noOverflow(page);await save(page);await expect(page.locator('#workspace')).toBeVisible();
+ await page.click('#procAddServiceV10');await page.selectOption('#procAdditionalServicesV10 select','service-2');await expect(page.locator('#procPaid')).toHaveValue('175.00');await cashPayment(page);await noOverflow(page);await save(page);await expect(page.locator('#workspace')).toBeVisible();
  const payload=(await created(page))[0].args.p_payload;expect(payload.items).toEqual([]);expect(payload.services).toEqual([{service_id:'service-1',quantity:1},{service_id:'service-2',quantity:1}]);expect(payload.own_medications).toEqual([{name:'Свой витамин B12 500 мкг',quantity:1,unit:'амп.',source:'patient',dose:null},{name:'Ранее купленный Самыр',quantity:2,unit:'амп.',source:'previously_purchased',dose:null}]);expect(payload.charge_total).toBe(175);expect(errors).toEqual([]);
 });
 
 test('committed creation with a lost response retries the same receipt instead of duplicating it',async({page})=>{
- const errors=await boot(page);await procedure(page);await page.selectOption('#procPaymentStatusV10','debt');await page.fill('#procReceivedV10','40');await page.fill('#procNotes','Не стирать после сбоя');await page.evaluate(()=>{__v10LostResponse=true});await save(page);
+ const errors=await boot(page);await procedure(page);await page.selectOption('#procPaymentStatusV10','debt');await cashPayment(page);await page.fill('#procReceivedV10','40');await page.fill('#procNotes','Не стирать после сбоя');await page.evaluate(()=>{__v10LostResponse=true});await save(page);
  await expect(page.locator('#procedureMessage')).toContainText(/ответ|сервер/i);await expect(page.locator('#procPaid')).toHaveValue('190.00');await expect(page.locator('#procReceivedV10')).toHaveValue('40');await expect(page.locator('#procNotes')).toHaveValue('Не стирать после сбоя');await expect(page.locator('#procMeds .medqty')).toHaveValue('2');await expect(page.locator('#procPayConfirmed')).toBeChecked();
  await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#workspace')).toBeVisible();const calls=await created(page);expect(calls).toHaveLength(2);expect(calls[1].args.p_request_id).toBe(calls[0].args.p_request_id);expect(await page.evaluate(()=>__v10Saved.length)).toBe(1);expect(errors).toEqual([]);
 });
 
 test('editing a procedure adds another injection and medicine using saved prices and optimistic version',async({page})=>{
  const errors=await boot(page);await page.evaluate(()=>editTreatmentV10('procedure','procedure-1'));await expect(page.locator('#procedure h1')).toHaveText('Редактирование процедуры');await expect(page.locator('#procPatient')).toBeDisabled();await expect(page.locator('#procPaid')).toHaveValue('190.00');await expect(page.locator('#procDebtSummaryV10')).toContainText('Ранее оплачено');
- await page.fill('#procMeds .medqty','3');await page.click('#procAddServiceV10');await page.selectOption('#procAdditionalServicesV10 select','service-2');await expect(page.locator('#procList')).toContainText('235');await page.fill('#procPaid','235');await page.fill('#procEditReasonV10','Добавлен внутривенный укол и ещё один комплект препарата');
+ await page.fill('#procMeds .medqty','3');await page.click('#procAddServiceV10');await page.selectOption('#procAdditionalServicesV10 select','service-2');await expect(page.locator('#procList')).toContainText('235');await page.fill('#procPaid','235');await cashPayment(page);await page.fill('#procEditReasonV10','Добавлен внутривенный укол и ещё один комплект препарата');
  await page.evaluate(()=>{__v10MutationError={code:'P0001',message:'Запись уже изменена другим сотрудником. Откройте её заново.'}});await save(page);await expect(page.locator('#procedureMessage')).toContainText('другим сотрудником');await expect(page.locator('#procMeds .medqty')).toHaveValue('3');await expect(page.locator('#procEditReasonV10')).toHaveValue('Добавлен внутривенный укол и ещё один комплект препарата');
  await page.evaluate(()=>{__v10MutationError=null;__v10LostResponse=true});await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#procedureMessage')).toContainText('Черновик сохранён');await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#workspace')).toBeVisible();
  const calls=await page.evaluate(()=>__v10Calls.filter(x=>x.name==='crm_clinical_v10'&&x.args.p_action==='treatment_edit'));expect(calls).toHaveLength(3);expect(calls[2].args.p_request_id).toBe(calls[1].args.p_request_id);expect(calls[2].args.p_payload).toMatchObject({id:'procedure-1',kind:'procedure',expected_version:3,shift_id:'shift-1',charge_total:235,paid_total:45,payment_status:'paid',services:[{service_id:'service-1',quantity:1},{service_id:'service-2',quantity:1}],items:[{medication_id:'med-1',quantity:3}]});expect(await page.evaluate(()=>__v10Saved.length)).toBe(1);expect(errors).toEqual([]);
@@ -204,7 +205,7 @@ test('owner collects preserved debt directly after a patient has been removed fr
 
 async function shortCashProcedure(page){
  await page.evaluate(()=>{services[0].work_price=600;services[0].consumables_price=0;meds[0].sale_price=3500});
- await page.evaluate(()=>openProcedure('patient-1'));await expect(page.locator('#procedure')).toBeVisible();await page.selectOption('#procService','service-1');await page.evaluate(()=>chooseMedication('procMeds','med-1'));await page.fill('#procMeds .medqty','2');await expect(page.locator('#procPaid')).toHaveValue('7600.00');
+ await page.evaluate(()=>openProcedure('patient-1'));await expect(page.locator('#procedure')).toBeVisible();await page.selectOption('#procService','service-1');await page.evaluate(()=>chooseMedication('procMeds','med-1'));await page.fill('#procMeds .medqty','2');await expect(page.locator('#procPaid')).toHaveValue('7600.00');await cashPayment(page);
 }
 
 test('a smaller cash tender and general discount note never silently change the charge',async({page})=>{
@@ -235,7 +236,7 @@ test('short tender in debt mode cannot become a cash discount or erase the agree
 });
 
 test('the payment-area charge and reason mirrors work for medication sales too',async({page})=>{
- const errors=await boot(page);await page.evaluate(async()=>{meds[0].sale_price=3800;await openSale();chooseMedication('saleMeds','med-1')});await page.fill('#saleMeds .medqty','2');await expect(page.locator('#salePaid')).toHaveValue('7600.00');await page.fill('#saleChargeInPaymentV11','6800');await expect(page.locator('#salePaid')).toHaveValue(/^6800(?:\.00)?$/);await page.fill('#saleDiscountInPaymentV11','Постоянная скидка на продажу');await expect(page.locator('#saleDiscountComment')).toHaveValue('Постоянная скидка на продажу');await page.check('#salePayConfirmed');await page.click('#sale button[onclick="saveSale()"]');await expect(page.locator('#workspace')).toBeVisible();const payload=(await created(page))[0].args.p_payload;expect(payload).toMatchObject({charge_total:6800,paid_total:6800,discount_comment:'Постоянная скидка на продажу',payments:{cash:6800,terminal:0,owner_card:0,cash_received:6800}});expect(errors).toEqual([]);
+ const errors=await boot(page);await page.evaluate(async()=>{meds[0].sale_price=3800;await openSale();chooseMedication('saleMeds','med-1')});await page.fill('#saleMeds .medqty','2');await expect(page.locator('#salePaid')).toHaveValue('7600.00');await cashPayment(page,'sale');await page.fill('#saleChargeInPaymentV11','6800');await expect(page.locator('#salePaid')).toHaveValue(/^6800(?:\.00)?$/);await page.fill('#saleDiscountInPaymentV11','Постоянная скидка на продажу');await expect(page.locator('#saleDiscountComment')).toHaveValue('Постоянная скидка на продажу');await page.check('#salePayConfirmed');await page.click('#sale button[onclick="saveSale()"]');await expect(page.locator('#workspace')).toBeVisible();const payload=(await created(page))[0].args.p_payload;expect(payload).toMatchObject({charge_total:6800,paid_total:6800,discount_comment:'Постоянная скидка на продажу',payments:{cash:6800,terminal:0,owner_card:0,cash_received:6800}});expect(errors).toEqual([]);
 });
 
 test('editing cannot reduce the charge below money already received through the payment mirror',async({page})=>{

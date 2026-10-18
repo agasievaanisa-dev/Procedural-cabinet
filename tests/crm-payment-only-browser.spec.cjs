@@ -66,7 +66,7 @@ test('owner can return to tracked mode; nurse keeps no setting access and tracke
  const errors=await boot(page,'owner');await page.evaluate(()=>openSettingsV5());await expect(page.locator('#settingsPaymentOnlyV5')).toBeChecked();await expect(page.locator('#settingsPaymentOnlyV5')).toBeEnabled();await noOverflow(page);
  await page.uncheck('#settingsPaymentOnlyV5');await page.click('#settingsV5 button[onclick="saveSettingsV5()"]');await expect(page.locator('#settingsMessageV5')).toContainText('сохранены');
  const setting=await page.evaluate(()=>__calls.findLast(x=>x.name==='crm_finance_v5'&&x.args.p_action==='settings_save'));expect(setting.args.p_payload.payment_only).toBe(false);
- await procedure(page);await expect(page.locator('#procAccountingModeV5')).toContainText('Складской учёт включён');await page.check('#procPayConfirmed');await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#procedureMessage')).toContainText('Недостаточно');expect(await page.evaluate(()=>__records.length)).toBe(0);
+ await procedure(page);await expect(page.locator('#procAccountingModeV5')).toContainText('Складской учёт включён');await page.click('#procPaymentV5 [data-pay-method="cash"]');await page.check('#procPayConfirmed');await page.click('#procedure button[onclick="saveProcedure()"]');await expect(page.locator('#procedureMessage')).toContainText('Недостаточно');expect(await page.evaluate(()=>__records.length)).toBe(0);
  await page.evaluate(()=>{currentStaff.role='nurse';show('settingsV5')});await expect(page.locator('#settingsV5')).not.toBeVisible();expect(errors).toEqual([]);
 });
 
@@ -98,7 +98,7 @@ for(const prefix of ['proc','sale'])for(const place of ['main','payment'])test(`
  await expect(page.locator('#'+kind+'Message')).toContainText(/укажите сумму/i);expect(await page.evaluate(()=>__records.length)).toBe(0);
  await field.focus();await field.pressSequentially('3200');
  for(const id of ['Paid','ChargeInPaymentV11'])await expect(page.locator('#'+prefix+id)).toHaveValue('3200');
- await page.fill('#'+prefix+'DiscountComment','Индивидуальная скидка согласована');await page.check('#'+prefix+'PayConfirmed');
+ await page.fill('#'+prefix+'DiscountComment','Индивидуальная скидка согласована');await page.click('#'+prefix+'PaymentV5 [data-pay-method="cash"]');await page.check('#'+prefix+'PayConfirmed');
  await page.locator('#'+kind+' button[onclick="'+(prefix==='proc'?'saveProcedure()':'saveSale()')+'"]' ).click();await expect(page.locator('#workspace')).toBeVisible();
  const saved=await page.evaluate(()=>__records[0]);expect(saved.p_payload).toMatchObject({charge_total:3200,paid_total:3200,payments:{cash:3200}});expect(errors).toEqual([]);
 });

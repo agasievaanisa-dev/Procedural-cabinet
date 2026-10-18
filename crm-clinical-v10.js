@@ -427,7 +427,7 @@
  installPaymentControlsV5 = function(prefix) { oldInstall(prefix); };
  resetPaymentV5 = function(prefix) {
   install(prefix); const s = state(prefix); if (!s) return;
-  financePaymentState5[prefix] = {method:'cash',total:null,tenderEdited:false};
+  financePaymentState5[prefix] = {method:null,total:null,tenderEdited:false};
   for (const suffix of ['Cash','Terminal','OwnerCard']) $(prefix + 'Pay' + suffix).value = '0.00';
   $(prefix + 'PaymentStatusV10').value = 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonV10').value = '';
   s.correctionV22 = false; delete s.correctionActorV22; delete s.paymentBeforeCorrectionV22;
@@ -472,7 +472,10 @@
   correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix);
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
-  const model = currentModel(prefix), cash = allocationCents($(prefix + 'PayCash').value,'Наличные'), terminal = allocationCents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = allocationCents($(prefix + 'PayOwnerCard').value,'Перевод');
+  const model = currentModel(prefix), method = financePaymentState5[prefix]?.method;
+  if (model.received > 0 && !['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника или смешанная оплата');
+  const cash = allocationCents($(prefix + 'PayCash').value,'Наличные'), terminal = allocationCents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = allocationCents($(prefix + 'PayOwnerCard').value,'Перевод');
+  if (model.received > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && ownerCard > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
   if (cash + terminal + ownerCard !== model.received) throw Error(`Распределите ровно ${rub(model.received / 100)} между способами оплаты`);
   const tender = cash ? cents($(prefix + 'PayTender').value,'Получено наличными') : 0;
   if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');

@@ -87,7 +87,8 @@ async function boot(page,{role='nurse',paymentOnly=true}={}){
 async function sale(page,received=0,status='debt'){
  await page.locator('#workspace .home-actions button[onclick="openSale()"]' ).click();await expect(page.locator('#sale')).toBeVisible();
  await expect(page.locator('#salePatient')).toHaveValue('');await page.evaluate(()=>chooseMedication('saleMeds','med-1'));await page.fill('#saleMeds .medqty','2');
- await expect(page.locator('#salePaid')).toHaveValue('400.00');await page.selectOption('#salePaymentStatusV10',status);if(received)await page.fill('#saleReceivedV10',String(received));
+ await expect(page.locator('#salePaid')).toHaveValue('400.00');await page.selectOption('#salePaymentStatusV10',status);
+ if(received){await page.fill('#saleReceivedV10',String(received));await page.click('#salePaymentV5 [data-pay-method="cash"]');}
 }
 async function save(page){await page.check('#salePayConfirmed');await page.locator('#sale button[onclick="saveSale()"]' ).click()}
 const writes=page=>page.evaluate(()=>__saleWrites);

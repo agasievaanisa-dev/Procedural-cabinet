@@ -30,7 +30,7 @@ c.originalSaveTreatment4=c.saveTreatment;
 vm.runInContext(fs.readFileSync(__dirname+'/../crm-finance-v5.js','utf8'),c);
 function payment(prefix,total){
  el(prefix+'Paid').value=String(total);el(prefix+'Nurse').value='n1';el(prefix+'Patient').value='p1';el('procService').value='service';
- c.resetPaymentV5(prefix);el(prefix+'PayConfirmed').checked=true;
+ c.resetPaymentV5(prefix);if(Number(total)>0)c.selectPaymentMethodV5(prefix,'cash');el(prefix+'PayConfirmed').checked=true;
 }
 (async()=>{
  await c.prepareTreatment4('procedure');await c.prepareTreatment4('sale');

@@ -43,6 +43,7 @@ function fixture(clinical=false){
  context.window=context;vm.createContext(context);
  vm.runInContext(fs.readFileSync(__dirname+'/../crm-finance-v5.js','utf8'),context);
  vm.runInContext('financeTreatmentMode5.proc={stock_deducted:false,payment_only:true};financeTreatmentMode5.sale={stock_deducted:false,payment_only:true}',context);
+ vm.runInContext("financePaymentState5.proc={method:'cash',total:10000,tenderEdited:false}",context);
  if(clinical){
   const source=fs.readFileSync(__dirname+'/../crm-clinical-v10.js','utf8').replace("})(typeof window === 'object' ? window : globalThis);","global.__clinicalTest16={clinicalRpc,forms,pendingPayments16,actorKey};})(typeof window === 'object' ? window : globalThis);");
   vm.runInContext(source,context);

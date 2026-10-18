@@ -148,7 +148,7 @@ function installPaymentControlsV5(prefix) {
 }
 function resetPaymentV5(prefix) {
  installPaymentControlsV5(prefix);
- financePaymentState5[prefix] = {method:'cash', total:null, tenderEdited:false};
+ financePaymentState5[prefix] = {method:null, total:null, tenderEdited:false};
  for (const suffix of ['Cash','Terminal','OwnerCard']) $(prefix + 'Pay' + suffix).value = '0.00';
  $(prefix + 'PayConfirmed').checked = false;
  if (prefix === 'sale') {
@@ -208,9 +208,12 @@ function financeAllocationCentsV43(value, label) {
 function readPaymentsV5(prefix, requireConfirmation = true) {
  if (!financePaymentState5[prefix]) throw Error('Откройте форму оплаты заново');
  const paid = financeCentsV5($(prefix + 'Paid').value, 'Стоимость');
+ const method = financePaymentState5[prefix].method;
+ if (paid > 0 && !['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника или смешанная оплата');
  const cash = financeAllocationCentsV43($(prefix + 'PayCash').value, 'Наличные');
  const terminal = financeAllocationCentsV43($(prefix + 'PayTerminal').value, 'Терминал');
  const card = financeAllocationCentsV43($(prefix + 'PayOwnerCard').value, 'Перевод');
+ if (paid > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && card > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
  const tender = cash > 0 ? financeCentsV5($(prefix + 'PayTender').value, 'Получено наличными') : 0;
  if (cash + terminal + card !== paid) throw Error(`Распределите ровно ${rub(paid / 100)} между способами оплаты`);
  if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
@@ -222,7 +225,8 @@ function renderPaymentSummaryV5(prefix) {
  try {
   const p = readPaymentsV5(prefix, false);
   output.classList.remove('status-bad');
-  output.textContent = `Наличные ${rub(p.cash)} · терминал ${rub(p.terminal)} · перевод ${rub(p.owner_card)}. Сдача: ${rub(p.cash_received - p.cash)}`;
+  const parts = [[p.cash,'Наличные'],[p.terminal,'Терминал'],[p.owner_card,'Перевод на карту начальника']].filter(([value]) => value > 0).map(([value,label]) => `${label}: ${rub(value)}`);
+  output.textContent = parts.length ? `Оплата сейчас: ${rub(p.cash + p.terminal + p.owner_card)} · ${parts.join(' · ')}${p.cash > 0 ? '. Сдача: ' + rub(p.cash_received - p.cash) : ''}` : 'Оплата сейчас: 0 ₽. Новая оплата не вносится.';
  } catch (e) { output.classList.add('status-bad'); output.textContent = e.message; }
 }
 
@@ -369,8 +373,13 @@ function financeDateTimeV5(value) {
  const date = new Date(value);
  return Number.isFinite(+date) ? date.toLocaleString('ru-RU',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'Время не указано';
 }
+function financeShiftPaymentScopeV45(event) {
+ if (event.payment_scope_v45 !== 'shift' || !['number','string'].includes(typeof event.shift_received_total_v45) || String(event.shift_received_total_v45).trim() === '') return null;
+ const value = Number(event.shift_received_total_v45),cents = Math.round(value * 100);
+ return Number.isFinite(value) && value >= 0 && Number.isSafeInteger(cents) ? {received:cents / 100,payments:event.shift_payments_v45 || {}} : null;
+}
 function financeEventAmountsV5(event) {
- const received = num(event.received_total ?? event.paid_total ?? event.paid);
+ const received = financeShiftPaymentScopeV45(event)?.received ?? num(event.received_total ?? event.paid_total ?? event.paid);
  const debt = num(event.debt_total ?? event.debt_amount);
  const charge = num(event.charge_total ?? event.charged_total ?? (received + debt));
  return {received,debt,charge,list:num(event.list_total ?? (charge + num(event.discount_amount)))};
@@ -393,7 +402,7 @@ function financeEventMethodsV34(event) {
   return Number.isFinite(parsed) && parsed >= 0 && Number.isSafeInteger(rounded) ? rounded : 0;
  };
  const received = cents(event.lifetime_received_total ?? event.received_total ?? event.paid_total ?? event.paid), candidate = cents(event.debt_repayments_total), repayment = candidate <= received ? candidate : 0;
- const ordinary = received - repayment, source = event.payments || {};
+ const scoped = financeShiftPaymentScopeV45(event),ordinary = scoped ? cents(scoped.received) : received - repayment, source = scoped ? scoped.payments : event.payments || {};
  let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card);
  if (cash + terminal + owner_card > ordinary) cash = terminal = owner_card = 0;
  return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,unclassified:(ordinary - cash - terminal - owner_card) / 100,debt_repayments_total:repayment / 100};
@@ -405,7 +414,11 @@ function financeEventMethodsHtmlV34(event) {
 function financeEventPaymentHtmlV5(event) {
  const amounts = financeEventAmountsV5(event),pending = event.payment_pending === true;
  const reason = [event.discount_reason,event.discount_comment].filter(Boolean).join(' · ');
- return `${financeEventPriceHtmlV14(event)}<div class="report-event-payment-v5"><span>${event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span>${amounts.debt > 0 ? `<span>${pending ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b></span>` : ''}</div>${pending && amounts.debt > 0 ? '<p class="small">Пациент ещё на процедуре или ожидает расчёта. Это не долг.</p>' : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${financeEventMethodsHtmlV34(event)}`;
+ return `${financeEventPriceHtmlV14(event)}<div class="report-event-payment-v5"><span>${financeShiftPaymentScopeV45(event) ? 'Оплачено в этой смене' : event.received_total !== undefined ? 'Оплачено всего' : 'Оплачено'}: <b>${esc(rub(amounts.received))}</b></span>${amounts.debt > 0 ? `<span>${pending ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b></span>` : ''}</div>${pending && amounts.debt > 0 ? '<p class="small">Пациент ещё на процедуре или ожидает расчёта. Это не долг.</p>' : ''}${reason ? `<p class="report-discount-reason-v5">Причина изменения стоимости: ${esc(reason)}</p>` : ''}${financeEventMethodsHtmlV34(event)}${financeOtherShiftPaymentHtmlV45(event)}`;
+}
+function financeOtherShiftPaymentHtmlV45(event) {
+ const other = num(event.received_other_shifts_v45);
+ return financeShiftPaymentScopeV45(event) && other > 0 ? `<p class="small report-other-shift-payment-v45">Оплата в других сменах: <b>${esc(rub(other))}</b>. В сумму и кассу этой смены не входит.</p>` : '';
 }
 
 function financeReceiptHtmlV5(receipt) {
@@ -471,7 +484,7 @@ function financeVisitPaymentHtmlV41(event) {
   // Inconsistent legacy snapshots cannot justify additional received money.
   lines = financePaidLineHtmlV41(methods,adjustment) + collections.map(item => `<div class="report-inline-receipt-v39" data-receipt-id="${esc(item.receipt.id || '')}">${financeReceiptMetaHtmlV41(item.receipt,true)}${item.receipt.comment ? `<span>Комментарий: ${esc(item.receipt.comment)}</span>` : ''}</div>`).join('');
  }
- return `<div class="report-visit-payment-v41"><div class="report-price-line-v41">Оплата по прайсу: <b>${esc(rub(amounts.list))}</b></div>${lines}${amounts.debt > 0 ? `<div class="report-unpaid-v41">${event.payment_pending === true ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b>${event.payment_pending === true ? ' · Это не долг.' : ''}</div>` : ''}${methods.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(methods.debt_repayments_total))}</b></div>` : ''}</div>`;
+ return `<div class="report-visit-payment-v41"><div class="report-price-line-v41">Оплата по прайсу: <b>${esc(rub(amounts.list))}</b></div>${lines}${financeOtherShiftPaymentHtmlV45(event)}${amounts.debt > 0 ? `<div class="report-unpaid-v41">${event.payment_pending === true ? 'Ожидает оплаты' : 'Долг'}: <b>${esc(rub(amounts.debt))}</b>${event.payment_pending === true ? ' · Это не долг.' : ''}</div>` : ''}${methods.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(methods.debt_repayments_total))}</b></div>` : ''}</div>`;
 }
 function financeShiftTotalsV5(data) {
  const events = [...(data.procedures || []),...(data.sales || [])];

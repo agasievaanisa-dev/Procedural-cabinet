@@ -160,7 +160,7 @@ test('older backend retains payment-only controls and does not send an unsupport
 });
 
 test('strict stock mode still blocks selling a zero-stock medicine before any save RPC',async({page})=>{
- const errors=await boot(page,{mode:'strict'});await openSale(page);await expect(page.locator('#saleAccountingModeV5')).toContainText('Складской учёт включён');await choose(page,'untracked',1);await saveSale(page);await expect(page.locator('#sale')).toBeVisible();await expect(page.locator('#saleMessage')).toContainText(/Недостаточно препарата|Не хватает/);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);expect(errors).toEqual([]);
+ const errors=await boot(page,{mode:'strict'});await openSale(page);await expect(page.locator('#saleAccountingModeV5')).toContainText('Складской учёт включён');await choose(page,'untracked',1);await page.click('#salePaymentV5 [data-pay-method="cash"]');await saveSale(page);await expect(page.locator('#sale')).toBeVisible();await expect(page.locator('#saleMessage')).toContainText(/Недостаточно препарата|Не хватает/);expect(await calls(page,'record_treatment_v5')).toHaveLength(0);expect(errors).toEqual([]);
 });
 
 for(const mode of ['partial','finance','strict']) test(`selected sale prices stay visible in ${mode} mode and follow quantity without stock changes`,async({page})=>{
