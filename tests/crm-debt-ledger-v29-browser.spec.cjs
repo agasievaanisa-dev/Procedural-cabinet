@@ -130,7 +130,7 @@ test('debt amount cannot exceed the balance or save without explicit confirmatio
 });
 
 test('ordinary partial cash collection changes drawer cash by the payment and excludes tendered change',async({page})=>{
- const errors=await boot(page,{role:'nurse'});await page.evaluate(()=>openSavedPaymentV14('procedure','waiting',900,null,true));await page.fill('#debtAmountV10','450.25');await page.fill('#debtTenderV10','500');await page.check('#debtConfirmV10');await payButton(page).click();await expect(page.locator('#workspace')).toBeVisible();
+ const errors=await boot(page,{role:'nurse'});await page.evaluate(()=>openSavedPaymentV14('procedure','waiting',900,null,true));await page.selectOption('#debtMethodV10','cash');await page.fill('#debtAmountV10','450.25');await page.fill('#debtTenderV10','500');await page.check('#debtConfirmV10');await payButton(page).click();await expect(page.locator('#workspace')).toBeVisible();
  const calls=await paymentCalls(page);expect(calls).toHaveLength(1);expect(calls[0].args.p_payload.payments).toEqual({cash:450.25,terminal:0,owner_card:0,cash_received:500});
  const state=await page.evaluate(()=>({cash:__ledgerReport.revenue.cash,total:__ledgerReport.revenue.total,balance:__ledgerReport.cash_drawer.balance,received:__ledgerReport.cash_drawer.received_cash,history:__ledgerHistory.length}));expect(state).toEqual({cash:7250.25,total:8950.25,balance:5450.25,received:7250.25,history:1});expect(errors).toEqual([]);
 });

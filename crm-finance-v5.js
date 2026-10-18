@@ -236,7 +236,9 @@ prepareTreatment4 = async function(kind, patientId, navigation = quickNavigation
  financeTreatmentReceipt5[prefix] = null;
  financeAccountingMismatch5[prefix] = false;
  const ready = await financePrepareBase5(kind, patientId,navigation);
- if (ready) { resetPaymentV5(prefix); renderAccountingModeV5(); }
+ // The base form initializes payment before it becomes visible. Resetting
+ // here, after the asynchronous patient-history hint, overwrites user input.
+ if (ready) renderAccountingModeV5();
  return ready;
 };
 const financeCalcProcedureBase5 = calcProcedure, financeCalcSaleBase5 = calcSale;

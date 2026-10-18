@@ -127,7 +127,11 @@ async function prepareTreatment4(kind,patientId,navigation=quickNavigation4){
  const p=kind==='procedure'?'proc':'sale';$(p+'Nurse').innerHTML=staffOptions();if([shift.aId,shift.bId].includes(currentStaff.id))$(p+'Nurse').value=currentStaff.id;
  $(p+'Patient').innerHTML=patientOptions(true).replace('Без пациента',p==='proc'?'Выберите пациента':'Без пациента');if(patientId)$(p+'Patient').value=patientId;
  if(p==='proc')$('procService').innerHTML='<option value="">Выберите услугу</option>'+services.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('');
- for(const suffix of ['Notes','Paid','DiscountReason','DiscountComment','MedSearch'])$(p+suffix).value='';$(p+'Meds').innerHTML='';message(kind+'Message','');show(kind);renderMedVisualCatalog(p+'Meds');if(p==='proc'){calcProcedure();await showRepeatHint()}else calcSale();if(!quickNavigationCurrent4(navigation,actor))return false;recalc();return true;
+ for(const suffix of ['Notes','Paid','DiscountReason','DiscountComment','MedSearch'])$(p+suffix).value='';$(p+'Meds').innerHTML='';
+ // Initialize a new payment before displaying its controls. A delayed history
+ // hint must never reset a method, amount or payment status already chosen.
+ if(typeof resetPaymentV5==='function')resetPaymentV5(p);
+ message(kind+'Message','');show(kind);renderMedVisualCatalog(p+'Meds');if(p==='proc'){calcProcedure();await showRepeatHint()}else calcSale();if(!quickNavigationCurrent4(navigation,actor))return false;recalc();return true;
 }
 openProcedure=async function(patientId=null){const navigation=beginQuickNavigation4(),actor=currentStaff?.id;message('homeMessage','Открываем процедуру…');try{await prepareTreatment4('procedure',patientId,navigation)}catch(e){if(quickNavigationCurrent4(navigation,actor))message('homeMessage',e.message)}};
 openSale=async function(){const navigation=beginQuickNavigation4(),actor=currentStaff?.id;message('homeMessage','Открываем продажу…');try{await prepareTreatment4('sale',null,navigation)}catch(e){if(quickNavigationCurrent4(navigation,actor))message('homeMessage',e.message)}};

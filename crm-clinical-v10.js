@@ -491,10 +491,11 @@
   if (forms[prefix]?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Предыдущее сохранение ещё не подтверждено. Нажмите «Повторить сохранение» — отправим первоначальные данные без дубля.'); return false; }
   forms[prefix] = {chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map()};
   install(prefix);
+  resetVisitTime(prefix,null,patientId);
   if (prefix === 'proc') { $('procAdditionalServicesV10').innerHTML = ''; $('procOwnMedsV10').innerHTML = ''; }
   const ready = await prepareBase(kind,patientId,navigation);
   if (!quickNavigationCurrent4(navigation,actor)) return false;
-  if (ready) { resetVisitTime(prefix,null,$(prefix + 'Patient').value); $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Новая процедура' : 'Продажа препаратов'; $('repeatHint')?.classList.remove('hidden'); $(prefix + 'Patient').disabled = false; $(prefix + 'Nurse').disabled = false; }
+  if (ready) { if (!state(prefix)?.visitTimeV23?.manual) resetVisitTime(prefix,null,$(prefix + 'Patient').value); $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Новая процедура' : 'Продажа препаратов'; $('repeatHint')?.classList.remove('hidden'); $(prefix + 'Patient').disabled = false; $(prefix + 'Nurse').disabled = false; }
   return ready;
  };
  saveTreatment = async function(kind) {
@@ -700,9 +701,21 @@
   host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   let refreshPaymentMethodV43;
   if (pending) {
+   const choice = new Option('Выберите способ оплаты','',true,true); choice.disabled = true;
+   $('debtMethodV10').prepend(choice);
+   $('debtMethodV10').value = '';
+   const summary = document.createElement('p'); summary.id = 'debtMethodSummaryV44'; summary.className = 'small'; summary.setAttribute('role','status'); summary.setAttribute('aria-live','polite');
+   $('debtMethodV10').after(summary);
    let tenderEdited = false;
    refreshPaymentMethodV43 = (syncTender = true) => {
     const method = $('debtMethodV10').value, mixed = method === 'mixed';
+    const label = {cash:'Наличные',terminal:'Терминал',owner_card:'Перевод на карту начальника',mixed:'Смешанная оплата'}[method];
+    try {
+     summary.textContent = label ? (mixed ? ['Наличные','Терминал','Перевод на карту начальника'].map((name,index) => {
+      const value = allocationCents($(['debtCashV43','debtTerminalV43','debtOwnerCardV43'][index]).value,name);
+      return value ? `${name}: ${rub(value / 100)}` : '';
+     }).filter(Boolean).join(' · ') : `${label}: ${rub(allocationCents($('debtAmountV10').value,'Получено сейчас') / 100)}`) : 'Выберите способ оплаты перед сохранением.';
+    } catch (error) { summary.textContent = error.message; }
     $('debtAllocationV43').classList.toggle('hidden',!mixed);
     $('debtAllocationStatusV43').classList.toggle('hidden',!mixed);
     const cashValue = method === 'cash' ? $('debtAmountV10').value : mixed ? $('debtCashV43').value : '0';
@@ -788,8 +801,13 @@
    if(!quickNavigationCurrent4(navigation,currentStaff?.id))return;
    const success = (snapshot.pending ? 'Оплата сохранена в смене.' : 'Погашение долга сохранено отдельно от смены.') + ' Осталось: ' + rub(receipt?.debt_total ?? (snapshot.remaining - snapshot.paid) / 100);
    try {
-    if(returnToJournal)await global.openShiftJournalV12(returnToJournal);else if(returnToDebts)await global.openDebtsV10();else if(patient)await openPatient(patient);else{show('workspace');await refreshDashboard();}
-    if (actor === actorKey()) message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':patient?'patientCardMessageV5':'homeMessage',success,true);
+    let journalRefreshed = null, journalNavigation = null;
+    if(returnToJournal){const journalRefresh=global.openShiftJournalV12(returnToJournal);journalNavigation=quickNavigation4;journalRefreshed=await journalRefresh;}else if(returnToDebts)await global.openDebtsV10();else if(patient)await openPatient(patient);else{show('workspace');await refreshDashboard();}
+    if (actor === actorKey()) {
+     if(returnToJournal&&(!quickNavigationCurrent4(journalNavigation,currentStaff?.id)||!$('shiftJournalV12')?.classList.contains('active')||$('journalDateV12')?.value!==returnToJournal))return;
+     const refreshWarning = journalRefreshed === false ? ($('journalMessageV12')?.textContent || 'Нажмите «Обновить».') : '';
+     message(returnToJournal?'journalMessageV12':returnToDebts?'debtsMessageV10':patient?'patientCardMessageV5':'homeMessage',success + (refreshWarning ? ' Журнал не обновлён: ' + refreshWarning : ''),!refreshWarning);
+    }
    } catch (error) { if (actor === actorKey()) { show('workspace'); message('homeMessage',success + '. Не удалось обновить экран: ' + error.message,true); } }
   } catch (error) {
    if (actor === actorKey()) {

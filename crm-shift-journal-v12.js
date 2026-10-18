@@ -70,22 +70,22 @@
   $('journalBodyV12').innerHTML=shifts+'<h2>Пациенты по времени</h2><p class="small">Записей: '+events.length+'.</p>'+(entries?'<ol class="journal-events-v12">'+entries+'</ol>':'<div class="card">В этих сменах процедуры и продажи пока не записаны.</div>');
  }
  global.refreshShiftJournalV12=async function(){
-  if(!nurse()||!screen()?.classList.contains('active'))return;
+  if(!nurse()||!screen()?.classList.contains('active'))return false;
   const navigation=beginQuickNavigation4(),identity=actor(),version=++view,date=$('journalDateV12').value;
   const current=()=>identity===actor()&&version===view&&screen()?.classList.contains('active')&&$('journalDateV12').value===date&&quickNavigationCurrent4(navigation,currentStaff?.id);
   $('journalBodyV12').textContent='';status('');
-  if(!validDate(date)){status('Выберите дату журнала.');$('journalRefreshV12').disabled=false;return}
+  if(!validDate(date)){status('Выберите дату журнала.');$('journalRefreshV12').disabled=false;return false}
   $('journalRefreshV12').disabled=true;status('Загружаем журнал…');
   try{
-   const data=await read(date,current);if(!current())return;
+   const data=await read(date,current);if(!current())return false;
    if(data?.date!==date||!Array.isArray(data.reports))throw Error('Не удалось получить журнал за выбранную дату. Нажмите «Обновить».');
-   render(data);status('');
-  }catch(error){if(current()){$('journalBodyV12').textContent='';status(error.message)}}
+   render(data);status('');return true;
+  }catch(error){if(current()){$('journalBodyV12').textContent='';status(error.message)}return false}
   finally{if(current())$('journalRefreshV12').disabled=false}
  };
  global.openShiftJournalV12=async function(date=null){
-  if(!nurse()){message('homeMessage','Журнал смены доступен медсестре.');return}
-  beginQuickNavigation4();ensure();$('journalDateV12').value=date||localDateValue();show('shiftJournalV12');await global.refreshShiftJournalV12();
+  if(!nurse()){message('homeMessage','Журнал смены доступен медсестре.');return false}
+  beginQuickNavigation4();ensure();$('journalDateV12').value=date||localDateValue();show('shiftJournalV12');return await global.refreshShiftJournalV12();
  };
  const homeBase=renderCabinetHomeV5;
  renderCabinetHomeV5=function(){
