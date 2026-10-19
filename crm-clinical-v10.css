@@ -6,3 +6,5 @@
 .clinical-dose-v24{display:block;margin:10px 0 0;font-size:13px;color:var(--muted)}.clinical-dose-v24 .meddose-v24{display:block;width:100%;min-width:0;box-sizing:border-box;margin-top:5px;padding:9px 8px;font-size:14px;min-height:42px;background:white}.clinical-dose-v24 .meddose-v24:focus{outline:2px solid var(--accent);outline-offset:1px}
 .clinical-quantity-v24{min-width:0;font-size:12px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}.clinical-quantity-v24 .medqty{display:block;margin-top:5px;width:100%;box-sizing:border-box}
 .medrow .chosen-name .medication-price-v31{font-weight:700;color:var(--text);line-height:1.4}
+
+.medrow .chosen-name .medication-refresh-v48{display:block;max-width:100%;min-height:36px;margin-top:8px;padding:8px;font-size:12px;line-height:1.35;white-space:normal;text-align:left}

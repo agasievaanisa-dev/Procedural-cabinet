@@ -36,7 +36,7 @@ function fixture(clinical=false){
   message(id,text,success){messages.push({id,text,success});el(id).textContent=text;},show(id){context.screen=id;for(const screen of ['workspace','procedure','sale','report'])el(screen).classList.toggle('active',screen===id);},
   localDateValue:()=> '2026-10-12',shiftLabel:()=> '',expiryDays:()=>null,
   loadInventory:async()=>{},loadQuickContext:async()=>{},openShiftMenu:async()=>{},loadPatients:async()=>{},loadMeds:async()=>{},loadServices:async()=>{},
-  prepareTreatment4:async()=>true,calcProcedure(){},calcSale(){},enterApp:async()=>{},signOut:async()=>{context.currentStaff=null;},refreshDashboard:async()=>{},
+  prepareTreatment4:async()=>true,addMedRow(){},chooseMedication(){},calcProcedure(){},calcSale(){},enterApp:async()=>{},signOut:async()=>{context.currentStaff=null;},refreshDashboard:async()=>{},
   quickNavigation4:0,quickNavigationCurrent4:(version,actor)=>version===context.quickNavigation4&&actor===context.currentStaff?.id,beginQuickNavigation4:()=>++context.quickNavigation4,
   treatmentRpc:async()=>{},originalSaveTreatment4:async()=>{},saveTreatment:async()=>{},clinicalBusy:false,
   openPatient:async()=>{},renderCabinetHomeV5(){},db:{rpc:async(name,args)=>{calls.push({name,args:clone(args)});return behavior(name,args);}}};

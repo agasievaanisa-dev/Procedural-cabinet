@@ -226,6 +226,89 @@
  function medicationPriceCents(prefix, id) {
   return state(prefix)?.medicationPrices?.get(id) ?? Math.round(num(meds.find(m => m.id === id)?.sale_price) * 100);
  }
+ function medicationRefreshMapV48(prefix) {
+  const s = state(prefix);
+  if (s && !s.medicationRefreshV48) s.medicationRefreshV48 = new Map();
+  return s?.medicationRefreshV48;
+ }
+ function chargeFollowsListV48(prefix) {
+  const s = state(prefix); if (!s) return false;
+  if (!s.chargeEdited) return true;
+  try { return cents($(prefix + 'Paid').value) === listCents(prefix); } catch { return false; }
+ }
+ async function freshMedicationV48(prefix,id) {
+  const s = state(prefix), actor = actorKey(), navigation = quickNavigation4;
+  if (!s || s.retry || clinicalBusy || s.priceRefreshBusyV48) throw Error('Дождитесь завершения текущего действия');
+  s.priceRefreshBusyV48 = true;
+  try {
+   const response = await db.rpc('work_catalog_v2');
+   assertActor(actor);
+   if (state(prefix) !== s || !quickNavigationCurrent4(navigation,currentStaff?.id) || !$(prefix === 'proc' ? 'procedure' : 'sale').classList.contains('active')) return null;
+   if (response?.error) throw saveError(response.error,response.status,false);
+   if (!Array.isArray(response?.data)) throw Error('Не удалось загрузить актуальный прайс. Повторите обновление цены');
+   const medicine = response.data.find(item => item.id === id);
+   if (!medicine || medicine.active === false || !(num(medicine.sale_price) > 0)) throw Error('Препарат недоступен или цена не задана. Проверьте его карточку в прайсе');
+   const price = cents(medicine.sale_price,'Цена препарата');
+   // Update just the requested medicine: another line in this draft may already
+   // have an explicitly captured price, including a manually refreshed one.
+   const index = meds.findIndex(item => item.id === id);
+   if (index < 0) meds.push(medicine); else meds[index] = {...meds[index],...medicine};
+   return {medicine,price};
+  } finally { if (state(prefix) === s) s.priceRefreshBusyV48 = false; }
+ }
+ async function refreshMedicationPriceV48(prefix,id) {
+  const s = state(prefix), actor = actorKey();
+  if (!s?.edit || s.retry || clinicalBusy || s.priceRefreshBusyV48) return;
+  const before = medicationPriceCents(prefix,id);
+  try {
+   const fresh = await freshMedicationV48(prefix,id);
+   if (!fresh || state(prefix) !== s || ![...$(prefix + 'Meds').querySelectorAll('.medrow')].some(row => row.dataset.medicationId === id)) return;
+   const follows = chargeFollowsListV48(prefix);
+   s.medicationPrices.set(id,fresh.price); medicationRefreshMapV48(prefix).set(id,fresh.price);
+   if (follows) s.chargeEdited = false;
+   clearConfirmation(prefix); calculate(prefix);
+   message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',`Цена препарата обновлена: ${rub(before / 100)} → ${rub(fresh.price / 100)} за ${unit(fresh.medicine)}.${follows ? '' : ' Индивидуальная стоимость для пациента не изменена.'} Проверьте стоимость и сохраните запись.`,true);
+  } catch (error) { if (state(prefix) === s && actorKey() === actor) message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',error.message); }
+ }
+ const addMedicationBaseV48 = addMedRow;
+ addMedRow = function(target,...args) {
+  const before = new Set($(target)?.querySelectorAll('.medrow') || []);
+  const result = addMedicationBaseV48(target,...args);
+  const prefix = target === 'procMeds' ? 'proc' : target === 'saleMeds' ? 'sale' : null;
+  if (!prefix) return result;
+  const row = [...$(target).querySelectorAll('.medrow')].find(item => !before.has(item));
+  if (!row) return result;
+  const remove = row.querySelector('button.btn.danger');
+  if (remove) remove.onclick = () => {
+   const s = state(prefix); if (clinicalBusy || s?.retry || s?.priceRefreshBusyV48) return;
+   const id = row.dataset.medicationId, follows = chargeFollowsListV48(prefix);
+   row.remove();
+   if (s?.edit?.items?.some(item => item.medication_id === id) && ![...$(target).querySelectorAll('.medrow')].some(item => item.dataset.medicationId === id)) {
+    s.medicationPrices.delete(id);
+    medicationRefreshMapV48(prefix).delete(id);
+    (s.removedMedicationsV48 ||= new Set()).add(id);
+   }
+   if (follows && s) s.chargeEdited = false;
+   clearConfirmation(prefix); recalc();
+  };
+  renderMedicationPrices(prefix);
+  return result;
+ };
+ const chooseMedicationBaseV48 = chooseMedication;
+ chooseMedication = async function(target,id) {
+  const prefix = target === 'procMeds' ? 'proc' : target === 'saleMeds' ? 'sale' : null, s = prefix && state(prefix);
+  const readding = s?.edit && s.removedMedicationsV48?.has(id) && ![...$(target).querySelectorAll('.medrow')].some(row => row.dataset.medicationId === id);
+  if (!readding) return chooseMedicationBaseV48(target,id);
+  const actor = actorKey();
+  try {
+   const fresh = await freshMedicationV48(prefix,id);
+   if (!fresh || state(prefix) !== s) return;
+   const follows = !s.chargeEdited;
+   s.medicationPrices.set(id,fresh.price); medicationRefreshMapV48(prefix).set(id,fresh.price); s.removedMedicationsV48.delete(id);
+   clearConfirmation(prefix); chooseMedicationBaseV48(target,id);
+   message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',`Препарат добавлен по актуальной цене: ${rub(fresh.price / 100)} за ${unit(fresh.medicine)}.${follows ? '' : ' Индивидуальная стоимость для пациента не изменена.'} Проверьте стоимость и сохраните запись.`,true);
+  } catch (error) { if (state(prefix) === s && actorKey() === actor) message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage',error.message); }
+ };
  function renderMedicationPrices(prefix) {
   for (const row of $(prefix + 'Meds')?.querySelectorAll('.medrow') || []) {
    const id = row.dataset.medicationId, name = row.querySelector('.chosen-name');
@@ -244,6 +327,10 @@
     if (Number.isFinite(quantity) && quantity > 0) total = rub((typeof global.medicationLineCentsV31 === 'function' ? global.medicationLineCentsV31(each,quantity) : Math.round(each * quantity)) / 100);
    } catch {}
    price.textContent = `Цена: ${rub(each / 100)} / ${label} · Сумма: ${total}`;
+   if (original && !name.querySelector('.medication-refresh-v48')) {
+    const refresh = document.createElement('button'); refresh.type = 'button'; refresh.className = 'btn secondary medication-refresh-v48'; refresh.textContent = 'Обновить цену из прайса';
+    refresh.onclick = () => refreshMedicationPriceV48(prefix,id); price.after(refresh);
+   }
   }
  }
  function listCents(prefix) {
@@ -385,12 +472,12 @@
  }
  helpers.templateState = function() {
   const s = state('proc');
-  return {ready:!!s,locked:!s || !!s.retry || clinicalBusy || !!repeatPreparationV33 || !!s.correctionSavingV22,editing:!!s?.edit,hasSelection:!!$('procMeds')?.querySelector('.medrow') || !!$('procAdditionalServicesV10')?.querySelector('.clinical-service-v10')};
+  return {ready:!!s,locked:!s || !!s.retry || !!s.priceRefreshBusyV48 || clinicalBusy || !!repeatPreparationV33 || !!s.correctionSavingV22,editing:!!s?.edit,hasSelection:!!$('procMeds')?.querySelector('.medrow') || !!$('procAdditionalServicesV10')?.querySelector('.clinical-service-v10')};
  };
  helpers.applyTemplate = function(template, mode = 'replace') {
   const s = state('proc');
   if (!s || !currentStaff?.id || currentStaff.active === false) throw Error('Сначала откройте процедуру пациента');
-  if (s.retry || clinicalBusy || repeatPreparationV33 || s.correctionSavingV22) throw Error('Дождитесь загрузки или подтверждения сохранения процедуры перед применением шаблона');
+  if (s.retry || s.priceRefreshBusyV48 || clinicalBusy || repeatPreparationV33 || s.correctionSavingV22) throw Error('Дождитесь загрузки или подтверждения сохранения процедуры перед применением шаблона');
   if (!['replace','append'].includes(mode)) throw Error('Выберите, как применить шаблон');
   if (!template || template.active === false) throw Error('Шаблон недоступен');
   const additions = protocolItems(template.items || []);
@@ -554,6 +641,7 @@
  saveTreatment = async function(kind) {
   if (clinicalBusy || repeatPreparationV33) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale', actor = actorKey(), navigation = quickNavigation4;
+  if (state(prefix)?.priceRefreshBusyV48) { message(kind + 'Message','Дождитесь загрузки актуальной цены препарата'); return; }
   if (state(prefix)?.correctionActorV22 && state(prefix).correctionActorV22 !== actor) { message(kind + 'Message','Учётная запись изменилась. Выйдите и откройте процедуру заново перед исправлением оплаты.'); return; }
   let saved = false, s, model, payload;
   try {
@@ -562,7 +650,10 @@
    else {
    if (!s.edit && !shift?.id) throw Error('Сначала откройте смену');
    if (kind === 'procedure' && (!$('procPatient').value || !$('procService').value)) throw Error('Выберите пациента и услугу');
-   const selected = rows(prefix + 'Meds').map(item => kind === 'procedure' ? {...item,dose:doseValue(item.dose)} : item);
+   const selected = rows(prefix + 'Meds').map(item => {
+    const refresh = s.medicationRefreshV48?.get(item.medication_id);
+    return {...item,...(kind === 'procedure' ? {dose:doseValue(item.dose)} : {}),...(refresh != null ? {refresh_price:true,expected_catalog_price:refresh / 100} : {})};
+   });
    if (kind === 'sale' && !selected.length) throw Error('Добавьте препарат для продажи');
    const totals = new Map(); selected.forEach(item => {
     const medicine = meds.find(m => m.id === item.medication_id) || s.edit?.items?.find(m => m.medication_id === item.medication_id);
