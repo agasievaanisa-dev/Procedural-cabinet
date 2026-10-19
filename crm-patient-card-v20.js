@@ -34,10 +34,10 @@
   const received = cents(event.lifetime_received_total ?? event.received_total ?? event.paid_total ?? event.paid);
   const candidate = cents(event.debt_repayments_total), repayment = candidate <= received ? candidate : 0;
   const ordinary = received - repayment, source = event.payments || {};
-  let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card);
+  let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card), other_card = cents(source.other_card);
   // A missing or inconsistent legacy split must never turn into presumed cash.
-  if (cash + terminal + owner_card > ordinary) cash = terminal = owner_card = 0;
-  return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,unclassified:(ordinary - cash - terminal - owner_card) / 100,debt_repayments_total:repayment / 100};
+  if (cash + terminal + owner_card + other_card > ordinary) cash = terminal = owner_card = other_card = 0;
+  return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,other_card:other_card / 100,unclassified:(ordinary - cash - terminal - owner_card - other_card) / 100,debt_repayments_total:repayment / 100};
  }
  function eventSnapshot(event, kind) {
   const received = number(event.received_total ?? event.paid_total ?? event.paid), debt = number(event.debt_total ?? event.debt_amount);
@@ -70,7 +70,7 @@
   return (event.editable || event.debt > 0 || event.kind === 'procedure') ? `<div class="row patient-card-actions-v20">${event.kind === 'procedure' ? `<button type="button" class="btn secondary" data-card-repeat-v33="${escape(event.id)}" data-kind="procedure">Повторить</button>` : ''}${event.editable ? `<button type="button" class="btn secondary" data-card-edit-v20="${escape(event.id)}" data-kind="${event.kind}">Редактировать</button>` : ''}${event.debt > 0 ? `<button type="button" class="btn primary" data-card-payment-v20="${escape(event.id)}" data-kind="${event.kind}">${event.pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : ''}</div>` : '';
  }
  function paymentMethodsHtml(payments) {
-  const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+  const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['other_card','Другая карта'],['unclassified','Способ оплаты не указан']];
   return `<div class="patient-payment-methods-v34">${rows.filter(([key]) => payments[key] > 0).map(([key,label]) => `<div data-payment-method="${key}">${label}: <b>${escape(money(payments[key]))}</b></div>`).join('')}${payments.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${escape(money(payments.debt_repayments_total))}</b></div>` : ''}</div>`;
  }
  function eventsHtml(events, interactive = false) {

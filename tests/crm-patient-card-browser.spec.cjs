@@ -109,3 +109,25 @@ test('legacy method remains unclassified and pending zero has no fictitious paym
  }
  expect(errors).toEqual([]);
 });
+
+test('another card stays separate from terminal, owner card and cash in nurse history and print',async({page})=>{
+ const errors=await boot(page,'nurse');
+ await page.evaluate(()=>{
+  const sample=__patientCardHistory.procedures[0];
+  __patientCardHistory={procedures:[{...sample,id:'other-card-mixed',paid_total:100,received_total:1000.75,debt_total:299.25,payment_pending:false,payments:{cash:100,terminal:200,owner_card:250,other_card:300.75},debt_repayments_total:150}],sales:[{...sample,id:'other-card-sale',paid_total:350,received_total:350,debt_total:0,payment_pending:false,payments:{other_card:350}}]};
+ });
+ await page.click('#patientCardOpenV20');await page.click('#patientMedicalCardPrintV20');
+ for(const host of ['#patientMedicalCardBodyV20','#patientCardPrintV20']){
+  const mixed=page.locator(host+' [data-card-event="other-card-mixed"]');
+  await expect(mixed.locator('[data-payment-method="cash"]')).toHaveText('Наличные: 100 ₽');
+  await expect(mixed.locator('[data-payment-method="terminal"]')).toHaveText('Терминал: 200 ₽');
+  await expect(mixed.locator('[data-payment-method="owner_card"]')).toHaveText('Перевод на карту начальника: 250 ₽');
+  await expect(mixed.locator('[data-payment-method="other_card"]')).toHaveText('Другая карта: 300,75 ₽');
+  await expect(mixed.locator('[data-payment-method="debt_repayment"]')).toContainText('Погашено долга отдельно: 150 ₽');
+  await expect(mixed.locator('[data-payment-method="unclassified"]')).toHaveCount(0);
+  const sale=page.locator(host+' [data-card-event="other-card-sale"]');
+  await expect(sale.locator('[data-payment-method="other_card"]')).toHaveText('Другая карта: 350 ₽');
+  await expect(sale.locator('[data-payment-method="cash"],[data-payment-method="terminal"],[data-payment-method="owner_card"],[data-payment-method="unclassified"]')).toHaveCount(0);
+ }
+ expect(errors).toEqual([]);
+});

@@ -1,4 +1,5 @@
--- Run after v34. Synthetic RPC records only; all data is rolled back.
+-- Run after v34 and the current v47 payment-channel migration. Synthetic RPC
+-- records only; all data is rolled back.
 begin;
 create function pg_temp.v34_assert(ok boolean,message text) returns void language plpgsql as $$
 begin if ok is distinct from true then raise exception 'v34 acceptance: %',message;end if;end $$;
@@ -71,21 +72,21 @@ create temporary table v34_before_read as select jsonb_build_object(
 set local role authenticated;
 do $$declare a jsonb;h jsonb;begin
  a:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v34.mixed')));
- perform pg_temp.v34_assert((a->>'payments_complete')::boolean and a->'payments'='{"cash":100,"terminal":200,"owner_card":700,"unclassified":0,"total":1000}'::jsonb,
+ perform pg_temp.v34_assert((a->>'payments_complete')::boolean and a->'payments'='{"cash":100,"terminal":200,"owner_card":700,"other_card":0,"unclassified":0,"total":1000}'::jsonb,
   'Mixed initial payment channels were not preserved');
  a:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v34.pending')));
- perform pg_temp.v34_assert(a->'payments'='{"cash":100,"terminal":200,"owner_card":700,"unclassified":0,"total":1000}'::jsonb
+ perform pg_temp.v34_assert(a->'payments'='{"cash":100,"terminal":200,"owner_card":700,"other_card":0,"unclassified":0,"total":1000}'::jsonb
   and (a->>'received_total')::numeric=1000 and (a->>'debt_repayments_total')::numeric=0 and not(a->>'payment_pending')::boolean,
   'Ordinary after-procedure payment missing or incorrectly treated as debt');
  a:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','sale','id',current_setting('test.v34.debt')));
- perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":100,"owner_card":0,"unclassified":0,"total":100}'::jsonb
+ perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":100,"owner_card":0,"other_card":0,"unclassified":0,"total":100}'::jsonb
   and (a->>'debt_repayments_total')::numeric=300 and (a->>'received_total')::numeric=400 and (a->>'debt_total')::numeric=600,
   'True debt repayment entered ordinary payment methods or lifetime arithmetic changed');
  a:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v34.legacy')));
- perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":0,"owner_card":0,"unclassified":1000,"total":1000}'::jsonb,
+ perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":0,"owner_card":0,"other_card":0,"unclassified":1000,"total":1000}'::jsonb,
   'Unknown historic method fabricated as cash/card/terminal');
  a:=public.crm_clinical_v10('treatment_get',jsonb_build_object('kind','procedure','id',current_setting('test.v34.voided')));
- perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":0,"owner_card":0,"unclassified":0,"total":0}'::jsonb
+ perform pg_temp.v34_assert(a->'payments'='{"cash":0,"terminal":0,"owner_card":0,"other_card":0,"unclassified":0,"total":0}'::jsonb
   and (a->>'received_total')::numeric=0,'Voided allocations/receipts counted');
  h:=public.crm_clinical_v10('patient_treatments',jsonb_build_object('patient_id',current_setting('test.v34.patient')));
  perform pg_temp.v34_assert(jsonb_array_length(h->'procedures')=4 and jsonb_array_length(h->'sales')=1,
@@ -110,7 +111,19 @@ do $$declare a jsonb;begin
 end $$;
 
 -- A nurse from another/closed shift may inspect the complete patient history,
--- but that does not grant permission to edit the original procedure.
+-- but that does not grant permission to edit the original procedure. Follow the
+-- current mandatory cash-count workflow before closing this fictional shift.
+set local role authenticated;
+do $$declare a jsonb;p jsonb;begin
+ p:=jsonb_build_object('shift_id',current_setting('test.v34.shift'));
+ a:=public.crm_cash_reconciliation_v37('status',p);
+ a:=public.crm_cash_reconciliation_v37('save',p||jsonb_build_object(
+  'expected_token',a->'reconciliation_v37'->>'token','opening_amount',0,
+  'counted_cash',0,'salary_confirmed',false,'reason','TEST cash count before fictional shift closure v34'),gen_random_uuid());
+ perform pg_temp.v34_assert((a->'reconciliation_v37'->>'can_close')::boolean,
+  'A real synthetic cash reconciliation is required before fixture closure');
+end $$;
+reset role;
 update public.shifts set status='closed',ended_at=planned_end_at where id=current_setting('test.v34.shift')::uuid;
 select set_config('request.jwt.claim.sub',current_setting('test.v34.peer'),true);
 select set_config('request.jwt.claims',jsonb_build_object('sub',current_setting('test.v34.peer'),'role','authenticated')::text,true);

@@ -137,9 +137,9 @@ function installPaymentControlsV5(prefix) {
  const box = document.createElement('div');
  box.id = prefix + 'PaymentV5'; box.className = 'payment-v5';
  box.innerHTML = `<h2>Оплата</h2><div class="pay-methods-v5" role="group" aria-label="Способ оплаты">
-  ${[['cash','💵 Наличные'],['terminal','💳 Терминал'],['owner_card','Перевод на карту начальника'],['mixed','Смешанная']].map(([method,label]) => `<button type="button" class="btn secondary" data-pay-method="${method}" aria-pressed="false" onclick="selectPaymentMethodV5('${prefix}','${method}')">${label}</button>`).join('')}
+  ${[['cash','💵 Наличные'],['terminal','💳 Терминал'],['owner_card','Перевод на карту начальника'],['other_card','Другая карта'],['mixed','Смешанная']].map(([method,label]) => `<button type="button" class="btn secondary" data-pay-method="${method}" aria-pressed="false" onclick="selectPaymentMethodV5('${prefix}','${method}')">${label}</button>`).join('')}
  </div><div id="${prefix}PayAllocation" class="pay-allocation-v5 hidden">
-  ${[['Cash','Наличные'],['Terminal','Терминал'],['OwnerCard','Перевод на карту начальника']].map(([suffix,label]) => `<div><label for="${prefix}Pay${suffix}">${label}, ₽</label><input id="${prefix}Pay${suffix}" type="number" inputmode="decimal" min="0" step="0.01" value="0.00" oninput="paymentEditedV5('${prefix}')"></div>`).join('')}
+  ${[['Cash','Наличные'],['Terminal','Терминал'],['OwnerCard','Перевод на карту начальника'],['OtherCard','Другая карта']].map(([suffix,label]) => `<div><label for="${prefix}Pay${suffix}">${label}, ₽</label><input id="${prefix}Pay${suffix}" type="number" inputmode="decimal" min="0" step="0.01" value="0.00" oninput="paymentEditedV5('${prefix}')"></div>`).join('')}
  </div><div id="${prefix}PayTenderBox"><label for="${prefix}PayTender">Получено наличными, ₽</label><input id="${prefix}PayTender" type="number" inputmode="decimal" min="0" step="0.01" oninput="paymentEditedV5('${prefix}',true)"></div>
  <div id="${prefix}PaySummary" class="payment-summary-v5" role="status" aria-live="polite"></div>
  <label class="payment-confirm-v5"><input id="${prefix}PayConfirmed" type="checkbox"> <span>Подтверждаю сумму и способы оплаты</span></label>
@@ -149,7 +149,7 @@ function installPaymentControlsV5(prefix) {
 function resetPaymentV5(prefix) {
  installPaymentControlsV5(prefix);
  financePaymentState5[prefix] = {method:null, total:null, tenderEdited:false};
- for (const suffix of ['Cash','Terminal','OwnerCard']) $(prefix + 'Pay' + suffix).value = '0.00';
+ for (const suffix of ['Cash','Terminal','OwnerCard','OtherCard']) $(prefix + 'Pay' + suffix).value = '0.00';
  $(prefix + 'PayConfirmed').checked = false;
  if (prefix === 'sale') {
   $('saleReserveV5').checked = false;
@@ -160,7 +160,7 @@ function resetPaymentV5(prefix) {
  syncPaymentV5(prefix);
 }
 function selectPaymentMethodV5(prefix, method) {
- if (!['cash','terminal','owner_card','mixed'].includes(method)) return;
+ if (!['cash','terminal','owner_card','other_card','mixed'].includes(method)) return;
  const state = financePaymentState5[prefix]; if (!state) return;
  state.method = method; state.tenderEdited = false;
  $(prefix + 'PayConfirmed').checked = false;
@@ -188,6 +188,7 @@ function syncPaymentV5(prefix, force = false) {
    $('' + prefix + 'PayCash').value = financeAmountV5(state.method === 'cash' || state.method === 'mixed' ? total || 0 : 0);
    $(prefix + 'PayTerminal').value = financeAmountV5(state.method === 'terminal' ? total || 0 : 0);
    $(prefix + 'PayOwnerCard').value = financeAmountV5(state.method === 'owner_card' ? total || 0 : 0);
+   $(prefix + 'PayOtherCard').value = financeAmountV5(state.method === 'other_card' ? total || 0 : 0);
   }
   state.total = total;
  }
@@ -209,24 +210,25 @@ function readPaymentsV5(prefix, requireConfirmation = true) {
  if (!financePaymentState5[prefix]) throw Error('Откройте форму оплаты заново');
  const paid = financeCentsV5($(prefix + 'Paid').value, 'Стоимость');
  const method = financePaymentState5[prefix].method;
- if (paid > 0 && !['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника или смешанная оплата');
+ if (paid > 0 && !['cash','terminal','owner_card','other_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника, другая карта или смешанная оплата');
  const cash = financeAllocationCentsV43($(prefix + 'PayCash').value, 'Наличные');
  const terminal = financeAllocationCentsV43($(prefix + 'PayTerminal').value, 'Терминал');
  const card = financeAllocationCentsV43($(prefix + 'PayOwnerCard').value, 'Перевод');
- if (paid > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && card > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
+ const otherCard = financeAllocationCentsV43($(prefix + 'PayOtherCard').value, 'Другая карта');
+ if (paid > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && card > 0) || (method !== 'other_card' && otherCard > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
  const tender = cash > 0 ? financeCentsV5($(prefix + 'PayTender').value, 'Получено наличными') : 0;
- if (cash + terminal + card !== paid) throw Error(`Распределите ровно ${rub(paid / 100)} между способами оплаты`);
+ if (cash + terminal + card + otherCard !== paid) throw Error(`Распределите ровно ${rub(paid / 100)} между способами оплаты`);
  if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
  if (requireConfirmation && !$(prefix + 'PayConfirmed').checked) throw Error('Проверьте оплату и отметьте подтверждение');
- return {cash:cash / 100, terminal:terminal / 100, owner_card:card / 100, cash_received:tender / 100};
+ return {cash:cash / 100, terminal:terminal / 100, owner_card:card / 100,...(otherCard > 0 ? {other_card:otherCard / 100} : {}),cash_received:tender / 100};
 }
 function renderPaymentSummaryV5(prefix) {
  const output = $(prefix + 'PaySummary'); if (!output) return;
  try {
   const p = readPaymentsV5(prefix, false);
   output.classList.remove('status-bad');
-  const parts = [[p.cash,'Наличные'],[p.terminal,'Терминал'],[p.owner_card,'Перевод на карту начальника']].filter(([value]) => value > 0).map(([value,label]) => `${label}: ${rub(value)}`);
-  output.textContent = parts.length ? `Оплата сейчас: ${rub(p.cash + p.terminal + p.owner_card)} · ${parts.join(' · ')}${p.cash > 0 ? '. Сдача: ' + rub(p.cash_received - p.cash) : ''}` : 'Оплата сейчас: 0 ₽. Новая оплата не вносится.';
+  const parts = [[p.cash,'Наличные'],[p.terminal,'Терминал'],[p.owner_card,'Перевод на карту начальника'],[p.other_card,'Другая карта']].filter(([value]) => value > 0).map(([value,label]) => `${label}: ${rub(value)}`);
+  output.textContent = parts.length ? `Оплата сейчас: ${rub(p.cash + p.terminal + p.owner_card + num(p.other_card))} · ${parts.join(' · ')}${p.cash > 0 ? '. Сдача: ' + rub(p.cash_received - p.cash) : ''}` : 'Оплата сейчас: 0 ₽. Новая оплата не вносится.';
  } catch (e) { output.classList.add('status-bad'); output.textContent = e.message; }
 }
 
@@ -315,7 +317,7 @@ saveTreatment = async function(kind) {
 };
 
 function financeRevenueHtmlV5(revenue = {}) {
- return `<div class="finance-totals-v5">${[['total','Получено'],['terminal','Оплата терминалом'],['owner_card','Переводы на карту'],['cash','Наличные']].map(([key,label]) => `<div class="stat"><span>${label}</span><b>${rub(revenue[key])}</b></div>`).join('')}</div>` + (num(revenue.unclassified) ? `<p class="notice">У оплат на ${rub(revenue.unclassified)} не указан способ. Они включены в полученную сумму.</p>` : '');
+ return `<div class="finance-totals-v5">${[['total','Получено'],['terminal','Оплата терминалом'],['owner_card','Переводы на карту начальника'],['other_card','Другая карта'],['cash','Наличные']].map(([key,label]) => `<div class="stat"><span>${label}</span><b>${rub(revenue[key])}</b></div>`).join('')}</div>` + (num(revenue.unclassified) ? `<p class="notice">У оплат на ${rub(revenue.unclassified)} не указан способ. Они включены в полученную сумму.</p>` : '');
 }
 function financeCashBalanceV36(data) {
  const drawer = data.cash_drawer;
@@ -403,12 +405,12 @@ function financeEventMethodsV34(event) {
  };
  const received = cents(event.lifetime_received_total ?? event.received_total ?? event.paid_total ?? event.paid), candidate = cents(event.debt_repayments_total), repayment = candidate <= received ? candidate : 0;
  const scoped = financeShiftPaymentScopeV45(event),ordinary = scoped ? cents(scoped.received) : received - repayment, source = scoped ? scoped.payments : event.payments || {};
- let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card);
- if (cash + terminal + owner_card > ordinary) cash = terminal = owner_card = 0;
- return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,unclassified:(ordinary - cash - terminal - owner_card) / 100,debt_repayments_total:repayment / 100};
+ let cash = cents(source.cash), terminal = cents(source.terminal), owner_card = cents(source.owner_card),other_card = cents(source.other_card);
+ if (cash + terminal + owner_card + other_card > ordinary) cash = terminal = owner_card = other_card = 0;
+ return {cash:cash / 100,terminal:terminal / 100,owner_card:owner_card / 100,...(other_card > 0 ? {other_card:other_card / 100} : {}),unclassified:(ordinary - cash - terminal - owner_card - other_card) / 100,debt_repayments_total:repayment / 100};
 }
 function financeEventMethodsHtmlV34(event) {
- const payments = financeEventMethodsV34(event), rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+ const payments = financeEventMethodsV34(event), rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['other_card','Другая карта'],['unclassified','Способ оплаты не указан']];
  return `<div class="report-payment-methods-v34">${rows.filter(([key]) => payments[key] > 0).map(([key,label]) => `<div data-payment-method="${key}">${label}: <b>${esc(rub(payments[key]))}</b></div>`).join('')}${payments.debt_repayments_total > 0 ? `<div data-payment-method="debt_repayment" title="Погашение долга хранится отдельно и не входит в сумму и наличные смены">Погашено долга отдельно: <b>${esc(rub(payments.debt_repayments_total))}</b></div>` : ''}</div>`;
 }
 function financeEventPaymentHtmlV5(event) {
@@ -451,7 +453,7 @@ function financeOtherReceiptsHtmlV39(receipts = []) {
 // A visit's methods already include ordinary later collections. Show each
 // collection once; attaching a receipt must never add it to the paid total.
 function financePaidLineHtmlV41(methods, adjustment = '', receipt = null) {
- const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['unclassified','Способ оплаты не указан']];
+ const rows = [['cash','Наличные'],['terminal','Терминал'],['owner_card','Перевод на карту начальника'],['other_card','Другая карта'],['unclassified','Способ оплаты не указан']];
  const values = rows.filter(([key]) => methods[key] > 0).map(([key,label]) => `<span data-payment-method="${key}">${label}: <b>${esc(rub(methods[key]))}</b></span>`);
  const time = receipt ? financeReceiptMetaHtmlV41(receipt,true) : '';
  return `<div class="report-paid-line-v41">Оплачено: ${values.join(' · ') || '<b>' + esc(rub(0)) + '</b>'}${adjustment}${time ? ' · ' + time : ''}</div>`;
@@ -466,7 +468,7 @@ function financeReceiptMetaHtmlV41(receipt, compact = false) {
 }
 function financeVisitPaymentHtmlV41(event) {
  const amounts = financeEventAmountsV5(event),methods = financeEventMethodsV34(event),cents = value => Math.round(num(value) * 100);
- const keys = ['cash','terminal','owner_card','unclassified'],ordinary = keys.reduce((sum,key) => sum + cents(methods[key]),0);
+ const keys = ['cash','terminal','owner_card','other_card','unclassified'],ordinary = keys.reduce((sum,key) => sum + cents(methods[key]),0);
  const receipts = financeShiftReceiptsV29({receipts:Array.isArray(event.shift_receipts_v39) ? event.shift_receipts_v39 : []}).slice().sort((a,b) => (Date.parse(a.at) || 0) - (Date.parse(b.at) || 0));
  const collections = receipts.map(receipt => ({receipt,total:cents(receipt.paid_total),methods:financeEventMethodsV34({paid_total:receipt.paid_total,payments:receipt.payments})}));
  const receiptTotal = collections.reduce((sum,item) => sum + item.total,0),residual = ordinary - receiptTotal;
@@ -515,7 +517,7 @@ function financeShiftSummaryAmountsV16(data = {}) {
  const payroll = cents(automaticSalary ? financeSalaryValueV36(data) : data.payroll_total ?? staff.reduce((value,person) => value + num(person.amount),0));
  return {total:total / 100,procedures:procedureIncome / 100,sales:saleIncome / 100,receipts:laterIncome / 100,
   other:Math.max(0,total - categorized) / 100,categoriesMatch:categorized <= total,
-  cash:num(revenue.cash),terminal:num(revenue.terminal),ownerCard:num(revenue.owner_card),unclassified:num(revenue.unclassified),
+  cash:num(revenue.cash),terminal:num(revenue.terminal),ownerCard:num(revenue.owner_card),otherCard:num(revenue.other_card),unclassified:num(revenue.unclassified),
   charge:totals.charge,debt:debt / 100,pending:pending / 100,loan:num(loan),
   payroll:payroll / 100,payrollUnknown,payrollComplete,
   afterSalary:financeCashBalanceV36(data)};
@@ -531,7 +533,7 @@ function financeDebtAmountV29(data = {}) {
 }
 function financeSimpleSummaryHtmlV29(data = {},scope = 'период') {
  const revenue = data.revenue || {},suffix = 'за ' + scope,drawer = data.cash_drawer,automaticSalary = drawer?.salary_auto === true,applicable = data.payroll_scope !== 'not_applicable_to_entity_filter';
- const rows = [['revenue','Получено ' + suffix,rub(revenue.total)],['terminal','Оплата терминалом',rub(revenue.terminal)],['owner-card','Переводы на карту',rub(revenue.owner_card)],['loan','Долг',rub(financeDebtAmountV29(data))],['cash','Наличные ' + suffix,rub(revenue.cash)],['payroll-total','Зарплата ' + suffix,financePayrollTextV5(data)],['cash-balance',financeRemainingLabelV36(data),financeRemainingTextV5(data)]];
+ const rows = [['revenue','Получено ' + suffix,rub(revenue.total)],['terminal','Оплата терминалом',rub(revenue.terminal)],['owner-card','Переводы на карту начальника',rub(revenue.owner_card)],['other-card','Другая карта',rub(revenue.other_card)],['loan','Долг',rub(financeDebtAmountV29(data))],['cash','Наличные ' + suffix,rub(revenue.cash)],['payroll-total','Зарплата ' + suffix,financePayrollTextV5(data)],['cash-balance',financeRemainingLabelV36(data),financeRemainingTextV5(data)]];
  return `<section class="finance-simple-summary-v29" aria-label="Финансовые итоги"><div class="finance-totals-v5">${rows.map(([key,label,value]) => `<div class="stat" data-summary-key="${key}"><span>${label}</span><b>${esc(value)}</b>${key === 'payroll-total' && drawer && applicable ? `<small>${automaticSalary ? 'Учтено из наличных' : 'Из кассы выплачено'}${drawer.scope === 'latest_shift' ? ' последней смены' : ''} ${esc(rub(automaticSalary ? drawer.salary_deduction : drawer.salary_paid))}</small>` : ''}</div>`).join('')}</div>${automaticSalary && applicable ? financePayrollDetailsHtmlV36(data) + financePayrollNoteV5(data) : ''}<p class="small">Оплата после процедуры входит в полученную сумму. Погашения долгов учитываются отдельно.</p>${num(data.pending_total) ? `<p class="notice" data-summary-key="pending">Ожидают оплаты после процедуры: <b>${esc(rub(data.pending_total))}</b>. Это не долг.</p>` : ''}${applicable && automaticSalary && !drawer.opening_confirmed ? '<p class="small">Показаны наличные этой смены после зарплаты и других движений. Наличные на начало смены не указаны и в эту сумму не включены.</p>' : ''}${applicable && automaticSalary && financeCashBalanceV36(data) != null && num(financeCashBalanceV36(data)) < 0 ? '<p class="notice">Наличных не хватает на зарплату.</p>' : ''}${financeCashBalanceV36(data) == null && applicable ? '<p class="small">Для остатка в кассе укажите начальные наличные и движения кассы. Терминал и переводы в наличные не входят.</p>' : ''}${data.has_open_shifts === true ? '<p class="small">Есть открытые смены: суммы ещё могут измениться.</p>' : ''}${drawer?.scope === 'latest_shift' && applicable ? '<p class="small">Остаток наличных относится к последней смене выбранного периода.</p>' : ''}</section>`;
 }
 
@@ -734,7 +736,7 @@ function renderFinanceSummaryV5(data, id) {
  const rows = data.rows || [], shifts = data.shifts || [];
  const basis = data.rows_revenue_basis === 'medication_line_share_of_paid_total' ? '<p class="small">По препаратам показана оплаченная стоимость с учётом скидки. Работа и расходники услуги в эти строки не входят.</p>' : '';
  const operational = `<div class="stats"><div class="stat">Пациентов<b>${num(data.patients_count)}</b></div><div class="stat">Процедур<b>${num(data.procedures_count)}</b></div><div class="stat">Продаж<b>${num(data.sales_count)}</b></div></div>`;
- return `<p class="small">${esc(financeDateV41(data.from))} — ${esc(financeDateV41(data.to))}</p>${operational}<div class="no-print">${financePaymentOnlyNoteV5(data)}</div>${financeSimpleSummaryHtmlV29(data,'период')}${financePeriodDebtHtmlV5(data)}${financePayrollNoteV5(data)}<h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод на карту ${rub(row.revenue?.owner_card)} · долг ${rub(financeDebtAmountV29(row))}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(financeDateV41(s.shift_date))} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
+ return `<p class="small">${esc(financeDateV41(data.from))} — ${esc(financeDateV41(data.to))}</p>${operational}<div class="no-print">${financePaymentOnlyNoteV5(data)}</div>${financeSimpleSummaryHtmlV29(data,'период')}${financePeriodDebtHtmlV5(data)}${financePayrollNoteV5(data)}<h2>${id === 'reportsV5' ? 'По выбранной группировке' : 'По дням'}</h2>${basis}<div class="finance-rows-v5">${rows.map(row => `<div class="item"><div class="row between"><strong>${esc(row.label || row.id || 'Без названия')}</strong><b>${rub(row.revenue?.total)}</b></div><div class="small">Пациентов: ${num(row.patients_count)} · процедур: ${num(row.procedures_count)} · продаж: ${num(row.sales_count)}${row.quantity !== undefined ? ' · учтено единиц: ' + qty(row.quantity) : ''}</div><div class="small">Наличные ${rub(row.revenue?.cash)} · терминал ${rub(row.revenue?.terminal)} · перевод на карту начальника ${rub(row.revenue?.owner_card)} · другая карта ${rub(row.revenue?.other_card)} · долг ${rub(financeDebtAmountV29(row))}</div></div>`).join('') || '<p class="small">За этот период записей нет.</p>'}</div><h2>Смены за период</h2><div class="finance-rows-v5">${shifts.map(s => `<button class="item click finance-shift-v5" onclick="openReportByIdV5('${esc(s.id)}')"><strong>${esc(financeDateV41(s.shift_date))} · ${s.status === 'open' ? 'Открыта' : 'Закрыта'}</strong><div>${esc((s.staff || []).map(n => n.full_name).join(', '))}</div><div class="small">${esc(shiftLabel(s.started_at,s.ended_at))} · зарплата ${s.payroll_complete === false ? 'не полностью задана' : rub(s.payroll_total)}</div></button>`).join('') || '<p class="small">Смен нет.</p>'}</div>`;
 }
 async function loadFinanceSummaryV5(id) {
  let token, actor, key;
@@ -779,7 +781,7 @@ function financeCsvCellV5(value) {
 }
 function buildFinanceCsvV5(data) {
  const revenue = data.revenue || {};
- const rows = [['Период',data.from,data.to],['Показатель','Значение'],['Получено за период',revenue.total || 0],['Оплата терминалом',revenue.terminal || 0],['Переводы на карту',revenue.owner_card || 0],['Долг',financeDebtAmountV29(data)],['Наличные за период',revenue.cash || 0],['Зарплата за период',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeSalaryValueV36(data) ?? 'Не задана полностью'],[financeRemainingLabelV36(data),data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeCashBalanceV36(data) ?? 'Не рассчитан: укажите остаток на начало смены'],['Ожидает оплаты после процедуры (не долг)',data.pending_total || 0],['Стоимость процедур и продаж',data.charge_total ?? revenue.total ?? 0],['Пояснение','Погашения долгов учитываются отдельно и не входят в сумму смены. Обычная оплата после процедуры входит в смену.'],[],['Группа','Пациенты','Процедуры','Продажи','Количество','Наличные','Терминал','Переводы на карту','Получено','Долг','Ожидает оплаты']];
+ const rows = [['Период',data.from,data.to],['Показатель','Значение'],['Получено за период',revenue.total || 0],['Оплата терминалом',revenue.terminal || 0],['Переводы на карту начальника',revenue.owner_card || 0],['Другая карта',revenue.other_card || 0],['Долг',financeDebtAmountV29(data)],['Наличные за период',revenue.cash || 0],['Зарплата за период',data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeSalaryValueV36(data) ?? 'Не задана полностью'],[financeRemainingLabelV36(data),data.payroll_scope === 'not_applicable_to_entity_filter' ? 'Не применяется к этому фильтру' : financeCashBalanceV36(data) ?? 'Не рассчитан: укажите остаток на начало смены'],['Ожидает оплаты после процедуры (не долг)',data.pending_total || 0],['Стоимость процедур и продаж',data.charge_total ?? revenue.total ?? 0],['Пояснение','Погашения долгов учитываются отдельно и не входят в сумму смены. Обычная оплата после процедуры входит в смену.'],[],['Группа','Пациенты','Процедуры','Продажи','Количество','Наличные','Терминал','Переводы на карту начальника','Другая карта','Получено','Долг','Ожидает оплаты']];
  if (data.cash_drawer?.salary_auto === true && data.payroll_scope !== 'not_applicable_to_entity_filter') {
   rows.splice(rows.length - 1,0,['Зарплата учитывается автоматически; отмеченные выплаты повторно не вычитаются.']);
   for (const person of data.cash_drawer.salary_auto_payroll || data.cash_drawer.payroll || []) rows.splice(rows.length - 1,0,[(data.cash_drawer.scope === 'latest_shift' ? 'Зарплата последней смены: ' : 'Зарплата: ') + (person.staff_name || person.full_name || 'Сотрудник'),person.configured ?? 'Не задана']);
@@ -802,7 +804,7 @@ function buildFinanceCsvV5(data) {
    ]) rows.splice(rows.length - 1,0,row);
   }
  }
- for (const row of data.rows || []) rows.push([row.label,row.patients_count,row.procedures_count,row.sales_count,row.quantity ?? '',row.revenue?.cash,row.revenue?.terminal,row.revenue?.owner_card,row.revenue?.total,financeDebtAmountV29(row),row.pending_total || 0]);
+ for (const row of data.rows || []) rows.push([row.label,row.patients_count,row.procedures_count,row.sales_count,row.quantity ?? '',row.revenue?.cash,row.revenue?.terminal,row.revenue?.owner_card,row.revenue?.other_card,row.revenue?.total,financeDebtAmountV29(row),row.pending_total || 0]);
  return '\uFEFF' + rows.map(row => row.map(financeCsvCellV5).join(';')).join('\r\n');
 }
 

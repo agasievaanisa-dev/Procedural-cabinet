@@ -83,7 +83,7 @@ test('malformed or partial history cannot silently become an empty printable car
 test('patient card and print retain exact ordinary payment channels and separate debt repayments',()=>{
  const source=procedure({paid_total:125.25,received_total:875.25,debt_total:424.75,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,cash_received:99999,internal:'hidden-channel'},debt_repayments_total:200});
  const history=historySnapshot({procedures:[source],sales:[]});
- assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,unclassified:0,debt_repayments_total:200});
+ assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,other_card:0,unclassified:0,debt_repayments_total:200});
  source.payments.owner_card=777777;
  for(const interactive of [true,false]){
   const html=buildPatientCardHtml(patientSnapshot(patient),history,interactive);
@@ -96,8 +96,8 @@ test('unknown payment channels stay unknown and unpaid pending cards never show 
  const legacy=historySnapshot({procedures:[procedure({received_total:800,payments:null})],sales:[]});
  const html=buildPatientCardHtml(patientSnapshot(patient),legacy);
  assert.ok(html.includes('Способ оплаты не указан: <b>800 ₽'));assert.ok(!html.includes('data-payment-method="cash"'));assert.ok(!html.includes('data-payment-method="terminal"'));assert.ok(!html.includes('data-payment-method="owner_card"'));
- assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:-20,terminal:200,owner_card:Infinity,unclassified:'<img>'}}),{cash:0,terminal:200,owner_card:0,unclassified:600,debt_repayments_total:0});
- assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:900,terminal:100},debt_repayments_total:900}),{cash:0,terminal:0,owner_card:0,unclassified:800,debt_repayments_total:0});
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:-20,terminal:200,owner_card:Infinity,unclassified:'<img>'}}),{cash:0,terminal:200,owner_card:0,other_card:0,unclassified:600,debt_repayments_total:0});
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:900,terminal:100},debt_repayments_total:900}),{cash:0,terminal:0,owner_card:0,other_card:0,unclassified:800,debt_repayments_total:0});
  const pending=historySnapshot({procedures:[procedure({paid_total:0,received_total:0,debt_total:1300,payment_pending:true,payments:{cash:0,terminal:0,owner_card:0}})],sales:[]});
  const waiting=buildPatientCardHtml(patientSnapshot(patient),pending);
  assert.ok(waiting.includes('Ожидает оплаты: <b>1 300 ₽'));assert.ok(!waiting.includes('data-payment-method='));
@@ -107,8 +107,29 @@ test('ordinary-only report totals use lifetime receipts for methods without subt
  const source=procedure({paid_total:125.25,received_total:675.25,lifetime_received_total:875.25,debt_repayments_total:200,payments:{cash:125.25,terminal:250,owner_card:300,unclassified:0,total:675.25},payments_complete:true});
  const history=historySnapshot({procedures:[source],sales:[]});
  assert.equal(history[0].received,675.25);
- assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,unclassified:0,debt_repayments_total:200});
+ assert.deepEqual(history[0].payments,{cash:125.25,terminal:250,owner_card:300,other_card:0,unclassified:0,debt_repayments_total:200});
  const html=buildPatientCardHtml(patientSnapshot(patient),history);
  for(const phrase of ['Наличные: <b>125,25 ₽','Терминал: <b>250 ₽','Перевод на карту начальника: <b>300 ₽','Погашено долга отдельно: <b>200 ₽','Оплачено всего: <b>675,25 ₽'])assert.ok(html.includes(phrase),phrase);
  assert.ok(!html.includes('Способ оплаты не указан'));
+});
+
+test('another card remains a distinct ordinary channel in live and printable lifetime history',()=>{
+ const source=procedure({paid_total:100,received_total:1000.75,debt_total:299.25,payments:{cash:100,terminal:200,owner_card:250,other_card:300.75},debt_repayments_total:150});
+ const history=historySnapshot({procedures:[source],sales:[]});
+ assert.deepEqual(history[0].payments,{cash:100,terminal:200,owner_card:250,other_card:300.75,unclassified:0,debt_repayments_total:150});
+ source.payments.other_card=999999;
+ for(const interactive of [true,false]){
+  const html=buildPatientCardHtml(patientSnapshot(patient),history,interactive);
+  for(const phrase of ['Наличные: <b>100 ₽','Терминал: <b>200 ₽','Перевод на карту начальника: <b>250 ₽','Другая карта: <b>300,75 ₽','Погашено долга отдельно: <b>150 ₽'])assert.ok(html.includes(phrase),phrase);
+  assert.ok(!html.includes('Способ оплаты не указан'));assert.ok(!html.includes('999999'));
+ }
+ const only=historySnapshot({procedures:[],sales:[procedure({received_total:300.75,payments:{other_card:300.75},debt_repayments_total:0})]});
+ const onlyHtml=buildPatientCardHtml(patientSnapshot(patient),only);
+ assert.ok(onlyHtml.includes('data-payment-method="other_card"'));assert.ok(!onlyHtml.includes('data-payment-method="cash"'));assert.ok(!onlyHtml.includes('data-payment-method="terminal"'));assert.ok(!onlyHtml.includes('data-payment-method="owner_card"'));
+});
+
+test('another card obeys legacy validation without classifying malformed or excess amounts as cash',()=>{
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:100,terminal:200,other_card:-50}}),{cash:100,terminal:200,owner_card:0,other_card:0,unclassified:500,debt_repayments_total:0});
+ assert.deepEqual(paymentSnapshot({received_total:800,payments:{cash:100,terminal:200,other_card:600}}),{cash:0,terminal:0,owner_card:0,other_card:0,unclassified:800,debt_repayments_total:0});
+ assert.deepEqual(paymentSnapshot({received_total:500,lifetime_received_total:800,debt_repayments_total:300,payments:{other_card:500}}),{cash:0,terminal:0,owner_card:0,other_card:500,unclassified:0,debt_repayments_total:300});
 });

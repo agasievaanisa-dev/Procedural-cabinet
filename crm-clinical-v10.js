@@ -192,7 +192,7 @@
   $(prefix + 'ReceivedV10').disabled = selected || !!s.retry;
   $(prefix + 'PaymentV5').classList.toggle('payment-correction-active-v22',selected);
   $(prefix + 'PaymentV5').querySelectorAll('[data-pay-method]').forEach(button => button.disabled = selected || !!s.retry);
-  for (const suffix of ['Cash','Terminal','OwnerCard','Tender']) $(prefix + 'Pay' + suffix).disabled = selected || !!s.retry;
+  for (const suffix of ['Cash','Terminal','OwnerCard','OtherCard','Tender']) $(prefix + 'Pay' + suffix).disabled = selected || !!s.retry;
  }
  function correctionChanged(prefix) {
   const s = state(prefix), checkbox = $(prefix + 'PaymentCorrectionV22');
@@ -200,7 +200,7 @@
   if (!paymentCorrectionAllowed(s.edit,isManager())) { checkbox.checked = false; return; }
   const selected = checkbox.checked, pay = financePaymentState5[prefix];
   if (selected && !s.correctionV22) {
-   s.paymentBeforeCorrectionV22 = {status:$(prefix + 'PaymentStatusV10').value,received:$(prefix + 'ReceivedV10').value,method:pay.method,tenderEdited:pay.tenderEdited,values:Object.fromEntries(['Cash','Terminal','OwnerCard','Tender'].map(suffix => [suffix,$(prefix + 'Pay' + suffix).value]))};
+   s.paymentBeforeCorrectionV22 = {status:$(prefix + 'PaymentStatusV10').value,received:$(prefix + 'ReceivedV10').value,method:pay.method,tenderEdited:pay.tenderEdited,values:Object.fromEntries(['Cash','Terminal','OwnerCard','OtherCard','Tender'].map(suffix => [suffix,$(prefix + 'Pay' + suffix).value]))};
    s.correctionV22 = true; s.correctionActorV22 = actorKey(); s.previous = 0;
    $(prefix + 'PaymentStatusV10').value = 'debt'; $(prefix + 'ReceivedV10').value = '0.00'; pay.tenderEdited = false;
    syncPaymentV5(prefix,true); $(prefix + 'PayConfirmed').checked = true;
@@ -438,8 +438,8 @@
  function shortCashDiscount(prefix) {
   if (!state(prefix) || $(prefix + 'PaymentStatusV10').value !== 'paid') return null;
   try {
-   const charge = cents($(prefix + 'Paid').value), cash = cents($(prefix + 'PayCash').value), terminal = cents($(prefix + 'PayTerminal').value), card = cents($(prefix + 'PayOwnerCard').value), tender = cents($(prefix + 'PayTender').value);
-   if (tender >= cash || cash + terminal + card !== receivedCents(prefix)) return null;
+   const charge = cents($(prefix + 'Paid').value), cash = allocationCents($(prefix + 'PayCash').value), terminal = allocationCents($(prefix + 'PayTerminal').value), card = allocationCents($(prefix + 'PayOwnerCard').value), otherCard = allocationCents($(prefix + 'PayOtherCard').value), tender = cents($(prefix + 'PayTender').value);
+   if (tender >= cash || cash + terminal + card + otherCard !== receivedCents(prefix)) return null;
    return {charge:charge - cash + tender,cash:tender,discount:cash - tender};
   } catch { return null; }
  }
@@ -478,7 +478,7 @@
  resetPaymentV5 = function(prefix) {
   install(prefix); const s = state(prefix); if (!s) return;
   financePaymentState5[prefix] = {method:null,total:null,tenderEdited:false};
-  for (const suffix of ['Cash','Terminal','OwnerCard']) $(prefix + 'Pay' + suffix).value = '0.00';
+  for (const suffix of ['Cash','Terminal','OwnerCard','OtherCard']) $(prefix + 'Pay' + suffix).value = '0.00';
   $(prefix + 'PaymentStatusV10').value = 'paid'; $(prefix + 'ReceivedV10').value = '0.00'; $(prefix + 'EditReasonV10').value = '';
   s.correctionV22 = false; delete s.correctionActorV22; delete s.paymentBeforeCorrectionV22;
   $(prefix + 'EditReasonBoxV10').classList.add('hidden'); clearConfirmation(prefix); $(prefix + 'Paid').readOnly = false;
@@ -491,11 +491,11 @@
   const correcting = correctionSelected(prefix);
   if (correcting) {
    $(prefix + 'PaymentStatusV10').value = 'debt'; $(prefix + 'ReceivedV10').value = '0.00'; total = 0;
-   for (const suffix of ['Cash','Terminal','OwnerCard','Tender']) $(prefix + 'Pay' + suffix).value = '0.00';
+   for (const suffix of ['Cash','Terminal','OwnerCard','OtherCard','Tender']) $(prefix + 'Pay' + suffix).value = '0.00';
   }
   if (pay.total !== total || force) {
    clearConfirmation(prefix);
-   if (pay.method !== 'mixed' || force) for (const [suffix,method] of [['Cash','cash'],['Terminal','terminal'],['OwnerCard','owner_card']]) $(prefix + 'Pay' + suffix).value = amount(pay.method === method || (pay.method === 'mixed' && method === 'cash') ? total || 0 : 0);
+   if (pay.method !== 'mixed' || force) for (const [suffix,method] of [['Cash','cash'],['Terminal','terminal'],['OwnerCard','owner_card'],['OtherCard','other_card']]) $(prefix + 'Pay' + suffix).value = amount(pay.method === method || (pay.method === 'mixed' && method === 'cash') ? total || 0 : 0);
    pay.total = total;
   }
   $(prefix + 'PayAllocation').classList.toggle('hidden',correcting || pay.method !== 'mixed');
@@ -523,14 +523,14 @@
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
   const model = currentModel(prefix), method = financePaymentState5[prefix]?.method;
-  if (model.received > 0 && !['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника или смешанная оплата');
-  const cash = allocationCents($(prefix + 'PayCash').value,'Наличные'), terminal = allocationCents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = allocationCents($(prefix + 'PayOwnerCard').value,'Перевод');
-  if (model.received > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && ownerCard > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
-  if (cash + terminal + ownerCard !== model.received) throw Error(`Распределите ровно ${rub(model.received / 100)} между способами оплаты`);
+  if (model.received > 0 && !['cash','terminal','owner_card','other_card','mixed'].includes(method)) throw Error('Выберите способ оплаты: наличные, терминал, перевод на карту начальника, другая карта или смешанная оплата');
+  const cash = allocationCents($(prefix + 'PayCash').value,'Наличные'), terminal = allocationCents($(prefix + 'PayTerminal').value,'Терминал'), ownerCard = allocationCents($(prefix + 'PayOwnerCard').value,'Перевод'), otherCard = allocationCents($(prefix + 'PayOtherCard').value,'Другая карта');
+  if (model.received > 0 && method !== 'mixed' && ((method !== 'cash' && cash > 0) || (method !== 'terminal' && terminal > 0) || (method !== 'owner_card' && ownerCard > 0) || (method !== 'other_card' && otherCard > 0))) throw Error('Суммы не соответствуют выбранному способу оплаты. Выберите способ оплаты заново');
+  if (cash + terminal + ownerCard + otherCard !== model.received) throw Error(`Распределите ровно ${rub(model.received / 100)} между способами оплаты`);
   const tender = cash ? cents($(prefix + 'PayTender').value,'Получено наличными') : 0;
   if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
   if (confirmation && !$(prefix + 'PayConfirmed').checked) throw Error('Проверьте оплату и отметьте подтверждение');
-  return {cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,cash_received:tender / 100};
+  return {cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,...(otherCard > 0 ? {other_card:otherCard / 100} : {}),cash_received:tender / 100};
  };
  calcProcedure = function(update = true) { calculate('proc',update); };
  calcSale = function(update = true) { calculate('sale',update); };
@@ -754,6 +754,10 @@
   const title = pending ? kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры' : 'Погашение долга';
   const purpose = debtPurposes29.get(kind + ':' + id) || (kind === 'sale' ? 'Продажа препарата' : 'Процедура');
   host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option><option value="mixed">Смешанная оплата</option></select><div id="debtAllocationV43" class="pay-allocation-v5 hidden"><div><label for="debtCashV43">Наличные, ₽</label><input id="debtCashV43" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"></div><div><label for="debtTerminalV43">Терминал, ₽</label><input id="debtTerminalV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div><label for="debtOwnerCardV43">Перевод на карту начальника, ₽</label><input id="debtOwnerCardV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div></div><p id="debtAllocationStatusV43" class="small hidden" role="status" aria-live="polite"></p><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
+  if (pending) {
+   $('debtMethodV10').add(new Option('Другая карта','other_card'),$('debtMethodV10').querySelector('option[value="mixed"]'));
+   $('debtAllocationV43').insertAdjacentHTML('beforeend','<div><label for="debtOtherCardV47">Другая карта, ₽</label><input id="debtOtherCardV47" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div>');
+  }
   host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   let refreshPaymentMethodV43;
   if (pending) {
@@ -765,10 +769,10 @@
    let tenderEdited = false;
    refreshPaymentMethodV43 = (syncTender = true) => {
     const method = $('debtMethodV10').value, mixed = method === 'mixed';
-    const label = {cash:'Наличные',terminal:'Терминал',owner_card:'Перевод на карту начальника',mixed:'Смешанная оплата'}[method];
+    const label = {cash:'Наличные',terminal:'Терминал',owner_card:'Перевод на карту начальника',other_card:'Другая карта',mixed:'Смешанная оплата'}[method];
     try {
-     summary.textContent = label ? (mixed ? ['Наличные','Терминал','Перевод на карту начальника'].map((name,index) => {
-      const value = allocationCents($(['debtCashV43','debtTerminalV43','debtOwnerCardV43'][index]).value,name);
+     summary.textContent = label ? (mixed ? ['Наличные','Терминал','Перевод на карту начальника','Другая карта'].map((name,index) => {
+      const value = allocationCents($(['debtCashV43','debtTerminalV43','debtOwnerCardV43','debtOtherCardV47'][index]).value,name);
       return value ? `${name}: ${rub(value / 100)}` : '';
      }).filter(Boolean).join(' · ') : `${label}: ${rub(allocationCents($('debtAmountV10').value,'Получено сейчас') / 100)}`) : 'Выберите способ оплаты перед сохранением.';
     } catch (error) { summary.textContent = error.message; }
@@ -781,14 +785,14 @@
     if (syncTender && !tenderEdited) $('debtTenderV10').value = hasCash ? cashValue : '0.00';
     if (mixed) {
      try {
-      const total = allocationCents($('debtCashV43').value,'Наличные') + allocationCents($('debtTerminalV43').value,'Терминал') + allocationCents($('debtOwnerCardV43').value,'Перевод на карту начальника');
+      const total = allocationCents($('debtCashV43').value,'Наличные') + allocationCents($('debtTerminalV43').value,'Терминал') + allocationCents($('debtOwnerCardV43').value,'Перевод на карту начальника') + allocationCents($('debtOtherCardV47').value,'Другая карта');
       const paid = allocationCents($('debtAmountV10').value,'Получено сейчас');
       $('debtAllocationStatusV43').textContent = `Распределено: ${rub(total / 100)} из ${rub(paid / 100)}${total === paid ? '' : '. Суммы по способам оплаты должны совпадать с полученной оплатой'}`;
      } catch (error) { $('debtAllocationStatusV43').textContent = error.message; }
     }
    };
    $('debtTenderV10').addEventListener('input',() => { tenderEdited = true; });
-   ['debtAmountV10','debtCashV43','debtTerminalV43','debtOwnerCardV43'].forEach(id => $(id).addEventListener('input',() => refreshPaymentMethodV43()));
+   ['debtAmountV10','debtCashV43','debtTerminalV43','debtOwnerCardV43','debtOtherCardV47'].forEach(id => $(id).addEventListener('input',() => refreshPaymentMethodV43()));
    $('debtMethodV10').addEventListener('change',() => { refreshPaymentMethodV43(); $('debtConfirmV10').checked = false; });
   }
   if (retry) {
@@ -796,8 +800,8 @@
    if (pending) {
     const payments = retry.payload.payments;
     $('debtTenderV10').value = String(payments.cash_received);
-    $('debtCashV43').value = String(payments.cash || 0); $('debtTerminalV43').value = String(payments.terminal || 0); $('debtOwnerCardV43').value = String(payments.owner_card || 0);
-    $('debtMethodV10').value = [payments.cash,payments.terminal,payments.owner_card].filter(value => Number(value) > 0).length > 1 ? 'mixed' : payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : 'owner_card';
+    $('debtCashV43').value = String(payments.cash || 0); $('debtTerminalV43').value = String(payments.terminal || 0); $('debtOwnerCardV43').value = String(payments.owner_card || 0); $('debtOtherCardV47').value = String(payments.other_card || 0);
+    $('debtMethodV10').value = [payments.cash,payments.terminal,payments.owner_card,payments.other_card].filter(value => Number(value) > 0).length > 1 ? 'mixed' : payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : payments.owner_card > 0 ? 'owner_card' : 'other_card';
     $('debtNoteV10').value = retry.payload.comment || '';
    } else { $('debtDateV29').value = retry.payload.paid_on; $('debtPurposeV29').value = retry.payload.purpose; }
    $('debtConfirmV10').checked = true;
@@ -831,15 +835,16 @@
     if (pending) {
      if (!shift?.id) throw Error('Для обычной оплаты после процедуры откройте свою смену');
      const method = $('debtMethodV10').value;
-     if (!['cash','terminal','owner_card','mixed'].includes(method)) throw Error('Выберите способ оплаты');
+     if (!['cash','terminal','owner_card','other_card','mixed'].includes(method)) throw Error('Выберите способ оплаты');
      const cash = method === 'mixed' ? allocationCents($('debtCashV43').value,'Наличные') : method === 'cash' ? paid : 0;
      const terminal = method === 'mixed' ? allocationCents($('debtTerminalV43').value,'Терминал') : method === 'terminal' ? paid : 0;
      const ownerCard = method === 'mixed' ? allocationCents($('debtOwnerCardV43').value,'Перевод на карту начальника') : method === 'owner_card' ? paid : 0;
-     if (cash + terminal + ownerCard !== paid) throw Error('Суммы по способам оплаты должны совпадать с полученной оплатой');
+     const otherCard = method === 'mixed' ? allocationCents($('debtOtherCardV47').value,'Другая карта') : method === 'other_card' ? paid : 0;
+     if (cash + terminal + ownerCard + otherCard !== paid) throw Error('Суммы по способам оплаты должны совпадать с полученной оплатой');
      const tender = cash > 0 ? cents($('debtTenderV10').value,'Получено наличными') : 0;
      if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
      const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
-     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
+     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,...(otherCard > 0 ? {other_card:otherCard / 100} : {}),cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
     } else {
      const paidOn = $('debtDateV29').value, purpose = $('debtPurposeV29').value.trim();
      const parsedDate = new Date(paidOn + 'T12:00:00Z');

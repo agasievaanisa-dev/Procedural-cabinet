@@ -27,7 +27,7 @@ const amount=(host,key)=>host.locator(`[data-summary-key="${key}"]`);
 // its initial collection plus the current shift's receipt ledger is revenue.
 test('nurse shift summary orders ordinary income, methods, real debt, salary and actual cash',async({page})=>{
  const errors=await boot(page),host=summary(page),cards=host.locator('.finance-simple-summary-v29 .stat');
- expect(await cards.evaluateAll(nodes=>nodes.map(node=>node.dataset.summaryKey))).toEqual(['revenue','terminal','owner-card','loan','cash','payroll-total','cash-balance']);
+ expect(await cards.evaluateAll(nodes=>nodes.map(node=>node.dataset.summaryKey))).toEqual(['revenue','terminal','owner-card','other-card','loan','cash','payroll-total','cash-balance']);
  for(const [key,label,value] of [['revenue','Получено за смену','1 030'],['terminal','Оплата терминалом','300'],['owner-card','Переводы на карту','150'],['loan','Долг','100'],['cash','Наличные за смену','580'],['payroll-total','Зарплата за смену','300'],['cash-balance','Остаток наличных в кассе','950']]){
   await expect(amount(host,key)).toContainText(label);await expect(amount(host,key)).toContainText(value);
  }
