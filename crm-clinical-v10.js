@@ -831,11 +831,11 @@
   } catch (error) { if (current()) message(notice(),error.message); return false; }
   finally { if (preparation && repeatPreparationV33 === preparation) { repeatPreparationV33 = null; $('procedure').inert = false; $('procedure').removeAttribute('aria-busy'); } }
  };
- global.editTreatmentV10 = async function(kind,id) {
+ global.editTreatmentV10 = async function(kind,id,returnContextV50=null) {
   if (clinicalBusy) return;
   const prefix = kind === 'procedure' ? 'proc' : 'sale';
   if (state(prefix)?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Сначала повторите предыдущее сохранение. Его результат ещё не подтверждён.'); return; }
-  const editReturnV46 = editReturnContextV46();
+  const editReturnV46 = returnContextV50?.actor === actorKey() ? returnContextV50 : editReturnContextV46();
   const navigation=beginQuickNavigation4(), actor = actorKey(), version = ++editorView;
   try {
    const record = await clinicalRpc('treatment_get',{kind,id});
@@ -901,6 +901,7 @@
  }
  global.openDebtPaymentV10 = function(kind,id,debt,patientId=currentPatientId,returnToDebts=false,paymentPending=false) {
   if (debtBusy) return;
+  const editReturnV50 = editReturnContextV46();
   const navigation = beginQuickNavigation4(), actor = actorKey();
   const retry = pendingPayments16.get(JSON.stringify([actorKey(),kind,id]));
   const pending = retry ? retry.pending === true : paymentPending === true;
@@ -917,6 +918,40 @@
    $('debtConfirmV10').nextElementSibling.textContent = 'Подтверждаю полученную оплату и выбранную смену';
    $('debtMethodV10').add(new Option('Другая карта','other_card'),$('debtMethodV10').querySelector('option[value="mixed"]'));
    $('debtAllocationV43').insertAdjacentHTML('beforeend','<div><label for="debtOtherCardV47">Другая карта, ₽</label><input id="debtOtherCardV47" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div>');
+  }
+  let refreshChargeV50, receiptDraftV50, initialDraftV50;
+  if (pending) {
+   const box = document.createElement('div');
+   box.innerHTML = '<p id="debtChargeV50" class="small" role="status" aria-live="polite">Проверяем сохранённую стоимость…</p><p class="small">Полученная сумма не меняет стоимость процедуры или продажи. Если согласована скидка, сначала измените стоимость.</p><button id="debtEditChargeV50" type="button" class="btn secondary wide" disabled>Изменить стоимость / учесть скидку</button><p id="debtRemainderV50" class="small" role="status" aria-live="polite"></p>';
+   $('debtAmountV10').previousElementSibling.before(box);
+   const edit = $('debtEditChargeV50'), view = paymentShiftViewsV49.get($('debtShiftBoxV49'));
+   receiptDraftV50 = () => JSON.stringify(['debtAmountV10','debtMethodV10','debtCashV43','debtTerminalV43','debtOwnerCardV43','debtOtherCardV47','debtTenderV10','debtNoteV10'].map(id => $(id).value).concat(view.explicit ? view.select.value : ''));
+   refreshChargeV50 = () => {
+    edit.dataset.ready = 'false'; edit.disabled = true;
+    if (retry) { $('debtChargeV50').textContent = 'Сначала подтвердите результат предыдущего сохранения оплаты повторной отправкой.'; return; }
+    if (!view.ready || !view.source) { $('debtChargeV50').textContent = 'Стоимость ещё не проверена. Дождитесь загрузки или обновите список смен.'; $('debtRemainderV50').textContent = ''; return; }
+    try {
+     const record = view.source, list = cents(record.list_total), charge = cents(record.charge_total), previous = cents(record.paid_total ?? record.received_total ?? 0);
+     $('debtChargeV50').textContent = `По прайсу: ${rub(list / 100)}. Стоимость для пациента: ${rub(charge / 100)}. Ранее оплачено: ${rub(previous / 100)}.`;
+     edit.dataset.ready = String(record.editable === true); edit.disabled = debtBusy || record.editable !== true;
+     try {
+      const paid = cents($('debtAmountV10').value,'Получено сейчас'), remaining = charge - previous - paid;
+      $('debtRemainderV50').textContent = remaining < 0 ? 'Полученная сумма превышает остаток к оплате.' : `Получено сейчас: ${rub(paid / 100)}. После этой оплаты останется: ${rub(remaining / 100)}.${remaining > 0 ? ' Это частичная оплата; скидка не применяется автоматически.' : ''}`;
+     } catch (error) { $('debtRemainderV50').textContent = error.message; }
+    } catch { $('debtChargeV50').textContent = 'Не удалось проверить сохранённую стоимость. Обновите список смен.'; $('debtRemainderV50').textContent = ''; }
+   };
+   const changed = view.onChange;
+   view.onChange = () => { changed(); refreshChargeV50(); };
+   const refresh = view.retry.onclick;
+   view.retry.onclick = () => { view.ready = false; refreshChargeV50(); return refresh(); };
+   $('debtAmountV10').addEventListener('input',refreshChargeV50);
+   edit.onclick = async () => {
+    if (debtBusy || pendingPayments16.has(JSON.stringify([actorKey(),kind,id])) || !view.ready || view.source?.editable !== true || edit.dataset.ready !== 'true') return;
+    if (receiptDraftV50() !== initialDraftV50 && !global.confirm('Открыть редактирование стоимости? Введённая, но не сохранённая оплата не будет перенесена. Её нужно будет указать заново.')) return;
+    edit.disabled = true;
+    await global.editTreatmentV10(kind,id,editReturnV50);
+    if (actor === actorKey() && $('debtPaymentV10') === host && host.classList.contains('active')) { refreshChargeV50(); message('debtMessageV10','Не удалось открыть редактирование. Повторите действие.'); }
+   };
   }
   host.querySelectorAll('input,select,textarea').forEach(input => input.addEventListener('input',() => { if (input.id !== 'debtConfirmV10') $('debtConfirmV10').checked = false; }));
   let refreshPaymentMethodV43;
@@ -972,6 +1007,7 @@
    message('debtMessageV10','Предыдущее сохранение оплаты ещё не подтверждено. Повторите сохранение — отправим первоначальную оплату без дубля.');
   }
   if (pending) refreshPaymentMethodV43(!retry);
+  if (pending) { initialDraftV50 = receiptDraftV50(); refreshChargeV50(); }
   show('debtPaymentV10');
   if (pending && !retry) {
    const shiftHost = $('debtShiftBoxV49'), view = paymentShiftViewsV49.get(shiftHost);
@@ -1043,7 +1079,7 @@
     message(committed ? 'homeMessage' : 'debtMessageV10',committed ? 'Оплата сохранена. Не удалось обновить экран: ' + error.message : error.message);
    }
   }
-  finally { debtBusy = false; if (actor === actorKey()) host.querySelectorAll('button,input,select,textarea').forEach(input => input.disabled = pendingPayments16.has(key) && input.tagName !== 'BUTTON'); }
+  finally { debtBusy = false; if (actor === actorKey()) { host.querySelectorAll('button,input,select,textarea').forEach(input => input.disabled = pendingPayments16.has(key) && input.tagName !== 'BUTTON'); const edit = $('debtEditChargeV50'); if (edit) edit.disabled = pendingPayments16.has(key) || edit.dataset.ready !== 'true'; } }
  };
  function treatmentEvents(data) { return Array.isArray(data) ? data : data?.events || [...(data?.procedures || []).map(event => ({...event,kind:'procedure'})),...(data?.sales || []).map(event => ({...event,kind:'sale'}))].sort((a,b) => new Date(b.at || b.visit_at || b.sold_at) - new Date(a.at || a.visit_at || a.sold_at)); }
  let debtView = 0, debtHistoryView = 0;
