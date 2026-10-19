@@ -93,6 +93,66 @@
  let session = 0, patientView = 0, editorView = 0, repeatView = 0, repeatPreparationV33 = null, debtBusy = false;
  const amount = value => (value / 100).toFixed(2);
  const state = prefix => forms[prefix];
+ const paymentShiftViewsV49 = new WeakMap();
+ function paymentShiftLabelV49(item) {
+  const date = String(item.date || item.shift_date || '').slice(0,10);
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(date) ? date.split('-').reverse().join('.') : '';
+  const time = value => { if (!value) return ''; const at = new Date(value); return Number.isFinite(+at) ? at.toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'}) : ''; };
+  return [day,[time(item.started_at),time(item.planned_end_at)].filter(Boolean).join('–'),(item.staff || []).map(person => person.full_name || person.name).filter(Boolean).join(', ')].filter(Boolean).join(' · ');
+ }
+ function createPaymentShiftV49(host,id,onChange) {
+  host.className = 'clinical-payment-shift-v49';
+  host.innerHTML = `<label for="${id}">К какой смене отнести оплату</label><select id="${id}" disabled><option value="">Загружаем открытые смены…</option></select><p class="small" role="status" aria-live="polite"></p><button type="button" class="btn secondary hidden">Обновить список смен</button>`;
+  const view = {host,select:host.querySelector('select'),notice:host.querySelector('p'),retry:host.querySelector('button'),ready:false,options:[],source:null,explicit:false,onChange};
+  view.select.addEventListener('change',() => { view.explicit = true; renderPaymentShiftV49(view); onChange(); });
+  paymentShiftViewsV49.set(host,view); return view;
+ }
+ function paymentShiftSelectionV49(view) {
+  if (!view?.ready) throw Error('Дождитесь загрузки открытых смен или обновите их список');
+  const selected = view.options.find(item => item.id === view.select.value);
+  if (!selected) throw Error('Выберите, к какой открытой смене отнести оплату');
+  const members = selected.staff || [], nurse = members.find(person => person.id === view.source?.nurse_id)
+   || members.find(person => person.id === currentStaff?.id) || members[0];
+  if (!nurse?.id) throw Error('У выбранной смены не указаны медсёстры. Обновите список смен');
+  return {shift_id:selected.id,nurse_id:nurse.id,label:paymentShiftLabelV49(selected),nurse:nurse.full_name || nurse.name || 'Медсестра смены',explicit:view.explicit};
+ }
+ function renderPaymentShiftV49(view) {
+  try { const target = paymentShiftSelectionV49(view); view.notice.textContent = `Оплата войдёт в эту смену: ${target.label}. Принимает: ${target.nurse}.`; }
+  catch (error) { view.notice.textContent = view.ready ? view.options.length ? 'Исходная смена закрыта или недоступна. Выберите открытую смену, в кассу которой поступают деньги.' : 'Нет доступных открытых смен. Откройте смену и обновите список.' : error.message; }
+ }
+ async function loadPaymentShiftsV49(view,kind,id,current) {
+  const token = {}; view.loading = token; view.ready = false; view.select.disabled = true; view.retry.classList.add('hidden');
+  view.notice.textContent = 'Проверяем открытые смены…';
+  try {
+   const [record,context] = await Promise.all([clinicalRpc('treatment_get',{kind,id}),quickRpc('context')]);
+   if (view.loading !== token || !current()) return;
+   if (!record || record.id !== id || (record.kind && record.kind !== kind)) throw Error('Не удалось определить исходную смену записи. Обновите список смен');
+   const options = Array.isArray(context?.shifts) ? context.shifts.filter(item => item?.id && item.status !== 'closed' && Array.isArray(item.staff) && item.staff.length
+    && (isManager() || item.staff.some(person => person.id === currentStaff?.id))) : [];
+   const previous = view.explicit ? view.select.value : null;
+   view.source = record; view.options = [...new Map(options.map(item => [item.id,item])).values()]; view.ready = true;
+   view.select.innerHTML = '<option value="">Выберите открытую смену</option>' + view.options.map(item => `<option value="${esc(item.id)}">${esc(paymentShiftLabelV49(item))}${item.id === record.shift_id ? ' — исходная смена' : ''}</option>`).join('');
+   view.select.value = previous && view.options.some(item => item.id === previous) ? previous : !view.explicit && view.options.some(item => item.id === record.shift_id) ? record.shift_id : '';
+   view.select.disabled = false; view.retry.classList.remove('hidden'); renderPaymentShiftV49(view); view.onChange();
+  } catch (error) {
+   if (view.loading !== token || !current()) return;
+   view.ready = false; view.select.innerHTML = '<option value="">Смены не загружены</option>'; view.notice.textContent = error.message; view.retry.classList.remove('hidden');
+  }
+ }
+ function installEditPaymentShiftV49(prefix) {
+  const s = state(prefix); if (!s?.edit) return;
+  let host = $(prefix + 'PaymentShiftBoxV49'); if (!host) { host = document.createElement('div'); host.id = prefix + 'PaymentShiftBoxV49'; $(prefix + 'PaymentV5').querySelector('h2').after(host); }
+  const actor = actorKey(), current = () => state(prefix) === s && actor === actorKey();
+  s.paymentShiftV49 = createPaymentShiftV49(host,prefix + 'PaymentShiftV49',() => clearConfirmation(prefix));
+  s.paymentShiftV49.retry.onclick = () => { clearConfirmation(prefix); return loadPaymentShiftsV49(s.paymentShiftV49,s.edit.kind || (prefix === 'proc' ? 'procedure' : 'sale'),s.edit.id,current); };
+  loadPaymentShiftsV49(s.paymentShiftV49,prefix === 'proc' ? 'procedure' : 'sale',s.edit.id,current);
+  syncEditPaymentShiftV49(prefix);
+ }
+ function syncEditPaymentShiftV49(prefix) {
+  const host = $(prefix + 'PaymentShiftBoxV49'); if (!host) return;
+  let paid = 0; try { paid = receivedCents(prefix); } catch {}
+  host.classList.toggle('hidden',!state(prefix)?.edit || paid <= 0 || correctionSelected(prefix));
+ }
  function actorKey() { return JSON.stringify([currentStaff?.id,currentStaff?.role,session]); }
  function assertActor(actor) { if (!currentStaff?.id || actorKey() !== actor) throw Error('Учётная запись изменилась. Откройте форму заново'); }
  function editReturnContextV46() {
@@ -606,7 +666,7 @@
   $(prefix + 'ReceivedV10').previousElementSibling.textContent = s.edit ? 'Доплата сейчас, ₽' : 'Оплачено сейчас, ₽';
   try { const m = currentModel(prefix), increase = m.charge > m.list; $(prefix + 'DebtSummaryV10').textContent = `По прайсу: ${rub(m.list / 100)}. ${increase ? 'Надбавка' : 'Скидка'}: ${rub(Math.abs(m.list - m.charge) / 100)}. К оплате с учётом ${increase ? 'надбавки' : 'скидки'}: ${rub(m.charge / 100)}. ${s.edit ? 'Ранее оплачено: ' + rub(m.previous / 100) + '. ' : ''}Оплата сейчас: ${rub(m.received / 100)}. ${m.status === 'pending' ? 'Ожидает оплаты' : 'Долг'}: ${rub(m.debt / 100)}${m.status === 'free' ? '. Бесплатно' : ''}`; }
   catch (error) { $(prefix + 'DebtSummaryV10').textContent = error.message; }
-  correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix);
+  correctionControls(prefix); inlinePayment(prefix); renderPaymentSummaryV5(prefix); syncEditPaymentShiftV49(prefix);
  };
  readPaymentsV5 = function(prefix, confirmation = true) {
   const model = currentModel(prefix), method = financePaymentState5[prefix]?.method;
@@ -678,7 +738,11 @@
    if (!s.edit && allServices.some(item => !services.some(service => service.id === item.service_id && service.active !== false))) throw Error('Услуга недоступна. Замените её или уберите из записи');
    payload = {shift_id:s.edit?.shift_id || shift.id,nurse_id:$(prefix + 'Nurse').value,patient_id:$(prefix + 'Patient').value || null,service_id:kind === 'procedure' ? $('procService').value : null,services:allServices,own_medications:kind === 'procedure' ? readOwn() : [],items:selected,charge_total:model.charge / 100,paid_total:model.received / 100,payment_status:model.status,payments,discount_reason:$(prefix + 'DiscountReason').value || (model.charge !== model.list ? 'Корректировка стоимости' : null),discount_comment:model.reason || null,notes:$(prefix + 'Notes').value.trim() || null,expected_stock_deducted:!paymentOnly,...visitPayload(prefix)};
    if (!paymentOnly && kind === 'sale' && isManager() && $('saleReserveV5')?.checked) payload.reserve_sale = true;
-   if (s.edit && model.received > 0 && shift?.id && shift.id !== s.edit.shift_id) { payload.payment_shift_id=shift.id; payload.payment_nurse_id=[shift.aId,shift.bId].includes(currentStaff.id)?currentStaff.id:shift.aId; }
+   if (s.edit && model.received > 0) {
+    const receiving = paymentShiftSelectionV49(s.paymentShiftV49);
+    payload.payment_shift_id = receiving.shift_id; payload.payment_nurse_id = receiving.nurse_id;
+    if (receiving.shift_id !== s.edit.shift_id && receiving.explicit) payload.payment_shift_explicit = true;
+   }
    if (s.edit) {
     payload.kind = kind; payload.id = s.edit.id; payload.expected_version = s.edit.version;
     payload.edit_reason = correctionSelected(prefix) ? correctionReasonV22 : $(prefix + 'EditReasonV10').value.trim() || null;
@@ -800,6 +864,7 @@
    forms[prefix].chargeEdited = !automaticUnpaidCharge(record);
    $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00';
    $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Редактирование процедуры' : 'Редактирование продажи'; show(kind); calculate(prefix,false); renderAccountingModeV5();
+   installEditPaymentShiftV49(prefix);
    message(kind + 'Message',pendingUnpaidRecord(record) ? 'Добавьте или измените процедуру и препараты. До оплаты можно сохранять изменения без комментария. При изменении стоимости укажите её причину.' : 'Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
    if (prefix === 'proc' && typeof global.loadProcedureTemplatesV5 === 'function') await global.loadProcedureTemplatesV5();
   } catch (error) { if (actorKey() === actor) message('patientCardMessageV5',error.message); }
@@ -836,7 +901,7 @@
  }
  global.openDebtPaymentV10 = function(kind,id,debt,patientId=currentPatientId,returnToDebts=false,paymentPending=false) {
   if (debtBusy) return;
-  beginQuickNavigation4();
+  const navigation = beginQuickNavigation4(), actor = actorKey();
   const retry = pendingPayments16.get(JSON.stringify([actorKey(),kind,id]));
   const pending = retry ? retry.pending === true : paymentPending === true;
   let host = $('debtPaymentV10'); if (!host) { host = document.createElement('section'); host.id = 'debtPaymentV10'; host.className = 'screen'; $('workspace').parentElement.appendChild(host); }
@@ -844,8 +909,12 @@
   delete host.dataset.returnToJournal;
   const title = pending ? kind === 'sale' ? 'Оплата продажи' : 'Оплата процедуры' : 'Погашение долга';
   const purpose = debtPurposes29.get(kind + ':' + id) || (kind === 'sale' ? 'Продажа препарата' : 'Процедура');
-  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option><option value="mixed">Смешанная оплата</option></select><div id="debtAllocationV43" class="pay-allocation-v5 hidden"><div><label for="debtCashV43">Наличные, ₽</label><input id="debtCashV43" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"></div><div><label for="debtTerminalV43">Терминал, ₽</label><input id="debtTerminalV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div><label for="debtOwnerCardV43">Перевод на карту начальника, ₽</label><input id="debtOwnerCardV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div></div><p id="debtAllocationStatusV43" class="small hidden" role="status" aria-live="polite"></p><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
+  host.innerHTML = `<h1>${title}</h1><div class="card"><p>${pending ? 'Ожидает оплаты' : 'Остаток долга'}: <b>${rub(debt)}</b></p><p class="small">${pending ? 'Это обычная оплата после процедуры. Она войдёт в полученную сумму смены. Наличные войдут в кассу.' : 'Погашение хранится отдельно: не входит в сумму смены и её кассу.'}</p><label for="debtAmountV10">Получено сейчас, ₽</label><input id="debtAmountV10" type="number" inputmode="decimal" min="0.01" step="0.01" value="${Number(debt).toFixed(2)}">${pending ? `<label for="debtMethodV10">Способ оплаты</label><select id="debtMethodV10"><option value="cash">Наличные</option><option value="terminal">Терминал</option><option value="owner_card">Перевод на карту начальника</option><option value="mixed">Смешанная оплата</option></select><div id="debtAllocationV43" class="pay-allocation-v5 hidden"><div><label for="debtCashV43">Наличные, ₽</label><input id="debtCashV43" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"></div><div><label for="debtTerminalV43">Терминал, ₽</label><input id="debtTerminalV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div><div><label for="debtOwnerCardV43">Перевод на карту начальника, ₽</label><input id="debtOwnerCardV43" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div></div><p id="debtAllocationStatusV43" class="small hidden" role="status" aria-live="polite"></p><label for="debtTenderV10">Получено наличными для расчёта сдачи, ₽</label><input id="debtTenderV10" type="number" inputmode="decimal" min="0" step="0.01" value="${Number(debt).toFixed(2)}"><label for="debtNoteV10">Комментарий</label><input id="debtNoteV10">` : `<label for="debtDateV29">Дата погашения</label><input id="debtDateV29" type="date" value="${esc(localDateValue())}"><label for="debtPurposeV29">За что получена оплата *</label><textarea id="debtPurposeV29" class="debt-purpose-v29" maxlength="1000">${esc(purpose)}</textarea>`}<label class="payment-confirm-v5"><input id="debtConfirmV10" type="checkbox"><span>Подтверждаю полученную оплату</span></label><button type="button" class="btn primary wide" onclick="saveDebtPaymentV10()">${pending ? 'Сохранить оплату' : 'Сохранить погашение долга'}</button><div id="debtMessageV10" role="status" aria-live="polite"></div></div><button type="button" id="debtBackV49" class="btn secondary" onclick="${returnToDebts?'openDebtsV10()':patientId?`openPatient('${esc(patientId)}')`:"show('workspace')"}">${returnToDebts?'Назад к долгам':patientId?'Назад к пациенту':'Назад'}</button>`;
   if (pending) {
+   const shiftHost = document.createElement('div'); shiftHost.id = 'debtShiftBoxV49'; $('debtMethodV10').previousElementSibling.before(shiftHost);
+   const view = createPaymentShiftV49(shiftHost,'debtShiftV49',() => { $('debtConfirmV10').checked = false; });
+   view.retry.onclick = () => { $('debtConfirmV10').checked = false; return loadPaymentShiftsV49(view,kind,id,() => actor === actorKey() && quickNavigationCurrent4(navigation,currentStaff?.id) && paymentShiftViewsV49.get(shiftHost) === view && $('debtShiftBoxV49') === shiftHost); };
+   $('debtConfirmV10').nextElementSibling.textContent = 'Подтверждаю полученную оплату и выбранную смену';
    $('debtMethodV10').add(new Option('Другая карта','other_card'),$('debtMethodV10').querySelector('option[value="mixed"]'));
    $('debtAllocationV43').insertAdjacentHTML('beforeend','<div><label for="debtOtherCardV47">Другая карта, ₽</label><input id="debtOtherCardV47" type="number" inputmode="decimal" min="0" step="0.01" value="0.00"></div>');
   }
@@ -890,6 +959,9 @@
    $('debtAmountV10').value = amount(retry.paid);
    if (pending) {
     const payments = retry.payload.payments;
+    const view = paymentShiftViewsV49.get($('debtShiftBoxV49'));
+    view.select.innerHTML = `<option value="${esc(retry.payload.shift_id)}">${esc(retry.paymentShift?.label || 'Выбранная при сохранении смена')}</option>`;
+    view.notice.textContent = `Повторно отправим оплату в первоначально выбранную смену${retry.paymentShift?.nurse ? '. Принимает: ' + retry.paymentShift.nurse : ''}.`;
     $('debtTenderV10').value = String(payments.cash_received);
     $('debtCashV43').value = String(payments.cash || 0); $('debtTerminalV43').value = String(payments.terminal || 0); $('debtOwnerCardV43').value = String(payments.owner_card || 0); $('debtOtherCardV47').value = String(payments.other_card || 0);
     $('debtMethodV10').value = [payments.cash,payments.terminal,payments.owner_card,payments.other_card].filter(value => Number(value) > 0).length > 1 ? 'mixed' : payments.cash > 0 ? 'cash' : payments.terminal > 0 ? 'terminal' : payments.owner_card > 0 ? 'owner_card' : 'other_card';
@@ -901,6 +973,10 @@
   }
   if (pending) refreshPaymentMethodV43(!retry);
   show('debtPaymentV10');
+  if (pending && !retry) {
+   const shiftHost = $('debtShiftBoxV49'), view = paymentShiftViewsV49.get(shiftHost);
+   loadPaymentShiftsV49(view,kind,id,() => actor === actorKey() && quickNavigationCurrent4(navigation,currentStaff?.id) && paymentShiftViewsV49.get(shiftHost) === view && $('debtShiftBoxV49') === shiftHost);
+  }
  };
  global.openSavedPaymentV14 = function(kind,id,amount,patientId,pending=false) {
   global.openDebtPaymentV10(kind,id,amount,patientId,false,pending);
@@ -909,7 +985,7 @@
   const date = $('journalDateV12')?.value;
   global.openSavedPaymentV14(kind,id,amount,patientId,pending);
   const host = $('debtPaymentV10'); host.dataset.returnToJournal = date || '';
-  host.querySelector('.btn.secondary').onclick = () => global.openShiftJournalV12(date);
+  $('debtBackV49').onclick = () => global.openShiftJournalV12(date);
  };
  global.saveDebtPaymentV10 = async function() {
   if (debtBusy) return; const navigation=quickNavigation4, actor = actorKey(), host = $('debtPaymentV10');
@@ -922,9 +998,10 @@
     const paid = cents($('debtAmountV10').value), remaining = cents(host.dataset.debt);
     if (!paid || paid > remaining) throw Error('Укажите оплату больше нуля и не больше оставшейся суммы');
     if (!$('debtConfirmV10').checked) throw Error('Проверьте оплату и отметьте подтверждение');
-    let payload = {kind:host.dataset.kind,id:host.dataset.recordId};
+    let payload = {kind:host.dataset.kind,id:host.dataset.recordId}, paymentShift;
     if (pending) {
-     if (!shift?.id) throw Error('Для обычной оплаты после процедуры откройте свою смену');
+     const view = paymentShiftViewsV49.get($('debtShiftBoxV49'));
+     paymentShift = paymentShiftSelectionV49(view);
      const method = $('debtMethodV10').value;
      if (!['cash','terminal','owner_card','other_card','mixed'].includes(method)) throw Error('Выберите способ оплаты');
      const cash = method === 'mixed' ? allocationCents($('debtCashV43').value,'Наличные') : method === 'cash' ? paid : 0;
@@ -934,8 +1011,7 @@
      if (cash + terminal + ownerCard + otherCard !== paid) throw Error('Суммы по способам оплаты должны совпадать с полученной оплатой');
      const tender = cash > 0 ? cents($('debtTenderV10').value,'Получено наличными') : 0;
      if (tender < cash) throw Error('Получено наличными меньше наличной части оплаты');
-     const nurseId = [shift.aId,shift.bId].includes(currentStaff.id) ? currentStaff.id : shift.aId;
-     payload = {...payload,shift_id:shift.id,nurse_id:nurseId,payments:{cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,...(otherCard > 0 ? {other_card:otherCard / 100} : {}),cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
+     payload = {...payload,shift_id:paymentShift.shift_id,nurse_id:paymentShift.nurse_id,...(paymentShift.shift_id !== view.source.shift_id && paymentShift.explicit ? {payment_shift_explicit:true} : {}),payments:{cash:cash / 100,terminal:terminal / 100,owner_card:ownerCard / 100,...(otherCard > 0 ? {other_card:otherCard / 100} : {}),cash_received:tender / 100},comment:$('debtNoteV10').value.trim() || null};
     } else {
      const paidOn = $('debtDateV29').value, purpose = $('debtPurposeV29').value.trim();
      const parsedDate = new Date(paidOn + 'T12:00:00Z');
@@ -944,7 +1020,7 @@
      if (!purpose || purpose.length > 1000) throw Error('Укажите, за что получена оплата (до 1000 символов)');
      payload = {...payload,amount:paid / 100,paid_on:paidOn,purpose};
     }
-    snapshot = {paid,remaining,pending,payload};
+    snapshot = {paid,remaining,pending,payload,...(paymentShift ? {paymentShift} : {})};
    }
    debtBusy = true; host.querySelectorAll('button,input,select,textarea').forEach(input => input.disabled = true);
    const receipt = await clinicalRpc('debt_payment',snapshot.payload,true);

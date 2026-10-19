@@ -113,7 +113,7 @@ for(const kind of ['procedure','sale'])for(const mode of ['pending','debt','free
 });
 
 test('adding a positive payment to a saved procedure needs a newly chosen method',async({page})=>{
- const errors=await boot(page),prefix=await openForm(page,'procedure',true);await page.selectOption('#procPaymentStatusV10','paid');await page.fill('#procEditReasonV10','Получена оплата после процедуры');
+ const errors=await boot(page),prefix=await openForm(page,'procedure',true);await page.selectOption('#procPaymentStatusV10','paid');await expect(page.locator('#procPaymentShiftV49')).toBeEnabled();await page.selectOption('#procPaymentShiftV49','current-shift');await page.fill('#procEditReasonV10','Получена оплата после процедуры');
  await save(page,prefix);await expect(page.locator('#procedureMessage')).toContainText('Выберите способ оплаты');expect(await mutations(page)).toHaveLength(0);
  await page.locator('#procPaymentV5 [data-pay-method="owner_card"]').click();await save(page,prefix);await expect(page.locator('#workspace')).toBeVisible();expect((await writes(page))[0].args).toMatchObject({p_action:'treatment_edit',p_payload:{paid_total:1600,payments:{cash:0,terminal:0,owner_card:1600,cash_received:0}}});expect(errors).toEqual([]);
 });

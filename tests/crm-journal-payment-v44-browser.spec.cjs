@@ -12,7 +12,7 @@ async function boot(page){
   currentStaff={id:'nurse-1',full_name:'Медсестра проверки',role:'nurse',active:true};
   shift={id:'shift-1',aId:'nurse-1',a:'Медсестра проверки',bId:'nurse-2',b:'Вторая медсестра',type:'08:30–16:00'};
   const staff=[{id:'nurse-1',full_name:'Медсестра проверки'},{id:'nurse-2',full_name:'Вторая медсестра'}];
-  const opened={id:'shift-1',date:'2026-10-17',status:'open',started_at:'2026-10-17T05:30:00Z',planned_end_at:'2026-10-17T13:00:00Z'};
+  const opened={id:'shift-1',date:'2026-10-17',status:'open',started_at:'2026-10-17T05:30:00Z',planned_end_at:'2026-10-17T13:00:00Z',staff};
   const record={id:'procedure-1',kind:'procedure',patient_id:'patient-1',patient:'Пациент проверки',nurse_id:'nurse-1',nurse:'Медсестра проверки',shift_id:'shift-1',at:'2026-10-17T09:00:00Z',procedure_type:'Капельница',list_total:1600,charge_total:1600,paid_total:0,initial_paid_total:0,received_total:0,debt_total:1600,payment_pending:true,pending_total:1600,editable:true,services:[{name:'Капельница',quantity:1,line_total:1600}],items:[],own_medications:[],payments:{cash:0,terminal:0,owner_card:0},notes:''};
   window.__journalV44={calls:[],effects:[],replay:new Map(),readFailures:0,record,receipts:[]};
   db.rpc=async(name,args={})=>{
@@ -22,6 +22,8 @@ async function boot(page){
     if(state.holdNextRead){state.holdNextRead=false;await new Promise(resolve=>{window.__releaseJournalV44=resolve});state.heldReadReturned=true}
     return {data:{date:args.p_date,time_zone:'Europe/Moscow',reports:[{shift:opened,staff,procedures:[clone(record)],sales:[],receipts:clone(state.receipts)}]}};
    }
+   if(name==='crm_clinical_v10'&&args.p_action==='treatment_get')return {data:clone(record)};
+   if(name==='quick_ui_v4'&&args.p_action==='context')return {data:{favorites:[],recent:[],shifts:[clone(opened)]}};
    if(name==='crm_clinical_v10'&&args.p_action==='debt_payment'){
     const p=args.p_payload;let answer=state.replay.get(args.p_request_id);
     if(!answer){
@@ -44,7 +46,7 @@ async function boot(page){
 }
 const entry=page=>page.locator('#journalBodyV12 [data-event-id="procedure-1"]');
 const save=page=>page.locator('#debtPaymentV10 button[onclick="saveDebtPaymentV10()"]');
-async function openPayment(page){await entry(page).getByRole('button',{name:'Принять оплату',exact:true}).click();await expect(page.locator('#debtPaymentV10')).toBeVisible()}
+async function openPayment(page){await entry(page).getByRole('button',{name:'Принять оплату',exact:true}).click();await expect(page.locator('#debtPaymentV10')).toBeVisible();await expect(page.locator('#debtShiftV49')).toHaveValue('shift-1')}
 async function effects(page){return page.evaluate(()=>__journalV44.effects)}
 
 test('saved ordinary payment requires an explicit method instead of silently choosing cash',async({page})=>{

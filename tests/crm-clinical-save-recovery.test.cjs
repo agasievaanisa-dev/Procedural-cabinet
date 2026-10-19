@@ -45,9 +45,13 @@ function fixture(clinical=false){
  vm.runInContext('financeTreatmentMode5.proc={stock_deducted:false,payment_only:true};financeTreatmentMode5.sale={stock_deducted:false,payment_only:true}',context);
  vm.runInContext("financePaymentState5.proc={method:'cash',total:10000,tenderEdited:false}",context);
  if(clinical){
-  const source=fs.readFileSync(__dirname+'/../crm-clinical-v10.js','utf8').replace("})(typeof window === 'object' ? window : globalThis);","global.__clinicalTest16={clinicalRpc,forms,pendingPayments16,actorKey};})(typeof window === 'object' ? window : globalThis);");
+  const source=fs.readFileSync(__dirname+'/../crm-clinical-v10.js','utf8').replace("})(typeof window === 'object' ? window : globalThis);","global.__clinicalTest16={clinicalRpc,forms,pendingPayments16,actorKey,paymentShiftViewsV49};})(typeof window === 'object' ? window : globalThis);");
   vm.runInContext(source,context);
-  context.__clinicalTest16.forms.proc={chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map()};
+  // These transport tests enter already prepared editors directly. Model the
+  // freshly loaded, authorized original receiving shift rather than bypassing it.
+  const receiving={ready:true,explicit:false,source:{shift_id:'shift-1',nurse_id:'nurse-1'},select:{value:'shift-1'},options:[{id:'shift-1',status:'open',staff:[{id:'nurse-1',full_name:'Тестовая медсестра'},{id:'nurse-2',full_name:'Вторая медсестра'}]}]};
+  context.__clinicalTest16.forms.proc={chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map(),paymentShiftV49:receiving};
+  context.__clinicalTest16.paymentShiftViewsV49.set(el('debtShiftBoxV49'),receiving);
  }
  for(const [id,value] of Object.entries({procPaid:'100',procPatient:'patient-1',procNurse:'nurse-1',procService:'service-1',procPaymentStatusV10:'paid',procPayCash:'100',procPayTerminal:'0',procPayOwnerCard:'0',procPayTender:'100'}))el(id).value=value;
  el('procPayConfirmed').checked=true;el('procSaveButton').tagName='BUTTON';el('procSaveButton').onclickText='saveProcedure()';

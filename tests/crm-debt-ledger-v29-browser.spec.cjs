@@ -86,7 +86,7 @@ test('ordinary after-procedure payment keeps its method and current shift, and c
 });
 
 test('ordinary waiting payment still requires an open shift without silently becoming a debt repayment',async({page})=>{
- const errors=await boot(page,{role:'nurse',open:false});await page.evaluate(()=>openSavedPaymentV14('procedure','waiting',900,null,true));await page.check('#debtConfirmV10');await payButton(page).click();await expect(page.locator('#debtMessageV10')).toContainText(/откройте.*смену/);expect(await mutations(page)).toHaveLength(0);expect(errors).toEqual([]);
+ const errors=await boot(page,{role:'nurse',open:false});await page.evaluate(()=>openSavedPaymentV14('procedure','waiting',900,null,true));await expect(page.locator('#debtShiftBoxV49 p')).toContainText('Нет доступных открытых смен. Откройте смену');await page.check('#debtConfirmV10');await payButton(page).click();await expect(page.locator('#debtMessageV10')).toContainText('Выберите, к какой открытой смене отнести оплату');expect(await mutations(page)).toHaveLength(0);expect(errors).toEqual([]);
 });
 
 for(const role of ['admin','nurse'])test(`${role} records an anonymous sale loan repayment without any shift or ordinary money method`,async({page})=>{

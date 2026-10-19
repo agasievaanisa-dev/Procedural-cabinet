@@ -72,7 +72,7 @@ async function openForm(page,kind='procedure',edit=false){
  else{await page.evaluate(()=>openProcedure('patient-test'));await page.selectOption('#procService','service-test');await page.evaluate(()=>chooseMedication('procMeds','medicine-procedure'))}
  const prefix=kind==='sale'?'sale':'proc';
  await expect(page.locator('#'+kind)).toBeVisible();await expect(page.locator('#'+prefix+'Paid')).toHaveValue('1600.00');
- if(edit){await page.selectOption('#'+prefix+'PaymentStatusV10','paid');await page.fill('#'+prefix+'EditReasonV10','Уточнены фактически полученные способы оплаты')}
+ if(edit){await page.selectOption('#'+prefix+'PaymentStatusV10','paid');await expect(page.locator('#'+prefix+'PaymentShiftV49')).toBeEnabled();await page.selectOption('#'+prefix+'PaymentShiftV49','current-shift');await page.fill('#'+prefix+'EditReasonV10','Уточнены фактически полученные способы оплаты')}
  await page.click('#'+prefix+'PaymentV5 [data-pay-method="mixed"]');return prefix;
 }
 async function splitForm(page,prefix,{cash='1200',terminal='400',card='',tender}={}){
@@ -84,7 +84,7 @@ async function saveForm(page,prefix='proc'){
 }
 async function openPending(page,kind='procedure'){
  await page.evaluate(kind=>openSavedPaymentV14(kind,kind==='sale'?'previous-sale':'previous-procedure',1600,'patient-test',true),kind);
- await expect(page.locator('#debtPaymentV10')).toBeVisible();await page.selectOption('#debtMethodV10','mixed');
+ await expect(page.locator('#debtPaymentV10')).toBeVisible();await expect(page.locator('#debtShiftV49')).toBeEnabled();await page.selectOption('#debtShiftV49','current-shift');await page.selectOption('#debtMethodV10','mixed');
 }
 async function splitPending(page,{cash='1200',terminal='400',card='',tender}={}){
  await page.fill('#debtCashV43',cash);await page.fill('#debtTerminalV43',terminal);await page.fill('#debtOwnerCardV43',card);

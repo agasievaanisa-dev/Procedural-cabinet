@@ -46,7 +46,8 @@ do $$declare a jsonb;b jsonb;p jsonb;req uuid:=gen_random_uuid();begin
  a:=public.record_treatment_v5('procedure',pg_temp.v47_payload('procedure','pending','{"other_card":200}'),gen_random_uuid());perform set_config('test.v47.pending',a->>'id',true);
  p:=jsonb_build_object('kind','procedure','id',a->>'id','shift_id',current_setting('test.v47.shift'),'nurse_id',current_setting('test.v47.staff'),'payments',jsonb_build_object('other_card',300),'comment','TEST ordinary collection v47');req:=gen_random_uuid();
  a:=public.crm_clinical_v10('debt_payment',p,req);b:=public.crm_clinical_v10('debt_payment',p,req);perform pg_temp.v47_assert(a=b,'ordinary receipt retry');
- p:=p||jsonb_build_object('shift_id',current_setting('test.v47.shift2'),'payments',jsonb_build_object('other_card',500));perform public.crm_clinical_v10('debt_payment',p,gen_random_uuid());
+ -- v49: intentionally choose another open receiving shift while the original remains open.
+ p:=p||jsonb_build_object('shift_id',current_setting('test.v47.shift2'),'payment_shift_explicit',true,'payments',jsonb_build_object('other_card',500));perform public.crm_clinical_v10('debt_payment',p,gen_random_uuid());
  a:=public.record_treatment_v5('sale',pg_temp.v47_payload('sale','debt','{"other_card":100}'),gen_random_uuid());perform set_config('test.v47.debt',a->>'id',true);
  perform public.crm_clinical_v10('debt_payment',jsonb_build_object('kind','sale','id',a->>'id','amount',300,'paid_on','2098-07-19','purpose','TEST separate debt v47'),gen_random_uuid());
  a:=public.record_treatment_v5('procedure',pg_temp.v47_payload('procedure','paid','{"terminal":1000}'),gen_random_uuid());perform set_config('test.v47.legacy',a->>'id',true);

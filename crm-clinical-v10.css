@@ -8,3 +8,5 @@
 .medrow .chosen-name .medication-price-v31{font-weight:700;color:var(--text);line-height:1.4}
 
 .medrow .chosen-name .medication-refresh-v48{display:block;max-width:100%;min-height:36px;margin-top:8px;padding:8px;font-size:12px;line-height:1.35;white-space:normal;text-align:left}
+
+.clinical-payment-shift-v49{margin:16px 0;padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--bg);overflow-wrap:anywhere}.clinical-payment-shift-v49 select{width:100%;min-width:0;box-sizing:border-box}.clinical-payment-shift-v49 p{margin:10px 0;line-height:1.5}.clinical-payment-shift-v49 .btn{max-width:100%;white-space:normal}
