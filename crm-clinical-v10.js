@@ -251,7 +251,9 @@
   $(prefix + 'PaymentStatusV10').disabled = selected || !!s.retry;
   $(prefix + 'ReceivedV10').disabled = selected || !!s.retry;
   $(prefix + 'PaymentV5').classList.toggle('payment-correction-active-v22',selected);
-  $(prefix + 'PaymentV5').querySelectorAll('[data-pay-method]').forEach(button => button.disabled = selected || !!s.retry);
+  let previousPaymentOnly = !!s.edit && s.previous > 0;
+  try { previousPaymentOnly = previousPaymentOnly && receivedCents(prefix) === 0; } catch {}
+  $(prefix + 'PaymentV5').querySelectorAll('[data-pay-method]').forEach(button => button.disabled = selected || !!s.retry || previousPaymentOnly);
   for (const suffix of ['Cash','Terminal','OwnerCard','OtherCard','Tender']) $(prefix + 'Pay' + suffix).disabled = selected || !!s.retry;
  }
  function correctionChanged(prefix) {
@@ -656,7 +658,7 @@
   const debtSelected = $(prefix + 'PaymentStatusV10').value === 'debt';
   $(prefix + 'DebtHintV13').classList.toggle('hidden',!debtSelected && !pendingSelected);
   $(prefix + 'DebtHintV13').textContent = prefix === 'sale' && pendingSelected ? 'Продажа ожидает расчёта — это не долг. Сохраните с оплатой сейчас 0 ₽. Для расчёта откройте её в журнале смены и нажмите «Принять оплату». Пациента выбирать необязательно.' : pendingSelected ? 'Пациент ожидает расчёта после процедуры — это не долг. Сохраните с оплатой сейчас 0 ₽ и переходите к следующему пациенту. Когда он оплатит, откройте журнал или его карточку и нажмите «Принять оплату».' : 'Индивидуальную стоимость можно сохранить и без оплаты. Укажите сумму для пациента и причину изменения. Если деньги не получены, оставьте «Оплачено сейчас» равным 0: вся стоимость сохранится в долг.';
-  $(prefix + 'PaymentV5').querySelector('h2').textContent = 'Стоимость и оплата';
+  $(prefix + 'PaymentV5').querySelector('h2').textContent = s.edit && s.previous > 0 ? 'Новая оплата' : 'Стоимость и оплата';
   $(prefix + 'PayConfirmed').nextElementSibling.textContent = pendingSelected ? 'Подтверждаю стоимость. Пациент ожидает расчёта после процедуры' : 'Подтверждаю стоимость, оплату и остаток долга';
   const kind = prefix === 'proc' ? 'procedure' : 'sale';
   const saveButton = document.querySelector('#' + kind + ' button[onclick="' + (prefix === 'proc' ? 'saveProcedure()' : 'saveSale()') + '"]');
@@ -690,6 +692,7 @@
   if (forms[prefix]?.correctionSavingV22) { message('homeMessage','Исправление оплаты ещё сохраняется. Дождитесь ответа перед открытием новой записи.'); return false; }
   if (forms[prefix]?.retry) { show(kind); lockRetryForm(prefix); message(kind + 'Message','Предыдущее сохранение ещё не подтверждено. Нажмите «Повторить сохранение» — отправим первоначальные данные без дубля.'); return false; }
   forms[prefix] = {chargeEdited:false,previous:0,edit:null,medicationPrices:new Map(),servicePrices:new Map()};
+  $(prefix + 'ExistingPaymentV51')?.remove();
   install(prefix);
   resetVisitTime(prefix,null,patientId);
   if (prefix === 'proc') { $('procAdditionalServicesV10').innerHTML = ''; $('procOwnMedsV10').innerHTML = ''; }
@@ -865,6 +868,7 @@
    $(prefix + 'PaymentStatusV10').value = num(record.debt_total) > 0 ? (record.payment_pending ? 'pending' : 'debt') : num(record.charge_total ?? record.paid_total) === 0 ? 'free' : 'paid'; $(prefix + 'ReceivedV10').value = '0.00';
    $(kind).querySelector('h1').textContent = kind === 'procedure' ? 'Редактирование процедуры' : 'Редактирование продажи'; show(kind); calculate(prefix,false); renderAccountingModeV5();
    installEditPaymentShiftV49(prefix);
+   if (typeof global.renderExistingPaymentToolsV51 === 'function') global.renderExistingPaymentToolsV51(prefix,record);
    message(kind + 'Message',pendingUnpaidRecord(record) ? 'Добавьте или измените процедуру и препараты. До оплаты можно сохранять изменения без комментария. При изменении стоимости укажите её причину.' : 'Сохранённые цены и полученная оплата сохранены. Добавьте нужную процедуру или препарат. Укажите причину изменения.');
    if (prefix === 'proc' && typeof global.loadProcedureTemplatesV5 === 'function') await global.loadProcedureTemplatesV5();
   } catch (error) { if (actorKey() === actor) message('patientCardMessageV5',error.message); }
@@ -876,7 +880,8 @@
   const kind = event.kind === 'sale' ? 'sale' : 'procedure',remaining = financeEventAmountsV5(event).debt,patientId = event.patient_id || (kind === 'procedure' && !fromJournal ? currentPatientId : null);
   const edit = event.editable ? `<button type="button" class="btn secondary" onclick="editTreatmentV10('${esc(kind)}','${esc(event.id)}')">Редактировать</button>` : '';
   const pay = remaining > 0 && (patientId || kind === 'sale') ? `<button type="button" class="btn primary" onclick="${fromJournal ? 'openJournalPaymentV14' : 'openSavedPaymentV14'}('${esc(kind)}','${esc(event.id)}',${remaining},'${esc(patientId || '')}',${event.payment_pending === true})">${event.payment_pending ? 'Принять оплату' : 'Принять оплату долга'}</button>` : '';
-  return edit || pay ? `<div class="treatment-actions-v14">${edit}${pay}</div>` : '';
+  const tools = typeof global.financialActionsHtmlV51 === 'function' ? global.financialActionsHtmlV51(event) : '';
+  return edit || pay || tools ? `<div class="treatment-actions-v14">${edit}${pay}${tools}</div>` : '';
  };
  global.loadPatientClinicalV10 = async function(id = currentPatientId) {
   const actor = actorKey(), version = ++patientView;
@@ -1134,4 +1139,13 @@
  const signOutBase = signOut;
  signOut = async function() { session++; patientView++; editorView++; repeatView++; repeatPreparationV33 = null; $('procedure').inert = false; $('procedure').removeAttribute('aria-busy'); debtView++; debtHistoryView++; forms.proc = null; forms.sale = null; requests.clear(); ambiguousRequests16.clear(); pendingPayments16.clear(); debtPurposes29.clear(); for (const id of ['patientClinicalV10','debtPaymentV10','debtsV10','debtHistoryV29Screen']) if ($(id)) { $(id).innerHTML = ''; delete $(id).dataset.patientId; } await signOutBase(); };
  global.getClinicalStockRecordV28 = prefix => forms[prefix]?.edit || null;
+ global.CrmClinicalFinancialContextV51 = Object.freeze({
+  actor:actorKey,capture:editReturnContextV46,restore:returnToEditedShiftV46,
+  leaveEditor(prefix) {
+   const s = state(prefix);
+   if (!s?.edit || clinicalBusy || s.correctionSavingV22 || s.retry) { message(prefix === 'proc' ? 'procedureMessage' : 'saleMessage','Дождитесь подтверждения сохранения записи перед исправлением оплаты.'); return null; }
+   if (!global.confirm('Открыть исправление сохранённой оплаты? Несохранённые изменения процедуры не будут перенесены.')) return null;
+   return {prefix,kind:prefix === 'proc' ? 'procedure' : 'sale',id:s.edit.id,patient_id:s.edit.patient_id,returnTo:s.editReturnV46 || null};
+  }
+ });
 })(typeof window === 'object' ? window : globalThis);
