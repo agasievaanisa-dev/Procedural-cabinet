@@ -112,7 +112,8 @@ end $$;
 reset role;
 select pg_temp.v52c_actor('admin');
 -- Snapshot exact money and preserved bill/details before canceling a CLOSED
--- shift. An immutable cash count must become stale, not be rewritten.
+-- shift. Cash counts remain immutable. Before v53 the mixed account becomes
+-- stale; with separate sales, cancellation must leave procedure cash current.
 select set_config('test.v52c.money_before',(select jsonb_build_object('allocations',
  (select jsonb_agg(to_jsonb(a) order by a.id) from private.crm_payment_allocations a join public.sales p on p.id=a.sale_id where p.shift_id=current_setting('test.v52c.shift')::uuid),
  'receipts',(select jsonb_agg(to_jsonb(r) order by r.id) from private.crm_receipts_v10 r where r.shift_id=current_setting('test.v52c.shift')::uuid))::text),true);
@@ -123,9 +124,11 @@ set local role authenticated;
 do $$declare a jsonb;answer_n jsonb;req uuid:=gen_random_uuid();failed_n boolean;
 begin
  a:=public.crm_cash_reconciliation_v37('status',jsonb_build_object('shift_id',current_setting('test.v52c.shift')));
- perform public.crm_cash_reconciliation_v37('save',jsonb_build_object('shift_id',current_setting('test.v52c.shift'),
-  'expected_token',a->'reconciliation_v37'->>'token','counted_cash',35,'salary_confirmed',false,
+ a:=public.crm_cash_reconciliation_v37('save',jsonb_build_object('shift_id',current_setting('test.v52c.shift'),
+  'expected_token',a->'reconciliation_v37'->>'token','counted_cash',case when a->'sales_separate'='true'::jsonb then 0 else 35 end,'salary_confirmed',false,
   'opening_amount',0,'reason','TEST unchanged money before duplicate deletion v52'),gen_random_uuid());
+ perform set_config('test.v52c.cash_count_before',(a->'reconciliation_v37'->'count')::text,true);
+ perform set_config('test.v52c.cash_token_before',a->'reconciliation_v37'->>'token',true);
  perform public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.v52c.shift')));
  answer_n:=public.crm_sale_cancel_v52(current_setting('test.v52c.cancel_payload')::jsonb,req);
  perform pg_temp.v52c_assert(answer_n=public.crm_sale_cancel_v52(current_setting('test.v52c.cancel_payload')::jsonb,req),
@@ -156,11 +159,31 @@ do $$declare a jsonb;b jsonb;money_n jsonb;rejected_n boolean:=false;
 begin
  a:=private.crm_build_shift_report_v5(current_setting('test.v52c.shift')::uuid);b:=current_setting('test.v52c.report_before')::jsonb;
  perform pg_temp.v52c_assert((a->>'sales_count')::integer=(b->>'sales_count')::integer-1
-  and(a->>'patients_count')::integer=(b->>'patients_count')::integer
-  and(a->>'charge_total')::numeric=(b->>'charge_total')::numeric-200,'Shift patients/sales/charge still include duplicate');
+  and(a->>'patients_count')::integer=(b->>'patients_count')::integer,'Shift patients/sales still include duplicate');
+ if a->'sales_separate'='true'::jsonb then
+  perform pg_temp.v52c_assert(a->'charge_total'=b->'charge_total'
+   and(a->'sales_summary'->>'sales_count')::integer=(b->'sales_summary'->>'sales_count')::integer-1
+   and(a->'sales_summary'->>'charge_total')::numeric=(b->'sales_summary'->>'charge_total')::numeric-200
+   and(a->'sales_summary'->>'pending_total')::numeric=(b->'sales_summary'->>'pending_total')::numeric-200,
+   'Canceled sale remained in its separate charge/pending account or changed procedure charges');
+  perform pg_temp.v52c_assert(a->'sales_summary'->'revenue'=b->'sales_summary'->'revenue',
+   'Unpaid sale cancellation changed separate sale receipts');
+ else
+  perform pg_temp.v52c_assert((a->>'charge_total')::numeric=(b->>'charge_total')::numeric-200,
+   'Shift charge still includes duplicate');
+ end if;
  perform pg_temp.v52c_assert(a->'revenue'=b->'revenue','Unpaid anonymous sale cancellation changed received money');
- perform pg_temp.v52c_assert((a->'cash_drawer'->>'received_cash')::numeric=35
-  and(a->'cash_drawer'->'reconciliation_v37'->>'stale')::boolean,'Cash changed or old cash count was not marked stale');
+ perform pg_temp.v52c_assert(a->'cash_drawer'->'reconciliation_v37'->'count'=current_setting('test.v52c.cash_count_before')::jsonb,
+  'Cancellation rewrote the saved cash count');
+ if a->'sales_separate'='true'::jsonb then
+  perform pg_temp.v52c_assert((a->'cash_drawer'->>'received_cash')::numeric=0
+   and(a->'cash_drawer'->'reconciliation_v37'->>'stale')::boolean=false
+   and a->'cash_drawer'->'reconciliation_v37'->>'token'=current_setting('test.v52c.cash_token_before'),
+   'Separate sale cancellation changed procedure cash or invalidated its cash count');
+ else
+  perform pg_temp.v52c_assert((a->'cash_drawer'->>'received_cash')::numeric=35
+   and(a->'cash_drawer'->'reconciliation_v37'->>'stale')::boolean,'Cash changed or old cash count was not marked stale');
+ end if;
  perform pg_temp.v52c_assert(not exists(select 1 from jsonb_array_elements((select report->'sales' from private.crm_shift_reports where shift_id=current_setting('test.v52c.shift')::uuid)) x where x->>'id'=current_setting('test.v52c.duplicate')),'Closed cached report retained canceled row');
  perform pg_temp.v52c_assert((select to_jsonb(p) from public.sales p where id=current_setting('test.v52c.duplicate')::uuid)=current_setting('test.v52c.original_bill')::jsonb
   and(select jsonb_agg(to_jsonb(d) order by medication_id) from public.sale_items d where sale_id=current_setting('test.v52c.duplicate')::uuid)=current_setting('test.v52c.original_details')::jsonb,'Cancellation destroyed original bill/details');
@@ -236,4 +259,5 @@ do $$declare denied_n boolean:=false;begin
  perform pg_temp.v52c_assert(denied_n,'Anonymous caller can cancel sale');
 end $$;
 reset role;
+select 'crm_sale_cancel_v52' as passed_suite;
 rollback;

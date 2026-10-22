@@ -127,9 +127,15 @@ do $$declare a jsonb;b jsonb;receipt_n jsonb;sh uuid:=current_setting('test.v51m
   =current_setting('test.v51m.stock_snapshot')::jsonb and(select count(*) from public.stock_movements where medication_id=current_setting('test.v51m.med')::uuid)
   =current_setting('test.v51m.movements')::integer,'Method correction moved stock');
  a:=private.crm_build_shift_report_v5(sh);b:=(select report from private.crm_shift_reports where shift_id=sh);
- perform pg_temp.v51m_assert((a->'revenue'->>'cash')::numeric=100 and(a->'revenue'->>'terminal')::numeric=1200
-  and(a->'revenue'->>'owner_card')::numeric=1300 and(a->'revenue'->>'other_card')::numeric=400 and(a->'revenue'->>'total')::numeric=3000,'Shift method totals wrong after correction');
+ perform pg_temp.v51m_assert(a->'sales_separate'='true'::jsonb and a->>'revenue_scope'='procedures','Shift sales separation marker missing');
+ perform pg_temp.v51m_assert((a->'revenue'->>'cash')::numeric=0 and(a->'revenue'->>'terminal')::numeric=1000
+  and(a->'revenue'->>'owner_card')::numeric=1000 and(a->'revenue'->>'other_card')::numeric=0 and(a->'revenue'->>'total')::numeric=2000,'Procedure shift method totals wrong after correction');
+ perform pg_temp.v51m_assert((a->'sales_summary'->'revenue'->>'cash')::numeric=100 and(a->'sales_summary'->'revenue'->>'terminal')::numeric=200
+  and(a->'sales_summary'->'revenue'->>'owner_card')::numeric=300 and(a->'sales_summary'->'revenue'->>'other_card')::numeric=400
+  and(a->'sales_summary'->'revenue'->>'total')::numeric=1000,'Separate sale method totals wrong after correction');
+ perform pg_temp.v51m_assert((a->'cash_drawer'->>'received_cash')::numeric=0,'Sale cash entered procedure shift cash after correction');
  perform pg_temp.v51m_assert(b->'revenue'=a->'revenue','Closed monetary report cache not refreshed');
+ perform pg_temp.v51m_assert(b->'sales_summary'=a->'sales_summary','Closed separate-sales report cache not refreshed');
  perform pg_temp.v51m_assert((select count(*) from private.crm_receipts_v10 where procedure_id in(current_setting('test.v51m.waiting')::uuid,current_setting('test.v51m.loan')::uuid))=2,'A new receipt was fabricated');
  perform pg_temp.v51m_assert((select count(*) from private.crm_audit_log where action='payment_method_corrected_v51'
   and entity_id in(current_setting('test.v51m.cash'),current_setting('test.v51m.sale'),current_setting('test.v51m.waiting')))=3,'Correction/retry audit count wrong');
@@ -180,4 +186,5 @@ do $$begin
   and not has_function_privilege('anon','public.crm_payment_methods_v51(text,jsonb,uuid)','execute'),'Private ACL boundary changed');
  perform pg_temp.v51m_assert(not(select prosecdef from pg_proc where oid='private.crm_payment_methods_snapshot_v51(text,uuid)'::regprocedure),'Snapshot helper gained definer rights');
 end $$;
+select 'crm_payment_method_edit_v51' as passed_suite;
 rollback;

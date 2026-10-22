@@ -63,11 +63,16 @@
    ...(Array.isArray(report.procedures)?report.procedures:[]).map(event=>({...event,kind:'procedure',journalShift:report.shift||{}})),
    ...(Array.isArray(report.sales)?report.sales:[]).map(event=>({...event,kind:'sale',journalShift:report.shift||{}}))
   ]).sort(chronology);
-  const entries=events.map((event,index)=>{
+  const separate=reports.every(report=>report.sales_separate===true||report.revenue_scope==='procedures');
+  const procedureEvents=separate?events.filter(event=>event.kind==='procedure'):events;
+  const saleEvents=separate?events.filter(event=>event.kind==='sale'):[];
+  const entriesFor=list=>list.map((event,index)=>{
    const label=event.kind==='sale'?'Продажа препарата':event.type||event.procedure_type||event.service_name||'Процедура';
    return '<li class="journal-event-v12" data-event-id="'+esc(event.id||'')+'" data-event-kind="'+esc(event.kind)+'" data-shift-id="'+esc(event.journalShift.id||'')+'"><div class="journal-event-heading-v12"><span class="journal-event-number-v12" aria-hidden="true">'+(index+1)+'.</span><div><h3>'+esc(event.patient||'Без пациента')+'</h3><p class="journal-event-time-v12">'+esc(financeDateTimeV5(event.at))+' · Москва</p></div></div><p class="journal-event-kind-v12"><b>'+esc(label)+'</b>'+(event.nurse?' · Медсестра: '+esc(event.nurse):'')+'</p>'+(reports.length>1?'<p class="small">Смена '+esc(shiftTime(event.journalShift))+'</p>':'')+financeEventDetailsHtmlV5(event)+payment(event)+(event.notes?'<p>Комментарий: '+esc(event.notes)+'</p>':'')+(typeof treatmentActionsHtmlV14==='function'?treatmentActionsHtmlV14(event,true):'')+'</li>';
   }).join('');
-  $('journalBodyV12').innerHTML=shifts+'<h2>Пациенты по времени</h2><p class="small">Записей: '+events.length+'.</p>'+(entries?'<ol class="journal-events-v12">'+entries+'</ol>':'<div class="card">В этих сменах процедуры и продажи пока не записаны.</div>');
+  const entries=entriesFor(procedureEvents),sales=entriesFor(saleEvents);
+  const separateSales=separate?'<section class="journal-sales-v53"><h2>Отдельные продажи препаратов</h2><p class="small">Не входят в сумму и наличную кассу смены.</p>'+reports.map(report=>typeof financeSalesSummaryHtmlV53==='function'?financeSalesSummaryHtmlV53(report,true):'').join('')+'<p class="small">Продаж: '+saleEvents.length+'.</p>'+(sales?'<ol class="journal-events-v12" data-journal-sales>'+sales+'</ol>':'<div class="card">Продаж нет.</div>')+'</section>':'';
+  $('journalBodyV12').innerHTML=shifts+'<h2>Пациенты по времени</h2><p class="small">Записей: '+procedureEvents.length+'.</p>'+(entries?'<ol class="journal-events-v12"'+(separate?' data-journal-procedures':'')+'>'+entries+'</ol>':'<div class="card">'+(separate?'Процедур пока нет.':'В этих сменах процедуры и продажи пока не записаны.')+'</div>')+separateSales;
  }
  global.refreshShiftJournalV12=async function(){
   if(!nurse()||!screen()?.classList.contains('active'))return false;
