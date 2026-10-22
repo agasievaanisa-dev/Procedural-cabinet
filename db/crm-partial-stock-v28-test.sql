@@ -366,6 +366,13 @@ select set_config('request.jwt.claims',jsonb_build_object('sub',current_setting(
 -- must refresh without rewriting received money or those frozen snapshots.
 set local role authenticated;
 do $$declare a jsonb;p jsonb;before_n jsonb;after_n jsonb;req uuid:=gen_random_uuid();begin
+ -- The current application requires a real reconciliation before closing.
+ -- This synthetic drawer starts empty; no salary payout is fabricated.
+ a:=public.crm_cash_reconciliation_v37('status',jsonb_build_object('shift_id',current_setting('test.v28.shift')));
+ perform public.crm_cash_reconciliation_v37('save',jsonb_build_object('shift_id',current_setting('test.v28.shift'),
+  'expected_token',a->'reconciliation_v37'->>'token','opening_amount',0,
+  'counted_cash',(a->>'received_cash')::numeric+(a->>'cash_in')::numeric-(a->>'salary_paid')::numeric-(a->>'cash_out')::numeric,
+  'salary_confirmed',false,'reason','TEST v28 fixture adapted for mandatory v37 reconciliation'),gen_random_uuid());
  a:=public.crm_finance_v5('close',jsonb_build_object('shift_id',current_setting('test.v28.shift')));
  before_n:=jsonb_build_object('stock',a->'stock','staff',a->'staff','payroll_total',a->'payroll_total',
   'payroll_complete',a->'payroll_complete','payroll_closed',a->'payroll_closed','payroll_open',a->'payroll_open',

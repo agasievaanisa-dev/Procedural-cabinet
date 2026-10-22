@@ -13,20 +13,21 @@
  const methods=value=>[...channels,'unclassified'].filter(key=>money(value?.[key]??0)>0).map(key=>labels[key]+': '+rub(Number(value[key]))).join(' · ')||'Нет полученной оплаты';
  const date=value=>{const at=new Date(value);return Number.isFinite(+at)?at.toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):'Дата не указана'};
  const keyFor=(mode,kind,id)=>JSON.stringify([actor(),mode,kind,id]);
+ const cancelLabel=view=>view.kind==='sale'?'Удалить ошибочную продажу':'Удалить ошибочную процедуру';
  function current(view){return active===view&&manager()&&view.actor===actor()&&quickNavigationCurrent4(view.navigation,currentStaff?.id)&&$(view.host.id)===view.host&&view.host.classList.contains('active')}
  function actions(event){
   if(!manager()||!event?.id)return '';
   const kind=event.kind==='sale'?'sale':'procedure';
   const paid=Number(event.received_total??event.paid_total??event.paid??0);
   return (paid>0?`<button type="button" class="btn secondary no-print" onclick="openPaymentMethodsV51('${esc(kind)}','${esc(event.id)}')">Исправить способ оплаты</button>`:'')
-   +(kind==='procedure'?`<button type="button" class="btn secondary no-print" onclick="openProcedureCancelV51('${esc(event.id)}')">Удалить ошибочную процедуру</button>`:'');
+   +`<button type="button" class="btn secondary no-print" onclick="${kind==='sale'?'openSaleCancelV52':'openProcedureCancelV51'}('${esc(event.id)}')">${kind==='sale'?'Удалить ошибочную продажу':'Удалить ошибочную процедуру'}</button>`;
  }
  global.financialActionsHtmlV51=actions;
  function messageView(view,text,success=false){const box=view.host.querySelector('[data-financial-message]');box.textContent=text;box.className=success?'notice success':'notice';}
  function lock(view,busy){
   view.busy=busy;
   view.host.querySelectorAll('input,select,textarea,button').forEach(node=>{node.disabled=busy||!!view.retry});
-  const save=view.host.querySelector('[data-financial-save]');if(save){save.disabled=busy;save.textContent=view.retry?'Повторить первоначальное сохранение':view.mode==='methods'?'Сохранить способ оплаты':'Удалить ошибочную процедуру';}
+  const save=view.host.querySelector('[data-financial-save]');if(save){save.disabled=busy;save.textContent=view.retry?'Повторить первоначальное сохранение':view.mode==='methods'?'Сохранить способ оплаты':cancelLabel(view);}
  }
  function restoreRetry(view){
   const p=view.retry.payload,body=view.host.querySelector('[data-financial-body]');
@@ -61,7 +62,7 @@
   const target=editor?.returnTo||context().capture(),navigation=beginQuickNavigation4();
   let host=$('financialToolsV51');if(!host){host=document.createElement('section');host.id='financialToolsV51';host.className='screen financial-tools-v51';$('workspace').parentElement.appendChild(host)}
   const view={mode,kind,id,editor,target,actor:actor(),navigation,host,serial:++serial,busy:false,key:keyFor(mode,kind,id)};active=view;
-  host.innerHTML=`<div class="row between"><h1>${mode==='methods'?'Исправить способ оплаты':'Удалить ошибочную процедуру'}</h1><button type="button" class="btn secondary" data-financial-back>Назад</button></div><div data-financial-message role="status" aria-live="polite">Загружаем сохранённую запись…</div><div data-financial-body></div>`;
+  host.innerHTML=`<div class="row between"><h1>${mode==='methods'?'Исправить способ оплаты':cancelLabel(view)}</h1><button type="button" class="btn secondary" data-financial-back>Назад</button></div><div data-financial-message role="status" aria-live="polite">Загружаем сохранённую запись…</div><div data-financial-body></div>`;
   host.querySelector('[data-financial-back]').onclick=()=>back(view);show(host.id);return view;
  }
  function metadata(record){return `<p><strong>${esc(record.patient||'Продажа без пациента')}</strong></p><p class="small">${esc(date(record.visit_at||record.at||record.sold_at))}</p>`}
@@ -93,11 +94,16 @@
  }
  function renderCancel(view){
   const record=view.data,body=view.host.querySelector('[data-financial-body]');view.patientId=record.patient_id;
-  const paid=money(record.received_total??record.paid_total??0);
+  const paid=money(record.received_total??record.paid_total??0),sale=view.kind==='sale';
   body.innerHTML=metadata(record)+`<p>Стоимость: <strong>${esc(rub(Number(record.charge_total??0)))}</strong>. Получено: <strong>${esc(rub(paid/100))}</strong>.</p>`;
-  if(paid>0){messageView(view,'По записи уже есть оплата. Удаление заблокировано. Если деньги фактически не получены, сначала отдельно исправьте ошибочно отмеченную оплату в редакторе. Если деньги получены, удаление и возврат этим действием не проводятся.');const edit=document.createElement('button');edit.type='button';edit.className='btn secondary';edit.textContent='Открыть запись для проверки оплаты';edit.onclick=()=>{if(current(view))return global.editTreatmentV10('procedure',view.id,view.target)};body.appendChild(edit);return}
-  body.insertAdjacentHTML('beforeend','<div class="card"><p>Удаление уберёт ошибочный дубль из журнала, отчётов и суммы к оплате. История отмены сохранится; учтённые препараты вернутся в исходные партии.</p><label>Причина удаления *<textarea data-financial-reason maxlength="1000"></textarea></label><label class="check"><input type="checkbox" data-financial-confirm><span>Подтверждаю: это ошибочно сохранённая или повторная процедура</span></label><button type="button" class="btn primary wide" data-financial-save>Удалить ошибочную процедуру</button></div>');
-  body.querySelector('[data-financial-reason]').oninput=()=>{body.querySelector('[data-financial-confirm]').checked=false};body.querySelector('[data-financial-save]').onclick=()=>save(view);messageView(view,'Проверьте пациента, дату и сумму перед удалением.');
+  if(sale){
+   const items=record.items||record.medications||[];
+   if(items.length)body.insertAdjacentHTML('beforeend',`<ul>${items.map(item=>`<li>${esc(item.name||'Препарат')} × ${esc(String(item.quantity??''))} ${esc(item.unit||'')}</li>`).join('')}</ul>`);
+   if(paid>0)body.insertAdjacentHTML('beforeend',`<p>Записанный способ оплаты: <strong>${esc(methods(record.payments))}</strong>.</p>`);
+  }
+  if(paid>0){messageView(view,'По записи уже есть оплата. Удаление заблокировано. Если деньги фактически не получены, сначала отдельно исправьте ошибочно отмеченную оплату в редакторе. Если деньги получены, удаление и возврат этим действием не проводятся.');const edit=document.createElement('button');edit.type='button';edit.className='btn secondary';edit.textContent='Открыть запись для проверки оплаты';edit.onclick=()=>{if(current(view))return global.editTreatmentV10(view.kind,view.id,view.target)};body.appendChild(edit);return}
+  body.insertAdjacentHTML('beforeend',`<div class="card"><p>Удаление уберёт ошибочный дубль из журнала, отчётов и суммы к оплате. История отмены сохранится; фактически списанные препараты вернутся в исходные партии.</p><label>Причина удаления *<textarea data-financial-reason maxlength="1000"></textarea></label><label class="check"><input type="checkbox" data-financial-confirm><span>Подтверждаю: это ошибочно сохранённая или повторная ${sale?'продажа':'процедура'}</span></label><button type="button" class="btn primary wide" data-financial-save>${cancelLabel(view)}</button></div>`);
+  body.querySelector('[data-financial-reason]').oninput=()=>{body.querySelector('[data-financial-confirm]').checked=false};body.querySelector('[data-financial-save]').onclick=()=>save(view);messageView(view,sale?'Проверьте препараты, дату и сумму перед удалением.':'Проверьте пациента, дату и сумму перед удалением.');
  }
  function payload(view){
   const body=view.host.querySelector('[data-financial-body]'),reason=body.querySelector('[data-financial-reason]').value.trim();
@@ -118,13 +124,14 @@
   try{
    if(!snapshot)snapshot={payload:payload(view),requestId:crypto.randomUUID()};
    lock(view,true);
-   const result=await request(view.mode==='methods'?'crm_payment_methods_v51':'crm_procedure_cancel_v51',view.mode==='methods'?{p_action:'save',p_payload:snapshot.payload,p_request_id:snapshot.requestId}:{p_payload:snapshot.payload,p_request_id:snapshot.requestId},true);
-   if(!result?.id)throw financeSaveErrorV16({message:'Не удалось подтвердить результат сохранения',uncertain:true});
+   const rpc=view.mode==='methods'?'crm_payment_methods_v51':view.kind==='sale'?'crm_sale_cancel_v52':'crm_procedure_cancel_v51';
+   const result=await request(rpc,view.mode==='methods'?{p_action:'save',p_payload:snapshot.payload,p_request_id:snapshot.requestId}:{p_payload:snapshot.payload,p_request_id:snapshot.requestId},true);
+   if(!result?.id||view.mode==='cancel'&&(result.id!==view.id||result.kind!==view.kind||result.cancelled!==true||view.kind==='sale'&&result.request_id!==snapshot.requestId))throw financeSaveErrorV16({message:'Не удалось подтвердить результат сохранения',uncertain:true});
    committed=true;pending.delete(view.key);view.retry=null;
    if(!current(view))return;
    view.host.querySelector('[data-financial-body]').replaceChildren();
    messageView(view,'Изменение сохранено. Обновляем исходную страницу…',true);
-   await finish(view,view.mode==='methods'?'Способ оплаты исправлен. Сумма полученных денег не изменилась.':'Ошибочная процедура удалена.');
+   await finish(view,view.mode==='methods'?'Способ оплаты исправлен. Сумма полученных денег не изменилась.':view.kind==='sale'?'Ошибочная продажа удалена.':'Ошибочная процедура удалена.');
   }catch(error){
    if(view.actor!==actor()||!manager())return;
    if(!committed&&snapshot&&(view.retry||financeRetryableErrorV16(error,error.status))){view.retry=snapshot;pending.set(view.key,{snapshot,data:view.data});}
@@ -135,7 +142,7 @@
   }finally{view.busy=false;if(current(view))lock(view,false)}
  }
  async function open(mode,kind,id,editor=null){
-  if(!manager()){message('homeMessage','Исправление оплаты и удаление ошибочных процедур доступны только администратору и владельцу.');return}
+  if(!manager()){message('homeMessage','Исправление оплаты и удаление ошибочных процедур и продаж доступны только администратору и владельцу.');return}
   if(!['procedure','sale'].includes(kind)||!id)return;
   if(active?.busy){messageView(active,'Дождитесь ответа на сохранение.');return}
   const existing=pending.get(keyFor(mode,kind,id)),view=shell(mode,kind,id,editor);
@@ -153,6 +160,7 @@
  }
  global.openPaymentMethodsV51=(kind,id)=>open('methods',kind,id);
  global.openProcedureCancelV51=id=>open('cancel','procedure',id);
+ global.openSaleCancelV52=id=>open('cancel','sale',id);
  global.renderExistingPaymentToolsV51=function(prefix,record){
   $(prefix+'ExistingPaymentV51')?.remove();if(!record?.id||money(record.received_total??record.paid_total??0)<=0)return;
   const host=document.createElement('div');host.id=prefix+'ExistingPaymentV51';host.className='existing-payment-v51';
