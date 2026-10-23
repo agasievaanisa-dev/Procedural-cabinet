@@ -14,12 +14,13 @@
  const date=value=>{const at=new Date(value);return Number.isFinite(+at)?at.toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}):'Дата не указана'};
  const keyFor=(mode,kind,id)=>JSON.stringify([actor(),mode,kind,id]);
  const cancelLabel=view=>view.kind==='sale'?'Удалить ошибочную продажу':'Удалить ошибочную процедуру';
+ const saveLabel=view=>view.mode==='methods'?'Сохранить способ оплаты':view.mode==='amount'?'Сохранить исправленную оплату':cancelLabel(view);
  function current(view){return active===view&&manager()&&view.actor===actor()&&quickNavigationCurrent4(view.navigation,currentStaff?.id)&&$(view.host.id)===view.host&&view.host.classList.contains('active')}
  function actions(event){
   if(!manager()||!event?.id)return '';
   const kind=event.kind==='sale'?'sale':'procedure';
   const paid=Number(event.received_total??event.paid_total??event.paid??0);
-  return (paid>0?`<button type="button" class="btn secondary no-print" onclick="openPaymentMethodsV51('${esc(kind)}','${esc(event.id)}')">Исправить способ оплаты</button>`:'')
+  return (paid>0?`<button type="button" class="btn secondary no-print" onclick="openPaymentMethodsV51('${esc(kind)}','${esc(event.id)}')">Исправить способ оплаты</button><button type="button" class="btn secondary no-print" onclick="openPaymentAmountV54('${esc(kind)}','${esc(event.id)}')">Исправить сумму оплаты</button>`:'')
    +`<button type="button" class="btn secondary no-print" onclick="${kind==='sale'?'openSaleCancelV52':'openProcedureCancelV51'}('${esc(event.id)}')">${kind==='sale'?'Удалить ошибочную продажу':'Удалить ошибочную процедуру'}</button>`;
  }
  global.financialActionsHtmlV51=actions;
@@ -27,16 +28,22 @@
  function lock(view,busy){
   view.busy=busy;
   view.host.querySelectorAll('input,select,textarea,button').forEach(node=>{node.disabled=busy||!!view.retry});
-  const save=view.host.querySelector('[data-financial-save]');if(save){save.disabled=busy;save.textContent=view.retry?'Повторить первоначальное сохранение':view.mode==='methods'?'Сохранить способ оплаты':cancelLabel(view);}
+  const save=view.host.querySelector('[data-financial-save]');if(save){save.disabled=busy;save.textContent=view.retry?'Повторить первоначальное сохранение':saveLabel(view);}
  }
  function restoreRetry(view){
   const p=view.retry.payload,body=view.host.querySelector('[data-financial-body]');
-  if(view.mode==='methods'){
+  if(view.mode==='methods'||view.mode==='amount'){
    body.querySelector('[data-financial-event]').value=String(p.event_id);
    const positive=channels.filter(key=>Number(p.payments[key])>0);
    body.querySelector('[data-financial-method]').value=positive.length>1?'mixed':positive[0]||'';
    channels.forEach(key=>{body.querySelector('[data-channel="'+key+'"]').value=String(p.payments[key]||0)});
-   refreshMethods(view);body.querySelector('[data-financial-tender]').value=String(p.payments.cash_received||0);
+   if(view.mode==='amount'){
+    body.querySelector('[data-financial-amount]').value=rubles(channels.reduce((sum,key)=>sum+money(p.payments[key]??0),0));
+    body.querySelector('[data-financial-charge]').value=String(p.charge_total??view.data.treatment?.charge_total??0);
+    body.querySelector('[data-financial-remaining-status]').value=p.remaining_status||'pending';
+    view.tenderEdited=true;refreshAmount(view);
+   }else refreshMethods(view);
+   body.querySelector('[data-financial-tender]').value=String(p.payments.cash_received||0);
   }
   body.querySelector('[data-financial-reason]').value=p.reason;body.querySelector('[data-financial-confirm]').checked=true;
  }
@@ -62,7 +69,7 @@
   const target=editor?.returnTo||context().capture(),navigation=beginQuickNavigation4();
   let host=$('financialToolsV51');if(!host){host=document.createElement('section');host.id='financialToolsV51';host.className='screen financial-tools-v51';$('workspace').parentElement.appendChild(host)}
   const view={mode,kind,id,editor,target,actor:actor(),navigation,host,serial:++serial,busy:false,key:keyFor(mode,kind,id)};active=view;
-  host.innerHTML=`<div class="row between"><h1>${mode==='methods'?'Исправить способ оплаты':cancelLabel(view)}</h1><button type="button" class="btn secondary" data-financial-back>Назад</button></div><div data-financial-message role="status" aria-live="polite">Загружаем сохранённую запись…</div><div data-financial-body></div>`;
+  host.innerHTML=`<div class="row between"><h1>${mode==='methods'?'Исправить способ оплаты':mode==='amount'?'Исправить сумму оплаты':cancelLabel(view)}</h1><button type="button" class="btn secondary" data-financial-back>Назад</button></div><div data-financial-message role="status" aria-live="polite">Загружаем сохранённую запись…</div><div data-financial-body></div>`;
   host.querySelector('[data-financial-back]').onclick=()=>back(view);show(host.id);return view;
  }
  function metadata(record){return `<p><strong>${esc(record.patient||'Продажа без пациента')}</strong></p><p class="small">${esc(date(record.visit_at||record.at||record.sold_at))}</p>`}
@@ -92,6 +99,76 @@
   body.querySelector('[data-financial-reason]').oninput=()=>{body.querySelector('[data-financial-confirm]').checked=false};
   body.querySelector('[data-financial-save]').onclick=()=>save(view);refreshMethods(view);messageView(view,'Выберите сохранённую оплату и укажите правильный способ.');
  }
+ function lifetimeReceived(view){
+  const treatment=view.data.treatment||{};
+  return money(treatment.lifetime_received_total??treatment.received_total??treatment.paid_total??((view.data.events||[]).reduce((sum,event)=>sum+Number(event.amount||0),0)+Number(view.data.debt_repayments_total||0)));
+ }
+ function amountModel(view){
+  const body=view.host.querySelector('[data-financial-body]'),event=selectedEvent(view);
+  if(!event)throw Error('Выберите сохранённую оплату');
+  const amount=money(body.querySelector('[data-financial-amount]').value),charge=money(body.querySelector('[data-financial-charge]').value);
+  const method=body.querySelector('[data-financial-method]').value;
+  if(amount>0&&!channels.concat('mixed').includes(method))throw Error('Выберите правильный способ оплаты');
+  const payments=Object.fromEntries(channels.map(key=>[key,method==='mixed'?optional(body.querySelector('[data-channel="'+key+'"]').value):method===key?amount:0]));
+  if(channels.reduce((sum,key)=>sum+payments[key],0)!==amount)throw Error('Распределите ровно '+rub(amount/100)+' между способами оплаты');
+  const received=lifetimeReceived(view)-money(event.amount)+amount;
+  if(received<0)throw Error('Сохранённые суммы не совпадают. Обновите запись перед исправлением');
+  return {event,amount,charge,payments,received,balance:charge-received};
+ }
+ function refreshAmount(view){
+  const body=view.host.querySelector('[data-financial-body]');
+  const event=selectedEvent(view);if(event)body.querySelector('[data-financial-before]').textContent='Было: '+methods(event)+' · '+rub(Number(event.amount));
+  body.querySelector('[data-financial-confirm]').checked=false;
+  const method=body.querySelector('[data-financial-method]').value;
+  body.querySelector('[data-financial-allocation]').classList.toggle('hidden',method!=='mixed');
+  let cash=0;
+  try{cash=method==='cash'?money(body.querySelector('[data-financial-amount]').value):method==='mixed'?optional(body.querySelector('[data-channel="cash"]').value):0}catch{}
+  body.querySelector('[data-financial-tender-box]').classList.toggle('hidden',cash<=0);
+  if(!view.tenderEdited)body.querySelector('[data-financial-tender]').value=rubles(cash);
+  try{
+   const model=amountModel(view),list=money(view.data.treatment?.list_total??view.data.treatment?.charge_total??0);
+   body.querySelector('[data-financial-after-paid]').textContent=rub(model.received/100);
+   body.querySelector('[data-financial-after-charge]').textContent=rub(model.charge/100);
+   body.querySelector('[data-financial-after-balance]').textContent=rub(Math.max(model.balance,0)/100);
+   body.querySelector('[data-financial-discount-label]').textContent=model.charge>list?'Доплата к прайсу':'Скидка';
+   body.querySelector('[data-financial-after-discount]').textContent=rub(Math.abs(list-model.charge)/100);
+   body.querySelector('[data-financial-remaining-box]').classList.toggle('hidden',model.balance<=0);
+   body.querySelector('[data-financial-summary]').textContent=model.balance<0?'Окончательная стоимость меньше всей полученной оплаты. Проверьте сумму и стоимость.':model.amount===0?'По выбранной оплате денег фактически не получали. История исправления сохранится.':channels.filter(key=>model.payments[key]>0).map(key=>labels[key]+': '+rub(model.payments[key]/100)).join(' · ');
+  }catch(error){
+   for(const key of ['paid','charge','balance','discount'])body.querySelector('[data-financial-after-'+key+']').textContent='—';
+   body.querySelector('[data-financial-summary]').textContent=error.message;
+  }
+ }
+ function seedAmountEvent(view){
+  const body=view.host.querySelector('[data-financial-body]'),event=selectedEvent(view);if(!event)return;
+  body.querySelector('[data-financial-before]').textContent='Было: '+methods(event)+' · '+rub(Number(event.amount));
+  body.querySelector('[data-financial-amount]').value=rubles(money(event.amount));
+  const positive=channels.filter(key=>money(event[key]??0)>0);
+  body.querySelector('[data-financial-method]').value=money(event.unclassified??0)>0?'':positive.length>1?'mixed':positive[0]||'';
+  channels.forEach(key=>{body.querySelector('[data-channel="'+key+'"]').value=rubles(money(event[key]??0))});
+  view.tenderEdited=false;refreshAmount(view);
+ }
+ function renderAmount(view){
+  const data=view.data,record=data.treatment||{},body=view.host.querySelector('[data-financial-body]');view.patientId=record.patient_id;
+  body.innerHTML=metadata(record)+'<p>Укажите фактически полученную сумму и способ оплаты. Дата оплаты и её смена сохраняются. Если согласованная стоимость тоже изменилась, исправьте её в отдельном поле.</p>';
+  if(!data.events?.length){messageView(view,'Нет обычной оплаты, которую можно исправить. Погашения настоящего долга учитываются отдельно.');return}
+  body.insertAdjacentHTML('beforeend',`<div class="card"><label>Сохранённая оплата<select data-financial-event>${data.events.map(event=>`<option value="${esc(String(event.id))}">${esc(date(event.created_at))} · ${esc(rub(Number(event.amount)))}</option>`).join('')}</select></label><p class="small" data-financial-before></p><label>Фактически полученная сумма этой оплаты, ₽<input data-financial-amount inputmode="decimal" autocomplete="off"></label><label>Правильный способ оплаты<select data-financial-method><option value="">Выберите способ оплаты</option>${channels.map(key=>`<option value="${key}">${labels[key]}</option>`).join('')}<option value="mixed">Смешанная оплата</option></select></label><div class="grid2 hidden" data-financial-allocation>${channels.map(key=>`<label>${labels[key]}, ₽<input data-channel="${key}" inputmode="decimal" value="0.00" autocomplete="off"></label>`).join('')}</div><label data-financial-tender-box class="hidden">Получено наличными, ₽<input data-financial-tender inputmode="decimal" value="0.00" autocomplete="off"></label><p class="small" data-financial-summary role="status"></p><label>Окончательная стоимость ${view.kind==='sale'?'продажи':'процедуры'}, ₽<input data-financial-charge inputmode="decimal" autocomplete="off" value="${esc(rubles(money(record.charge_total??0)))}"></label><p class="small">Стоимость по прайсу: ${esc(rub(Number(record.list_total??record.charge_total??0)))}. Изменение суммы оплаты само по себе не меняет стоимость.</p><button type="button" class="btn secondary" data-financial-settled>Полный расчёт — стоимость равна оплате</button><div class="financial-preview-v54" aria-live="polite"><p>Окончательная стоимость: <strong data-financial-after-charge></strong></p><p><span data-financial-discount-label>Скидка</span>: <strong data-financial-after-discount></strong></p><p>Всего оплачено после исправления: <strong data-financial-after-paid></strong></p><p>Осталось к оплате: <strong data-financial-after-balance></strong></p></div><label data-financial-remaining-box class="hidden">Если сумма ещё не оплачена<select data-financial-remaining-status><option value="pending">Оплатит после процедуры — ожидание расчёта</option><option value="debt">В долг — пациент ушёл с долгом</option></select></label><label>Причина исправления *<textarea data-financial-reason maxlength="1000"></textarea></label><label class="check"><input type="checkbox" data-financial-confirm><span>Подтверждаю фактическую оплату, окончательную стоимость и остаток к оплате</span></label><button type="button" class="btn primary wide" data-financial-save>Сохранить исправленную оплату</button></div>`);
+  body.querySelector('[data-financial-remaining-status]').value=lifetimeReceived(view)<money(record.charge_total??0)&&!record.payment_pending?'debt':'pending';
+  body.querySelector('[data-financial-event]').onchange=()=>seedAmountEvent(view);
+  for(const selector of ['[data-financial-amount]','[data-financial-charge]','[data-channel]'])body.querySelectorAll(selector).forEach(input=>{input.oninput=()=>refreshAmount(view)});
+  body.querySelector('[data-financial-method]').onchange=()=>{view.tenderEdited=false;refreshAmount(view)};
+  body.querySelector('[data-financial-tender]').oninput=()=>{view.tenderEdited=true;body.querySelector('[data-financial-confirm]').checked=false};
+  for(const selector of ['[data-financial-reason]','[data-financial-remaining-status]'])body.querySelector(selector).oninput=()=>{body.querySelector('[data-financial-confirm]').checked=false};
+  body.querySelector('[data-financial-settled]').onclick=()=>{
+   try{
+    const event=selectedEvent(view),received=lifetimeReceived(view)-money(event.amount)+money(body.querySelector('[data-financial-amount]').value);
+    if(received<0)throw Error('Обновите сохранённую оплату');
+    body.querySelector('[data-financial-charge]').value=rubles(received);refreshAmount(view);
+   }catch(error){messageView(view,error.message)}
+  };
+  body.querySelector('[data-financial-save]').onclick=()=>save(view);seedAmountEvent(view);
+  messageView(view,'Проверьте фактическую сумму, способ оплаты и окончательную стоимость. Для полного расчёта остаток должен быть 0 ₽.');
+ }
  function renderCancel(view){
   const record=view.data,body=view.host.querySelector('[data-financial-body]');view.patientId=record.patient_id;
   const paid=money(record.received_total??record.paid_total??0),sale=view.kind==='sale';
@@ -110,6 +187,19 @@
   if(!reason)throw Error('Укажите причину исправления');
   if(!body.querySelector('[data-financial-confirm]').checked)throw Error('Проверьте данные и отметьте подтверждение');
   if(view.mode==='cancel')return {id:view.id,expected_version:view.data.version,expected_received_total:Number(view.data.received_total??view.data.paid_total??0),reason,confirmed_duplicate:true};
+  if(view.mode==='amount'){
+   const model=amountModel(view);
+   if(model.balance<0)throw Error('Окончательная стоимость не может быть меньше всей полученной оплаты');
+   const cashReceived=model.payments.cash>0?optional(body.querySelector('[data-financial-tender]').value):0;
+   if(cashReceived<model.payments.cash)throw Error('Получено наличными меньше наличной части оплаты');
+   const result={kind:view.kind,id:view.id,event_type:model.event.event_type,event_id:model.event.id,expected_version:view.data.version,expected_payments:expected(model.event),payments:{...Object.fromEntries(channels.map(key=>[key,model.payments[key]/100])),cash_received:cashReceived/100},charge_total:model.charge/100,reason,confirmed:true};
+   if(model.balance>0){
+    const status=body.querySelector('[data-financial-remaining-status]').value;
+    if(!['pending','debt'].includes(status))throw Error('Выберите ожидание оплаты или настоящий долг');
+    result.remaining_status=status;
+   }
+   return result;
+  }
   const event=selectedEvent(view),method=body.querySelector('[data-financial-method]').value;
   if(!event||!channels.concat('mixed').includes(method))throw Error('Выберите правильный способ оплаты');
   const payments=Object.fromEntries(channels.map(key=>[key,(method==='mixed'?optional(body.querySelector('[data-channel="'+key+'"]').value):method===key?money(event.amount):0)/100]));
@@ -124,14 +214,15 @@
   try{
    if(!snapshot)snapshot={payload:payload(view),requestId:crypto.randomUUID()};
    lock(view,true);
-   const rpc=view.mode==='methods'?'crm_payment_methods_v51':view.kind==='sale'?'crm_sale_cancel_v52':'crm_procedure_cancel_v51';
-   const result=await request(rpc,view.mode==='methods'?{p_action:'save',p_payload:snapshot.payload,p_request_id:snapshot.requestId}:{p_payload:snapshot.payload,p_request_id:snapshot.requestId},true);
+   const rpc=view.mode==='methods'?'crm_payment_methods_v51':view.mode==='amount'?'crm_payment_amount_v54':view.kind==='sale'?'crm_sale_cancel_v52':'crm_procedure_cancel_v51';
+   const result=await request(rpc,view.mode==='methods'||view.mode==='amount'?{p_action:'save',p_payload:snapshot.payload,p_request_id:snapshot.requestId}:{p_payload:snapshot.payload,p_request_id:snapshot.requestId},true);
    if(!result?.id||view.mode==='cancel'&&(result.id!==view.id||result.kind!==view.kind||result.cancelled!==true||view.kind==='sale'&&result.request_id!==snapshot.requestId))throw financeSaveErrorV16({message:'Не удалось подтвердить результат сохранения',uncertain:true});
+   if(view.mode==='amount'&&(result.id!==view.id||result.kind!==view.kind||result.request_id!==snapshot.requestId||result.amount_corrected!==true||result.corrected_event_type!==snapshot.payload.event_type||result.corrected_event_id!==snapshot.payload.event_id||result.corrected_amount==null||result.charge_total==null||Number(result.corrected_amount)!==channels.reduce((sum,key)=>sum+money(snapshot.payload.payments[key]??0),0)/100||Number(result.charge_total)!==snapshot.payload.charge_total))throw financeSaveErrorV16({message:'Не удалось подтвердить исправленную оплату',uncertain:true});
    committed=true;pending.delete(view.key);view.retry=null;
    if(!current(view))return;
    view.host.querySelector('[data-financial-body]').replaceChildren();
    messageView(view,'Изменение сохранено. Обновляем исходную страницу…',true);
-   await finish(view,view.mode==='methods'?'Способ оплаты исправлен. Сумма полученных денег не изменилась.':view.kind==='sale'?'Ошибочная продажа удалена.':'Ошибочная процедура удалена.');
+   await finish(view,view.mode==='methods'?'Способ оплаты исправлен. Сумма полученных денег не изменилась.':view.mode==='amount'?'Оплата и окончательная стоимость исправлены.':view.kind==='sale'?'Ошибочная продажа удалена.':'Ошибочная процедура удалена.');
   }catch(error){
    if(view.actor!==actor()||!manager())return;
    if(!committed&&snapshot&&(view.retry||financeRetryableErrorV16(error,error.status))){view.retry=snapshot;pending.set(view.key,{snapshot,data:view.data});}
@@ -146,27 +237,31 @@
   if(!['procedure','sale'].includes(kind)||!id)return;
   if(active?.busy){messageView(active,'Дождитесь ответа на сохранение.');return}
   const existing=pending.get(keyFor(mode,kind,id)),view=shell(mode,kind,id,editor);
-  if(existing){view.data=existing.data;view.retry=existing.snapshot;view.mode==='methods'?renderMethods(view):renderCancel(view);restoreRetry(view);lock(view,false);messageView(view,'Результат предыдущего сохранения ещё не подтверждён. Повторно отправим первоначальные данные.');return}
+  if(existing){view.data=existing.data;view.retry=existing.snapshot;renderView(view);restoreRetry(view);lock(view,false);messageView(view,'Результат предыдущего сохранения ещё не подтверждён. Повторно отправим первоначальные данные.');return}
   await load(view);
  }
  async function load(view){
   const {mode,kind,id}=view;
   try{
-   const data=mode==='methods'?await request('crm_payment_methods_v51',{p_action:'get',p_payload:{kind,id},p_request_id:null}):await request('crm_clinical_v10',{p_action:'treatment_get',p_payload:{kind,id},p_request_id:null});
+   const data=mode==='methods'||mode==='amount'?await request(mode==='amount'?'crm_payment_amount_v54':'crm_payment_methods_v51',{p_action:'get',p_payload:{kind,id},p_request_id:null}):await request('crm_clinical_v10',{p_action:'treatment_get',p_payload:{kind,id},p_request_id:null});
    if(!current(view))return;
    if(!data||data.id!==id||(data.kind&&data.kind!==kind))throw Error('Сохранённая запись не найдена. Обновите журнал.');
-   view.data=data;mode==='methods'?renderMethods(view):renderCancel(view);
+   view.data=data;renderView(view);
   }catch(error){if(!current(view))return;messageView(view,error.message);const retry=document.createElement('button');retry.type='button';retry.className='btn secondary';retry.textContent='Обновить запись';retry.onclick=()=>load(view);view.host.querySelector('[data-financial-message]').appendChild(retry)}
  }
+ function renderView(view){return view.mode==='methods'?renderMethods(view):view.mode==='amount'?renderAmount(view):renderCancel(view)}
  global.openPaymentMethodsV51=(kind,id)=>open('methods',kind,id);
+ global.openPaymentAmountV54=(kind,id)=>open('amount',kind,id);
  global.openProcedureCancelV51=id=>open('cancel','procedure',id);
  global.openSaleCancelV52=id=>open('cancel','sale',id);
  global.renderExistingPaymentToolsV51=function(prefix,record){
   $(prefix+'ExistingPaymentV51')?.remove();if(!record?.id||money(record.received_total??record.paid_total??0)<=0)return;
   const host=document.createElement('div');host.id=prefix+'ExistingPaymentV51';host.className='existing-payment-v51';
-  host.innerHTML=`<h3>Ранее полученная оплата: ${esc(rub(Number(record.received_total??record.paid_total)))}</h3><p class="small" data-existing-summary>${esc(methods(record.payments))}</p><p>Кнопки ниже относятся только к новой доплате. Они не меняют способ ранее полученной оплаты.</p>${manager()?'<button type="button" class="btn secondary wide">Исправить способ сохранённой оплаты</button>':''}`;
+  host.innerHTML=`<h3>Ранее полученная оплата: ${esc(rub(Number(record.received_total??record.paid_total)))}</h3><p class="small" data-existing-summary>${esc(methods(record.payments))}</p><p>Кнопки в блоке «Новая оплата» относятся только к новой доплате. Сохранённую оплату исправляйте отдельными кнопками ниже.</p>${manager()?'<button type="button" class="btn secondary wide" data-existing-method>Исправить способ сохранённой оплаты</button><button type="button" class="btn secondary wide" data-existing-amount>Исправить сумму оплаты</button>':''}`;
   $(prefix+'PaymentV5').before(host);
-  const button=host.querySelector('button');if(button)button.onclick=()=>{const editor=context().leaveEditor(prefix);if(editor)return open('methods',editor.kind,editor.id,editor)};
+  for(const [selector,mode]of [['[data-existing-method]','methods'],['[data-existing-amount]','amount']]){
+   const button=host.querySelector(selector);if(button)button.onclick=()=>{const editor=context().leaveEditor(prefix);if(editor)return open(mode,editor.kind,editor.id,editor)};
+  }
   if(!manager())return;
   const capturedActor=actor();request('crm_payment_methods_v51',{p_action:'get',p_payload:{kind:prefix==='proc'?'procedure':'sale',id:record.id},p_request_id:null}).then(data=>{
    if(capturedActor!==actor()||$(host.id)!==host||!manager())return;
